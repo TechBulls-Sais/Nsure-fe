@@ -1,0 +1,674 @@
+.config-banner {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 25px 28px;
+  background: linear-gradient(110deg, #edf2e3, #f0f1ea 70%, #e7eee0);
+  border: 1px solid #e1e8d8;
+  border-radius: 14px;
+  margin-bottom: 24px;
+}
+.config-banner-icon {
+  width: 62px;
+  height: 62px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: #dce8c9;
+  color: #537348;
+  flex-shrink: 0;
+  transform: rotate(-5deg);
+}
+.config-banner h2 {
+  font-size: 20px;
+}
+.config-banner p {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.config-banner > .badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  gap: 5px;
+}
+.config-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 25px;
+}
+.config-stat {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  background: white;
+  border: 1px solid var(--line);
+  padding: 21px;
+  border-radius: 12px;
+}
+.config-stat strong {
+  display: block;
+  font-size: 26px;
+  line-height: 1.2;
+}
+.config-stat small {
+  font-size: 11px;
+  color: #778477;
+  display: block;
+  margin-top: 4px;
+}
+.config-product-mark {
+  background: #eef2e7;
+  color: #729454;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  width: 38px;
+  height: 38px;
+}
+.config-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.config-back {
+  margin-bottom: 10px;
+  font-size: 11px;
+}
+.config-builder {
+  display: grid;
+  grid-template-columns: 205px minmax(0, 1fr) 240px;
+  align-items: start;
+  gap: 22px;
+}
+.config-steps {
+  padding-top: 13px;
+}
+.config-step {
+  display: flex;
+  text-align: left;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 15px 10px;
+  margin: 5px 0;
+  color: #6e7b70;
+}
+.config-step:disabled {
+  opacity: 0.7;
+}
+.config-step.current {
+  background: #e9efdf;
+  color: #274c38;
+}
+.config-step.done {
+  color: #638149;
+}
+.config-step-number {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border: 1px solid #dce2d6;
+  border-radius: 50%;
+  font-size: 11px;
+  flex-shrink: 0;
+  background: #fff;
+}
+.config-step.current .config-step-number,
+.config-step.done .config-step-number {
+  background: #325740;
+  border-color: #325740;
+  color: white;
+}
+.config-step strong {
+  display: block;
+  font-size: 12px;
+}
+.config-step small {
+  display: block;
+  font-size: 9px;
+  margin-top: 3px;
+  color: #85907d;
+}
+.config-help {
+  margin: 32px 9px 0;
+  padding: 22px 16px;
+  background: #edf1e7;
+  border-radius: 12px;
+}
+.config-help > span {
+  display: block;
+  font-size: 23px;
+  margin-bottom: 12px;
+}
+.config-help strong {
+  font-size: 12px;
+}
+.config-help p {
+  font-size: 11px;
+  margin-top: 7px;
+  line-height: 1.8;
+}
+.config-form {
+  overflow: hidden;
+  min-width: 0;
+}
+.config-form-heading {
+  padding: 25px 28px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.config-step-pill {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: #799369;
+}
+.config-form-heading h2 {
+  font-size: 23px;
+  margin-top: 8px;
+}
+.config-form-heading p {
+  font-size: 11px;
+  margin-top: 7px;
+}
+.config-form-body {
+  padding: 25px 28px;
+}
+.config-form-body > .form-label {
+  margin-top: 20px;
+}
+.config-field-hint {
+  font-size: 10px;
+  color: #8b9584;
+  font-weight: 400;
+  line-height: 1.6;
+  display: block;
+}
+.config-form .field-grid {
+  gap: 21px 17px;
+}
+.config-form .form-label {
+  font-size: 11px;
+  margin-bottom: 0;
+}
+.config-form .input,
+.config-form .select,
+.config-form .textarea {
+  font-size: 12px;
+  min-width: 0;
+  width: 100%;
+}
+.config-form .section-title {
+  font-size: 14px;
+  margin-top: 26px;
+}
+.config-form h3 {
+  font-size: 15px;
+}
+.config-form-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding: 21px 28px;
+  background: #fbfcf8;
+}
+.config-form-footer > div {
+  display: flex;
+  gap: 9px;
+}
+.config-form-footer .btn {
+  font-size: 11px;
+  padding: 10px 13px;
+}
+.config-preview {
+  padding-top: 12px;
+  min-width: 0;
+}
+.config-preview > .eyebrow {
+  font-size: 8px;
+  letter-spacing: 1.1px;
+  margin-bottom: 15px;
+}
+.config-preview-card {
+  border: 1px solid #e0e7d8;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #f0f5e6, white 55%);
+  padding: 23px 20px;
+  box-shadow: 0 8px 28px #30493104;
+  overflow-wrap: anywhere;
+}
+.config-preview-icon {
+  display: grid;
+  place-items: center;
+  width: 55px;
+  height: 55px;
+  border-radius: 15px;
+  background: #dfebcb;
+  color: #62824e;
+  margin-bottom: 17px;
+}
+.config-preview-card > .badge {
+  font-size: 8px;
+}
+.config-preview-card h2 {
+  font-size: 22px;
+  margin: 13px 0 10px;
+  line-height: 1.3;
+}
+.config-preview-card > p {
+  font-size: 11px;
+  line-height: 1.7;
+}
+.config-preview-amount {
+  border-top: 1px solid #e5ebdf;
+  margin-top: 25px;
+  padding-top: 19px;
+}
+.config-preview-amount small {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 0.8px;
+  color: #7c9068;
+}
+.config-preview-amount strong {
+  font-size: 24px;
+  display: block;
+  margin-top: 4px;
+  font-weight: 550;
+}
+.config-preview-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 19px 0;
+}
+.config-preview-card li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 10px;
+  margin: 11px 0;
+  color: #657d51;
+}
+.config-preview-price {
+  border-top: 1px solid #e5ebdf;
+  padding-top: 16px;
+}
+.config-preview-price strong {
+  display: block;
+  font-size: 19px;
+}
+.config-preview-price small {
+  display: block;
+  font-size: 9px;
+  color: #8b987e;
+  margin-top: 4px;
+}
+.config-preview-note {
+  font-size: 9px;
+  color: #929d89;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 13px 3px;
+  line-height: 1.7;
+}
+.config-benefits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 17px;
+}
+.config-benefit {
+  border: 1px solid #e4e9de;
+  padding: 14px;
+  border-radius: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+  transition: 0.18s;
+  background: #fff;
+}
+.config-benefit:hover {
+  border-color: #acc792;
+  box-shadow: 0 3px 10px #23421c08;
+}
+.config-benefit.selected {
+  background: #f1f6e9;
+  border-color: #a8be8a;
+}
+.config-benefit strong {
+  font-size: 11px;
+  display: block;
+}
+.config-benefit small {
+  font-size: 9px;
+  display: block;
+  margin-top: 5px;
+  font-weight: 400;
+  color: #8a9580;
+  line-height: 1.6;
+}
+.config-benefit input {
+  margin-left: auto;
+  flex-shrink: 0;
+  accent-color: #416645;
+}
+.config-benefit-emoji {
+  font-size: 19px;
+}
+.config-inline-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f3f0f9;
+  border-radius: 9px;
+  padding: 14px;
+  color: #9988b7;
+  margin-bottom: 22px;
+}
+.config-inline-note p {
+  font-size: 11px;
+  color: #837993;
+}
+.config-channel-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 16px 0;
+}
+.config-channel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e3e8dc;
+  padding: 12px 9px;
+  border-radius: 8px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.config-channel input {
+  accent-color: #416645;
+}
+.config-review-intro {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.config-review-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+  background: #f7f9f3;
+  border: 1px solid #e9ede3;
+  border-radius: 10px;
+}
+.config-review-grid small {
+  display: block;
+  font-size: 10px;
+  color: #829071;
+}
+.config-review-grid strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 550;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.config-review-section {
+  margin-top: 22px;
+}
+.config-review-section > small {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #869578;
+}
+.config-review-section p {
+  font-size: 12px;
+  margin-top: 7px;
+}
+.config-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+.config-tags > span {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: #edf3e4;
+  color: #658148;
+  font-size: 10px;
+}
+.config-ack {
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.7;
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.config-ack input {
+  margin-top: 4px;
+  flex-shrink: 0;
+  accent-color: #416645;
+}
+.config-errors {
+  margin: 20px 28px 0;
+  border: 1px solid #eed4c7;
+  border-radius: 8px;
+  background: #fff7f0;
+  color: #945e41;
+  padding: 14px;
+  font-size: 11px;
+}
+.config-errors ul {
+  padding-left: 17px;
+  margin-bottom: 0;
+}
+.config-errors li {
+  margin-top: 4px;
+}
+.config-confirm {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #e6dcbf;
+  background: #fff9eb;
+  padding: 18px;
+  border-radius: 10px;
+  margin-bottom: 22px;
+}
+.config-confirm > div {
+  margin-right: auto;
+}
+.config-confirm p {
+  font-size: 11px;
+  margin-top: 4px;
+}
+@media (min-width: 1600px) {
+  .config-builder {
+    grid-template-columns: 225px minmax(0, 1fr) 270px;
+  }
+  .config-preview-card {
+    padding: 27px;
+  }
+}
+@media (max-width: 1250px) {
+  .config-builder {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .config-preview {
+    grid-column: 2;
+  }
+  .config-preview-card {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 25px;
+  }
+  .config-preview-icon {
+    display: none;
+  }
+  .config-preview-card > .badge {
+    justify-self: start;
+  }
+  .config-preview-card h2 {
+    grid-column: 1;
+  }
+  .config-preview-card > p {
+    grid-column: 1;
+  }
+  .config-preview-amount {
+    grid-column: 2;
+    grid-row: 1/4;
+    margin: 0;
+  }
+  .config-preview-card ul {
+    grid-column: 1;
+  }
+  .config-preview-price {
+    grid-column: 2;
+  }
+  .config-banner > .badge {
+    display: none;
+  }
+  .config-benefits {
+    grid-template-columns: 1fr;
+  }
+  .config-stats {
+    gap: 10px;
+  }
+  .config-stat {
+    padding: 15px;
+    gap: 10px;
+  }
+}
+@media (max-width: 760px) {
+  .config-banner {
+    padding: 20px;
+    gap: 15px;
+  }
+  .config-banner h2 {
+    font-size: 17px;
+  }
+  .config-banner p {
+    font-size: 11px;
+  }
+  .config-banner-icon {
+    width: 47px;
+    height: 47px;
+  }
+  .config-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .config-builder {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .config-steps {
+    display: flex;
+    gap: 7px;
+    padding: 0;
+  }
+  .config-steps > .eyebrow,
+  .config-help,
+  .config-step small {
+    display: none;
+  }
+  .config-step {
+    padding: 10px 6px;
+    gap: 6px;
+    flex: 1;
+    flex-direction: column;
+    text-align: center;
+    margin: 0;
+  }
+  .config-step strong {
+    font-size: 9px;
+  }
+  .config-step-number {
+    width: 24px;
+    height: 24px;
+  }
+  .config-form-heading,
+  .config-form-body {
+    padding: 22px;
+  }
+  .config-form-footer {
+    padding: 18px;
+    flex-wrap: wrap;
+  }
+  .config-form-footer > div {
+    flex-wrap: wrap;
+  }
+  .config-preview {
+    grid-column: auto;
+  }
+  .config-preview-card {
+    padding: 23px;
+  }
+  .config-channel-list {
+    grid-template-columns: 1fr 1fr;
+  }
+  .config-confirm {
+    flex-wrap: wrap;
+  }
+  .config-confirm > div {
+    width: 100%;
+  }
+  .config-errors {
+    margin-inline: 20px;
+  }
+  .config-review-grid {
+    padding: 15px;
+    gap: 15px;
+  }
+  .config-preview-amount strong {
+    font-size: 22px;
+  }
+}
+@media (max-width: 440px) {
+  .config-form .field-grid {
+    grid-template-columns: 1fr;
+  }
+  .config-channel-list {
+    grid-template-columns: 1fr;
+  }
+  .config-preview-card {
+    display: block;
+  }
+  .config-preview-amount {
+    padding-top: 17px;
+    margin-top: 17px;
+  }
+  .config-form-footer .btn {
+    font-size: 10px;
+    padding: 9px;
+  }
+  .config-step strong {
+    font-size: 8px;
+  }
+  .config-review-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .config-stats .stat-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .config-stat small {
+    font-size: 10px;
+  }
+  .config-stat strong {
+    font-size: 23px;
+  }
+}

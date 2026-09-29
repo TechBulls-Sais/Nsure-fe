@@ -1,0 +1,30 @@
+{
+  "name": "nsure-life-showcase",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "format": "prettier --write src index.html README.md",
+    "test:smoke": "node scripts/smoke.cjs",
+    "test:products": "node scripts/product-config-smoke.cjs",
+    "test:intelligence": "node scripts/intelligence-smoke.cjs",
+    "test": "npm run test:smoke && npm run test:products && npm run test:intelligence && npm run test:select",
+    "test:select": "node scripts/select-smoke.cjs"
+  },
+  "dependencies": {
+    "@radix-ui/react-select": "^2.3.7",
+    "animejs": "^4.5.0",
+    "lucide-react": "^0.468.0",
+    "motion": "^13.4.5",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "prettier": "^3.9.9",
+    "vite": "^7.1.7"
+  }
+}
