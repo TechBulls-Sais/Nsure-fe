@@ -1,6 +1,17 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  server: {
+    host: "127.0.0.1",
+    port: 5173,
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8081",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+    },
+  },
   build: {
     rollupOptions: {
       // Motion's React-server boundary directive is irrelevant to this client-only SPA.

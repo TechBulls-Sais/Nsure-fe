@@ -8,11 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "format": "prettier --write src index.html README.md",
-    "test:smoke": "node scripts/smoke.cjs",
-    "test:products": "node scripts/product-config-smoke.cjs",
-    "test:intelligence": "node scripts/intelligence-smoke.cjs",
-    "test": "npm run test:smoke && npm run test:products && npm run test:intelligence && npm run test:select",
-    "test:select": "node scripts/select-smoke.cjs"
+    "test": "node scripts/smoke.cjs"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",

@@ -3375,3 +3375,48 @@ p {
   scrollbar-width: thin;
   scrollbar-color: #688970 transparent;
 }
+.form-error {
+  color: #8d3a3a;
+  background: #fdf3f3;
+  border: 1px solid #f0d4d4;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+.perm-group {
+  margin-top: 16px;
+}
+.perm-group h3 {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.perm-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 16px;
+}
+.json-block {
+  background: #f6f7f5;
+  border: 1px solid #e9ede7;
+  border-radius: 8px;
+  padding: 12px;
+  overflow: auto;
+  font-size: 12px;
+  max-height: 220px;
+  white-space: pre-wrap;
+}
+.page-loading {
+  padding: 40px 0;
+  color: #78847c;
+}
+.inline-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+@media (max-width: 720px) {
+  .perm-grid {
+    grid-template-columns: 1fr;
+  }
+}

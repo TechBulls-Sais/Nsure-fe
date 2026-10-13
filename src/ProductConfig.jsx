@@ -43,43 +43,6 @@ const base = {
   wording: "Standard life wording · v1.0",
   approvals: false,
 };
-export const initialProductConfigs = [
-  {
-    ...base,
-    id: "CFG-001",
-    name: "Term Life Essential",
-    code: "TL-ESS",
-    description: "Simple, dependable protection for a fixed term.",
-    benefits: ["Death benefit", "Accidental death"],
-    status: "Demo active",
-    version: 1,
-  },
-  {
-    ...base,
-    id: "CFG-002",
-    name: "Family Funeral Plus",
-    code: "FF-PLUS",
-    description: "A little support for the people who matter most.",
-    cover: 50000,
-    premium: 185,
-    waiting: 6,
-    benefits: ["Funeral benefit", "Accidental death"],
-    status: "In review",
-    version: 1,
-  },
-  {
-    ...base,
-    id: "CFG-003",
-    name: "Care Cash Flex",
-    code: "CC-FLEX",
-    description: "Everyday support when life needs a little extra care.",
-    cover: 1000,
-    premium: 265,
-    benefits: ["Hospital cash"],
-    status: "Draft",
-    version: 1,
-  },
-];
 const steps = [
   ["The essentials", "Name, identity & launch date", Layers3],
   ["Benefits & eligibility", "What’s covered, and for whom", ShieldCheck],
@@ -120,7 +83,7 @@ function Status({ value }) {
 }
 const amount = (v, c = "BWP") => c + " " + Number(v).toLocaleString("en-GB");
 
-export default function ProductConfig({ records, setRecords, notify }) {
+export default function ProductConfig({ records, setRecords, notify, onSaveRecord }) {
   const [editing, setEditing] = useState(null);
   const [step, setStep] = useState(0);
   const [query, setQuery] = useState("");
@@ -209,20 +172,20 @@ export default function ProductConfig({ records, setRecords, notify }) {
     setErrors(e);
     return Object.keys(e).length === 0;
   };
-  const save = (status) => {
+  const save = async (status) => {
     if (status === "Draft") {
       if (!validate(0)) {
         setStep(0);
         return;
       }
     } else if (!validate(3, true)) return;
-    const saved = {
+    const draft = {
       ...editing,
       name: editing.name.trim(),
-      id: editing.id || "CFG-" + Date.now().toString(36).toUpperCase(),
       status,
       version: editing.id ? (editing.version || 1) + 1 : 1,
     };
+    const saved = onSaveRecord ? await onSaveRecord(draft) : { ...draft, id: editing.id || "CFG-NEW" };
     setRecords((list) =>
       editing.id
         ? list.map((p) => (p.id === editing.id ? saved : p))
@@ -231,10 +194,10 @@ export default function ProductConfig({ records, setRecords, notify }) {
     setEditing(null);
     notify(
       status === "Demo active"
-        ? "Product activated in the configuration demo. No live sales enabled."
+        ? "Product configuration saved."
         : status === "In review"
-          ? "Product configuration submitted to the demo review queue."
-          : "Product draft saved. Continue editing whenever you’re ready.",
+          ? "Product configuration submitted for review."
+          : "Product draft saved.",
     );
   };
   const filtered = records.filter(

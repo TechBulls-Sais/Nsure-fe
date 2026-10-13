@@ -96,18 +96,11 @@ const Icons = {
   Wallet,
   X,
 };
-import {
-  customers as seedCustomers,
-  initialApplications,
-  initialPolicies,
-  initialClaims,
-  products,
-  schemes,
-  money,
-  initials,
-} from "./data";
-import ProductConfig, { initialProductConfigs } from "./ProductConfig";
+import { money, initials } from "./data";
+import ProductConfig from "./ProductConfig";
+import { request } from "./api";
 import AssistantStudio from "./AssistantStudio";
+import Platform from "./Platform";
 import {
   AnimatedWorkspace,
   AnimatedMetric,
@@ -130,6 +123,7 @@ const navItems = [
   ["product-config", "Product studio", "Settings2"],
   ["collections", "Collections", "Wallet"],
   ["assistant", "AI assistant", "Sparkles"],
+  ["platform", "Platform", "ShieldCheck"],
 ];
 function Icon({ name, small = false, ...props }) {
   const C = Icons[name] || Icons.Circle;
@@ -349,9 +343,11 @@ function Stat({
 }
 
 function Login({ onLogin }) {
-  const [email, setEmail] = useState("demo@nsure.life");
-  const [password, setPassword] = useState("nsure2026");
+  const [email, setEmail] = useState("admin");
+  const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   return (
     <div className="login-page">
       <section className="login-story">
@@ -409,15 +405,25 @@ function Login({ onLogin }) {
           </h2>
           <p className="subtitle">Sign in and make yourself at home. 👋</p>
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              onLogin();
+              setError("");
+              setBusy(true);
+              const next = { username: email.trim().toLowerCase(), password };
+              try {
+                await request(next, "/portfolio/customers");
+                sessionStorage.setItem("nsure-session", JSON.stringify(next));
+                onLogin(next);
+              } catch (err) {
+                setError(err.status === 401 ? "Username or password is incorrect." : err.message);
+              } finally {
+                setBusy(false);
+              }
             }}
           >
-            <Field label="Work email">
+            <Field label="Username">
               <input
                 className="input"
-                type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -445,11 +451,12 @@ function Login({ onLogin }) {
                 </button>
               </div>
             </Field>
+            {error && <p className="form-error">{error}</p>}
             <div className="login-hint">
-              <Icon name="Info" small /> Demo credentials are already filled in.
+              <Icon name="Info" small /> Dev admin username is admin. Password is password.
             </div>
-            <Button type="submit" icon="ArrowRight">
-              Enter workspace
+            <Button type="submit" icon="ArrowRight" disabled={busy}>
+              {busy ? "Signing in…" : "Enter workspace"}
             </Button>
           </form>
           <div className="notice">
@@ -457,8 +464,7 @@ function Login({ onLogin }) {
             <p>
               <strong>A safe space to explore.</strong>
               <br />
-              All records are fictional. Sign-in is simulated and no credentials
-              are sent to a server.
+              Sign-in uses your Nsure account. Records are loaded from the database.
             </p>
           </div>
           <p className="login-note">Made for people who care for people.</p>
@@ -469,54 +475,28 @@ function Login({ onLogin }) {
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(
-    () => sessionStorage.getItem("nsure-demo-login") === "true",
-  );
+  const [session, setSession] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem("nsure-session") || "null");
+    } catch {
+      return null;
+    }
+  });
+  const loggedIn = Boolean(session);
   const [page, setPage] = useState(() => location.hash.slice(2) || "overview");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
-  const [customers, setCustomers] = useState(seedCustomers);
-  const [applications, setApplications] = useState(initialApplications);
-  const [policies, setPolicies] = useState(initialPolicies);
-  const [claims, setClaims] = useState(initialClaims);
-  const [productConfigs, setProductConfigs] = useState(initialProductConfigs);
-  const [receipts, setReceipts] = useState([
-    {
-      id: "INV-0091",
-      name: "Amara Dube",
-      product: "Term Life",
-      amount: 420,
-      status: "Paid",
-      date: "28 Sep 2026",
-    },
-    {
-      id: "INV-0092",
-      name: "Thabo Molefe",
-      product: "Family Funeral",
-      amount: 185,
-      status: "Paid",
-      date: "28 Sep 2026",
-    },
-    {
-      id: "INV-0093",
-      name: "Lerato Ndlovu",
-      product: "Term Life",
-      amount: 315,
-      status: "Overdue",
-      date: "25 Sep 2026",
-    },
-    {
-      id: "INV-0094",
-      name: "Kabelo Mokoena",
-      product: "Whole of Life",
-      amount: 680,
-      status: "Pending",
-      date: "30 Sep 2026",
-    },
-  ]);
+  const [customers, setCustomers] = useState([]);
+  const [applications, setApplications] = useState([]);
+  const [policies, setPolicies] = useState([]);
+  const [claims, setClaims] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [schemes, setSchemes] = useState([]);
+  const [productConfigs, setProductConfigs] = useState([]);
+  const [receipts, setReceipts] = useState([]);
   const [notifications, setNotifications] = useState(true);
   const [compact, setCompact] = useState(false);
   const [period, setPeriod] = useState("Last 6 months");
@@ -559,10 +539,53 @@ export default function App() {
   }, [loggedIn]);
   const close = React.useCallback(() => setModal(null), []);
   const logout = () => {
-    sessionStorage.removeItem("nsure-demo-login");
-    setLoggedIn(false);
+    sessionStorage.removeItem("nsure-session");
+    setSession(null);
     setModal(null);
   };
+  useEffect(() => {
+    if (!session) return undefined;
+    let active = true;
+    (async () => {
+      try {
+        const [
+          customersR,
+          applicationsR,
+          policiesR,
+          claimsR,
+          productsR,
+          schemesR,
+          receiptsR,
+          configsR,
+        ] = await Promise.all([
+          request(session, "/portfolio/customers"),
+          request(session, "/portfolio/applications"),
+          request(session, "/portfolio/policies"),
+          request(session, "/portfolio/claims"),
+          request(session, "/portfolio/products"),
+          request(session, "/portfolio/schemes"),
+          request(session, "/portfolio/receipts"),
+          request(session, "/portfolio/product-configs"),
+        ]);
+        if (!active) return;
+        setCustomers(customersR.data);
+        setApplications(applicationsR.data);
+        setPolicies(policiesR.data);
+        setClaims(claimsR.data);
+        setProducts(productsR.data);
+        setSchemes(schemesR.data);
+        setReceipts(receiptsR.data);
+        setProductConfigs(configsR.data);
+      } catch (error) {
+        if (!active) return;
+        if (error.status === 401) logout();
+        else setToast(error.message);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [session]);
   const activeName =
     navItems.find((n) => n[0] === page)?.[1] ||
     (page === "settings" ? "Settings" : "Overview");
@@ -581,40 +604,42 @@ export default function App() {
     ]);
     notify("Your demo export is ready.");
   };
-  const issue = (record) => {
-    const newPolicy = {
-      ...record,
-      id: "POL-" + (10843 + policies.length - initialPolicies.length),
-      status: "In force",
-      date: "29 Sep 2026",
-    };
-    setPolicies((p) => [newPolicy, ...p]);
+  const issue = async (record) => {
+    const created = await request(session, "/portfolio/policies", {
+      method: "POST",
+      body: {
+        name: record.name,
+        product: record.product,
+        amount: record.amount,
+        premium: record.premium || 0,
+        status: "In force",
+      },
+    });
+    await request(session, "/portfolio/applications/" + record.id, {
+      method: "PUT",
+      body: { status: "Issued" },
+    });
+    setPolicies((p) => [created.data, ...p]);
     setApplications((a) =>
       a.map((x) => (x.id === record.id ? { ...x, status: "Issued" } : x)),
     );
-    setModal({ type: "detail", entity: "policy", record: newPolicy });
-    notify("Demo policy issued. You can find it in Policies.");
+    setCustomers((c) =>
+      c.map((x) => (x.name === record.name ? { ...x, policies: x.policies + 1 } : x)),
+    );
+    setModal({ type: "detail", entity: "policy", record: created.data });
+    notify("Policy issued and saved.");
   };
-  const updateClaim = (record) => {
+  const updateClaim = async (record) => {
     const status = record.status === "Approved" ? "Settled" : "Approved";
-    const next = { ...record, status };
-    setClaims((c) => c.map((x) => (x.id === record.id ? next : x)));
-    setModal({ type: "detail", entity: "claim", record: next });
-    notify(
-      status === "Settled"
-        ? "Demo settlement recorded. No money was transferred."
-        : "Claim approval simulated.",
-    );
+    const updated = await request(session, "/portfolio/claims/" + record.id, {
+      method: "PUT",
+      body: { status },
+    });
+    setClaims((c) => c.map((x) => (x.id === record.id ? updated.data : x)));
+    setModal({ type: "detail", entity: "claim", record: updated.data });
+    notify(status === "Settled" ? "Settlement saved." : "Claim approval saved.");
   };
-  if (!loggedIn)
-    return (
-      <Login
-        onLogin={() => {
-          sessionStorage.setItem("nsure-demo-login", "true");
-          setLoggedIn(true);
-        }}
-      />
-    );
+  if (!loggedIn) return <Login onLogin={setSession} />;
 
   function Filters({
     statuses = ["All"],
@@ -725,8 +750,8 @@ export default function App() {
               <ShimmerText>A world of possibility.</ShimmerText>
             </h2>
             <p>
-              Your team is helping <strong>13,480 lives</strong> feel a little
-              more secure.
+              Your team is looking after <strong>{customers.length} customers</strong> and{" "}
+              <strong>{policies.length} policies</strong>.
               <br />
               Let’s keep the good work going.
             </p>
@@ -771,7 +796,7 @@ export default function App() {
         <div className="stat-grid">
           <Stat
             label="Active policies"
-            value="13,480"
+            value={policies.filter((policy) => policy.status === "In force").length}
             change="8.2%"
             icon="ShieldCheck"
           />
@@ -784,7 +809,7 @@ export default function App() {
           />
           <Stat
             label="New applications"
-            value={128 + applications.length - initialApplications.length}
+            value={applications.length}
             change="16.4%"
             icon="FilePlus2"
             color="blue"
@@ -865,7 +890,7 @@ export default function App() {
             <div className="donut-wrap">
               <div className="donut">
                 <div className="donut-center">
-                  <strong>13,480</strong>
+                  <strong>{policies.length}</strong>
                   <span>protected lives</span>
                 </div>
               </div>
@@ -1570,6 +1595,15 @@ export default function App() {
               records={productConfigs}
               setRecords={setProductConfigs}
               notify={notify}
+              onSaveRecord={async (record) => {
+                const exists = productConfigs.some((item) => item.id === record.id);
+                const saved = await request(
+                  session,
+                  exists ? "/portfolio/product-configs/" + record.id : "/portfolio/product-configs",
+                  { method: exists ? "PUT" : "POST", body: record },
+                );
+                return saved.data;
+              }}
             />
           ) : page === "schemes" ? (
             Schemes()
@@ -1577,6 +1611,8 @@ export default function App() {
             <AssistantStudio />
           ) : page === "settings" ? (
             Settings()
+          ) : page === "platform" ? (
+            <Platform session={session} />
           ) : (
             Overview()
           )}
@@ -1660,62 +1696,49 @@ export default function App() {
             <ApplicationForm
               defaultProduct={modal.product}
               customers={customers}
+              products={products}
               onCancel={close}
-              onSave={(data) => {
-                setApplications((a) => [
-                  {
-                    ...data,
-                    id: "APP-" + (2049 + a.length - initialApplications.length),
-                    date: "29 Sep 2026",
-                  },
-                  ...a,
-                ]);
+              onSave={async (data) => {
+                const created = await request(session, "/portfolio/applications", {
+                  method: "POST",
+                  body: data,
+                });
+                setApplications((a) => [created.data, ...a]);
                 close();
                 go("applications");
-                notify("Application saved to your demo workbench.");
+                notify("Application saved.");
               }}
             />
           )}
           {modal.type === "customer" && (
             <CustomerForm
               onCancel={close}
-              onSave={(data) => {
-                setCustomers((c) => [
-                  {
-                    ...data,
-                    id: "CUS-" + (1001 + c.length),
-                    policies: 0,
-                    status: "Pending KYC",
-                    product: "",
-                    initials: initials(data.name),
-                  },
-                  ...c,
-                ]);
+              onSave={async (data) => {
+                const created = await request(session, "/portfolio/customers", {
+                  method: "POST",
+                  body: data,
+                });
+                setCustomers((c) => [created.data, ...c]);
                 close();
                 go("customers");
-                notify("Customer added. Verification is pending.");
+                notify("Customer saved. Verification is pending.");
               }}
             />
           )}
           {modal.type === "claim" && (
             <ClaimForm
               customers={customers}
+              products={products}
               onCancel={close}
-              onSave={(data) => {
-                setClaims((c) => [
-                  {
-                    ...data,
-                    id: "CLM-" + (843 + c.length - initialClaims.length),
-                    date: "29 Sep 2026",
-                    status: "Evidence needed",
-                  },
-                  ...c,
-                ]);
+              onSave={async (data) => {
+                const created = await request(session, "/portfolio/claims", {
+                  method: "POST",
+                  body: { ...data, status: "Evidence needed" },
+                });
+                setClaims((c) => [created.data, ...c]);
                 close();
                 go("claims");
-                notify(
-                  "Demo claim registered. Evidence can be reviewed in the claim details.",
-                );
+                notify("Claim saved.");
               }}
             />
           )}
@@ -1785,34 +1808,37 @@ export default function App() {
             <Detail
               entity={modal.entity}
               record={modal.record}
+              customers={customers}
               policies={policies}
               claims={claims}
               onGo={go}
               onIssue={issue}
-              onApprove={(record) => {
-                const next = { ...record, status: "Ready to issue" };
-                setApplications((a) =>
-                  a.map((x) => (x.id === record.id ? next : x)),
-                );
+              onApprove={async (record) => {
+                const updated = await request(session, "/portfolio/applications/" + record.id, {
+                  method: "PUT",
+                  body: { status: "Ready to issue" },
+                });
+                setApplications((a) => a.map((x) => (x.id === record.id ? updated.data : x)));
                 setModal({
                   type: "detail",
                   entity: "application",
-                  record: next,
+                  record: updated.data,
                 });
-                notify(
-                  "Demo underwriting accepted. Ready for simulated issuance.",
-                );
+                notify("Underwriting accepted and saved.");
               }}
               onClaim={updateClaim}
-              onReceipt={(r) => {
-                const next = { ...r, status: "Paid" };
-                setReceipts((a) => a.map((x) => (x.id === r.id ? next : x)));
+              onReceipt={async (r) => {
+                const updated = await request(session, "/portfolio/receipts/" + r.id, {
+                  method: "PUT",
+                  body: { status: "Paid" },
+                });
+                setReceipts((a) => a.map((x) => (x.id === r.id ? updated.data : x)));
                 setModal({
                   type: "detail",
                   entity: "collection",
-                  record: next,
+                  record: updated.data,
                 });
-                notify("Demo receipt recorded. No real payment collected.");
+                notify("Receipt saved.");
               }}
               notify={notify}
             />
@@ -1823,19 +1849,20 @@ export default function App() {
   );
 }
 
-function ApplicationForm({ defaultProduct, customers, onSave, onCancel }) {
+function ApplicationForm({ defaultProduct, customers, products = [], onSave, onCancel }) {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(() => {
-    const p = products.find((p) => p.name === (defaultProduct || "Term Life"));
+    const p = products.find((item) => item.name === (defaultProduct || "Term Life")) ||
+      products[0] || { name: "Term Life", cover: "0", premium: "0" };
     return {
-      name: customers[0].name,
+      name: customers[0]?.name || "",
       product: p.name,
-      amount: Number(p.cover.replace(/[^0-9]/g, "")),
-      premium: Number(p.premium),
+      amount: Number(String(p.cover).replace(/[^0-9]/g, "")) || 0,
+      premium: Number(p.premium) || 0,
     };
   });
   const [consent, setConsent] = useState(false);
-  const chosen = products.find((p) => p.name === data.product);
+  const chosen = products.find((p) => p.name === data.product) || { premium: data.premium };
   return (
     <>
       <div className="stepper">
@@ -2049,7 +2076,7 @@ function CustomerForm({ onSave, onCancel }) {
     </form>
   );
 }
-function ClaimForm({ customers, onSave, onCancel }) {
+function ClaimForm({ customers, products = [], onSave, onCancel }) {
   return (
     <form
       onSubmit={(e) => {
@@ -2127,6 +2154,7 @@ function ClaimForm({ customers, onSave, onCancel }) {
 function Detail({
   entity,
   record: r,
+  customers = [],
   policies,
   claims,
   onGo,
@@ -2233,7 +2261,7 @@ function Detail({
                 ))}
               </div>
               <h3 className="section-title">Member preview</h3>
-              {seedCustomers.slice(0, 3).map((c, i) => (
+              {customers.slice(0, 3).map((c, i) => (
                 <div className="linked-record" key={c.id}>
                   <Person name={c.name} sub={"MEM-00" + (i + 1)} />
                   <Badge>{i === 2 ? "Under review" : "Active"}</Badge>
