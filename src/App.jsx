@@ -21,7 +21,6 @@ import {
   FilePlus2,
   FileSearch,
   FileText,
-  FlaskConical,
   Heart,
   HeartHandshake,
   HeartPulse,
@@ -69,7 +68,6 @@ const Icons = {
   FilePlus2,
   FileSearch,
   FileText,
-  FlaskConical,
   Heart,
   HeartHandshake,
   HeartPulse,
@@ -111,6 +109,21 @@ import {
   ActionSearch,
   MotionToggle,
 } from "./ui/animated";
+
+const productImages = {
+  "Term Life": "/products/term-life.jpg",
+  "Whole of Life": "/products/whole-of-life.jpg",
+  "Family Funeral": "/products/family-funeral.jpg",
+  "Care Cash": "/products/care-cash.jpg",
+  "Individual Credit": "/products/individual-credit.jpg",
+};
+const productImageFocus = {
+  "Term Life": "center 30%",
+  "Whole of Life": "center 35%",
+  "Family Funeral": "center 40%",
+  "Care Cash": "center 40%",
+  "Individual Credit": "center 45%",
+};
 
 const navItems = [
   ["overview", "Overview", "LayoutDashboard"],
@@ -373,13 +386,11 @@ function Login({ onLogin }) {
             Bring your people, policies, and possibilities together in one
             thoughtful workspace.
           </p>
-          <div className="login-decoration">
-            <IntelligenceOrb />
-            <span className="hero-tag tag-one">🌱 Built around people</span>
-            <span className="hero-tag tag-two">
-              <Icon name="Heart" small /> Peace of mind, connected
-            </span>
-          </div>
+          <img
+            className="login-photo"
+            src="/products/term-life.jpg"
+            alt="A family together at home"
+          />
           <div className="login-feature">
             <span className="avatar">AD</span>
             <span className="avatar">TM</span>
@@ -395,9 +406,6 @@ function Login({ onLogin }) {
       </section>
       <section className="login-card">
         <div className="login-form">
-          <span className="badge green">
-            <Icon name="FlaskConical" small /> INTERACTIVE DEMO
-          </span>
           <h2>
             Welcome to your
             <br />
@@ -1267,37 +1275,84 @@ export default function App() {
           </p>
         </div>
         <div className="product-grid">
-          {products.map((p) => (
-            <SpotlightCard className={"product-card " + p.color} key={p.name}>
-              <div className="product-card-top">
-                <span className={"product-icon " + p.color}>
-                  <Icon name={p.icon} />
-                </span>
-                <Badge>Demo product</Badge>
-              </div>
-              <h2>{p.name}</h2>
-              <p>{p.description}</p>
-              <div className="product-cover">
-                <small>ILLUSTRATIVE COVER</small>
-                <strong>{p.cover}</strong>
-              </div>
-              <div className="product-footer">
-                <div>
-                  <strong>BWP {p.premium}</strong>
-                  <small> / month · sample</small>
-                </div>
-                <button
-                  className="icon-btn"
-                  aria-label={"Quote " + p.name}
-                  onClick={() =>
-                    setModal({ type: "application", product: p.name })
-                  }
-                >
-                  <Icon name="ArrowRight" />
-                </button>
-              </div>
-            </SpotlightCard>
-          ))}
+          {products.map((p) => {
+            const image = productImages[p.name];
+            return (
+              <SpotlightCard
+                className={"product-card " + p.color + (image ? " has-photo" : "")}
+                key={p.name}
+              >
+                {image ? (
+                  <div className="product-photo-wrap">
+                    <img
+                      className="product-photo"
+                      src={image}
+                      alt=""
+                      style={{ objectPosition: productImageFocus[p.name] || "center" }}
+                    />
+                    <div className="product-overlay">
+                      <div className="product-card-top">
+                        <span className={"product-icon " + p.color}>
+                          <Icon name={p.icon} />
+                        </span>
+                      </div>
+                      <h2>{p.name}</h2>
+                      <p>{p.description}</p>
+                      <div className="product-cover">
+                        <small>ILLUSTRATIVE COVER</small>
+                        <strong>{p.cover}</strong>
+                      </div>
+                      <div className="product-footer">
+                        <div>
+                          <strong>BWP {p.premium}</strong>
+                          <small> / month · sample</small>
+                        </div>
+                        <button
+                          className="icon-btn"
+                          aria-label={"Quote " + p.name}
+                          onClick={() =>
+                            setModal({ type: "application", product: p.name })
+                          }
+                        >
+                          <Icon name="ArrowRight" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="product-card-top">
+                      <span className={"product-icon " + p.color}>
+                        <Icon name={p.icon} />
+                      </span>
+                      <Badge>Demo product</Badge>
+                    </div>
+                    <h2>{p.name}</h2>
+                    <p>{p.description}</p>
+                    <div className="product-cover">
+                      <small>ILLUSTRATIVE COVER</small>
+                      <strong>{p.cover}</strong>
+                    </div>
+                    <div className="product-footer">
+                      <div>
+                        <strong>BWP {p.premium}</strong>
+                        <small> / month · sample</small>
+                      </div>
+                      <button
+                        className="icon-btn"
+                        aria-label={"Quote " + p.name}
+                        onClick={() =>
+                          setModal({ type: "application", product: p.name })
+                        }
+                      >
+                        <Icon name="ArrowRight" />
+                      </button>
+                    </div>
+                  </>
+                )}
+              </SpotlightCard>
+            );
+          })}
         </div>
       </>
     );
