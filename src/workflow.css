@@ -1,0 +1,145 @@
+/* Policy and claim workflow panels (Workflow.jsx), shared by the staff workspace and the customer portal. */
+.wf-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.wf-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.wf-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
+
+.wf-check em {
+  margin-left: auto;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.wf-check.pass {
+  color: #15803d;
+  background: rgba(22, 163, 74, 0.07);
+}
+
+.wf-check.fail {
+  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.07);
+}
+
+.wf-check.pending {
+  color: #92400e;
+}
+
+.wf-beneficiaries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.wf-beneficiaries li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 10px;
+}
+
+.wf-beneficiaries strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wf-beneficiaries small {
+  display: block;
+  color: var(--muted, #6b7280);
+}
+
+.wf-tag {
+  font-style: normal;
+  font-size: 0.72rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(0, 102, 171, 0.1);
+  color: #0066ab;
+}
+
+.wf-inline-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed var(--line, #d1d5db);
+  border-radius: 12px;
+}
+
+.wf-check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.wf-pay {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wf-pay .input {
+  width: auto;
+  min-width: 150px;
+}
+
+.wf-reason {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Nsure customer portal: one card per policy or claim. */
+.portal-policies {
+  display: grid;
+  gap: 12px;
+}
+
+.portal-policy {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+}
+
+.portal-policy header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.portal-policy header small {
+  display: block;
+  color: var(--muted, #6b7280);
+}
+
+.portal-policy details summary {
+  cursor: pointer;
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+}

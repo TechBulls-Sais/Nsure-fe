@@ -101,6 +101,15 @@ import AssistantStudio from "./AssistantStudio";
 import Platform from "./Platform";
 import CustomerPortal from "./CustomerPortal";
 import {
+  CLAIM_STATES,
+  ClaimLodgeForm,
+  ClaimWorkflowPanel,
+  POLICY_STATES,
+  PolicyWorkflowPanel,
+  ReasonAction,
+  WorkflowTimeline,
+} from "./Workflow";
+import {
   AnimatedWorkspace,
   AnimatedMetric,
   ShimmerText,
@@ -156,9 +165,9 @@ function Badge({ children }) {
     s,
   )
     ? "green"
-    : /pending|evidence|grace|review|assessment/.test(s)
+    : /pending|evidence|grace|review|assessment|recommended|initiated/.test(s)
       ? "amber"
-      : /lapsed|failed|rejected/.test(s)
+      : /lapsed|failed|rejected|declined|expired|cancelled/.test(s)
         ? "red"
         : /draft/.test(s)
           ? "gray"
@@ -679,7 +688,7 @@ export default function App() {
         product: record.product,
         amount: record.amount,
         premium: record.premium || 0,
-        status: "In force",
+        status: "Active",
       },
     });
     await request(session, "/portfolio/applications/" + record.id, {
@@ -696,15 +705,42 @@ export default function App() {
     setModal({ type: "detail", entity: "policy", record: created.data });
     notify("Policy issued and saved.");
   };
-  const updateClaim = async (record) => {
-    const status = record.status === "Approved" ? "Settled" : "Approved";
-    const updated = await request(session, "/portfolio/claims/" + record.id, {
-      method: "PUT",
-      body: { status },
-    });
-    setClaims((c) => c.map((x) => (x.id === record.id ? updated.data : x)));
-    setModal({ type: "detail", entity: "claim", record: updated.data });
-    notify(status === "Settled" ? "Settlement saved." : "Claim approval saved.");
+  // The shared workflow panels name claim actions by MIPAS permission; Nsure grants them as capabilities.
+  const workflowProfile = profile && {
+    ...profile,
+    canUpdateClaims: profile.canAssessClaims,
+    canSettleClaims: profile.canApproveClaims,
+  };
+  // KYC or EDD outcome: VERIFIED, or FAILED with a reason the customer sees. Returns the updated customer, or null.
+  const reviewCustomer = async (review, customer, decision, reason) => {
+    try {
+      const updated = await request(session, "/portfolio/customers/" + customer.id + "/" + review, {
+        method: "POST",
+        body: { decision, reason },
+      });
+      setCustomers((rows) => rows.map((row) => (row.id === customer.id ? updated.data : row)));
+      setModal({ type: "detail", entity: "customer", record: updated.data });
+      notify(
+        customer.name + " " + review.toUpperCase() +
+          (decision === "VERIFIED" ? " review is verified." : " review is rejected."),
+      );
+      return true;
+    } catch (error) {
+      notify(error.message);
+      return false;
+    }
+  };
+  // A workflow action returned the record's new state: keep the list and the open detail in step.
+  const policyUpdated = (record) => {
+    setPolicies((rows) => rows.map((row) => (row.id === record.id ? record : row)));
+    setModal({ type: "detail", entity: "policy", record });
+    if (record.status === "Active") {
+      request(session, "/portfolio/receipts").then((r) => setReceipts(r.data)).catch(() => {});
+    }
+  };
+  const claimUpdated = (record) => {
+    setClaims((rows) => rows.map((row) => (row.id === record.id ? record : row)));
+    setModal({ type: "detail", entity: "claim", record });
   };
   if (!loggedIn) return <Login onLogin={handleLogin} />;
   if (customerPortal) {
@@ -899,7 +935,7 @@ export default function App() {
         <div className="stat-grid">
           <Stat
             label="Active policies"
-            value={policies.filter((policy) => policy.status === "In force").length}
+            value={policies.filter((policy) => policy.status === "Active").length}
             change="8.2%"
             icon="ShieldCheck"
           />
@@ -1176,7 +1212,7 @@ export default function App() {
           subtitle="Select a customer to explore their profile."
         >
           {Filters({
-            statuses: ["All", "Verified", "Pending KYC"],
+            statuses: ["All", "Verified", "Pending KYC", "KYC failed"],
             count: customers.length,
           })}
           <div className="table-wrap">
@@ -1248,7 +1284,7 @@ export default function App() {
         rows: policies,
         type: "policy",
         action: "New application",
-        statuses: ["All", "In force", "Grace period", "Lapsed"],
+        statuses: ["All", ...POLICY_STATES],
       },
       claims: {
         title: "Here for the moments that matter.",
@@ -1256,13 +1292,7 @@ export default function App() {
         rows: claims,
         type: "claim",
         action: "Register claim",
-        statuses: [
-          "All",
-          "Assessment",
-          "Evidence needed",
-          "Approved",
-          "Settled",
-        ],
+        statuses: ["All", ...CLAIM_STATES],
       },
       collections: {
         title: "A clearer view of your collections.",
@@ -1876,19 +1906,26 @@ export default function App() {
             />
           )}
           {modal.type === "claim" && (
-            <ClaimForm
-              customers={customers}
-              products={products}
+            <ClaimLodgeForm
+              policies={policies.filter((p) => ["Active", "Lapsed"].includes(p.status))}
               onCancel={close}
               onSave={async (data) => {
-                const created = await request(session, "/portfolio/claims", {
-                  method: "POST",
-                  body: { ...data, status: "Evidence needed" },
-                });
-                setClaims((c) => [created.data, ...c]);
-                close();
-                go("claims");
-                notify("Claim saved.");
+                try {
+                  const created = await request(session, "/portfolio/claims", {
+                    method: "POST",
+                    body: data,
+                  });
+                  setClaims((c) => [created.data, ...c]);
+                  go("claims");
+                  setModal({ type: "detail", entity: "claim", record: created.data });
+                  notify(
+                    created.data.status === "Approved"
+                      ? created.data.id + " passed every check and is approved straight through."
+                      : created.data.id + " is lodged and sent for review.",
+                  );
+                } catch (error) {
+                  notify(error.message);
+                }
               }}
             />
           )}
@@ -1976,7 +2013,11 @@ export default function App() {
                 });
                 notify("Underwriting accepted and saved.");
               }}
-              onClaim={updateClaim}
+              session={session}
+              profile={workflowProfile}
+              onPolicyUpdated={policyUpdated}
+              onClaimUpdated={claimUpdated}
+              onReview={reviewCustomer}
               onReceipt={async (r) => {
                 const updated = await request(session, "/portfolio/receipts/" + r.id, {
                   method: "PUT",
@@ -1989,22 +2030,6 @@ export default function App() {
                   record: updated.data,
                 });
                 notify("Receipt saved.");
-              }}
-              onVerifyKyc={async (record) => {
-                const updated = await request(
-                  session,
-                  "/portfolio/customers/" + record.id,
-                  { method: "PUT", body: { status: "Verified" } },
-                );
-                setCustomers((rows) =>
-                  rows.map((row) => (row.id === record.id ? updated.data : row)),
-                );
-                setModal({
-                  type: "detail",
-                  entity: "customer",
-                  record: updated.data,
-                });
-                notify("KYC successful. Customer is verified.");
               }}
               notify={notify}
             />
@@ -2188,13 +2213,19 @@ function CustomerForm({ onSave, onCancel }) {
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const f = new FormData(e.currentTarget);
-        onSave(Object.fromEntries(f));
+        const f = Object.fromEntries(new FormData(e.currentTarget));
+        onSave({ ...f, pep: f.pep === "on" });
       }}
     >
       <p className="subtitle">
         Add a fictional customer to explore the onboarding journey.
       </p>
+      <label className="form-label full">
+        <span>
+          <input type="checkbox" name="pep" /> Politically exposed person (PEP): needs an enhanced due diligence
+          review before choosing cover
+        </span>
+      </label>
       <div className="field-grid">
         <Field label="Full name" full>
           <input
@@ -2242,81 +2273,6 @@ function CustomerForm({ onSave, onCancel }) {
     </form>
   );
 }
-function ClaimForm({ customers, products = [], onSave, onCancel }) {
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        const f = Object.fromEntries(new FormData(e.currentTarget));
-        onSave({ ...f, amount: Number(f.amount) });
-      }}
-    >
-      <p className="subtitle">
-        Start with the essentials. Evidence can be gathered next.
-      </p>
-      <div className="field-grid">
-        <Field label="Customer">
-          <Select name="name" className="select">
-            {customers.map((c) => (
-              <option key={c.id}>{c.name}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Product">
-          <Select name="product" className="select">
-            {products.map((p) => (
-              <option key={p.name}>{p.name}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Benefit type">
-          <Select name="type" className="select">
-            <option>Hospital admission</option>
-            <option>Funeral benefit</option>
-            <option>Death benefit</option>
-            <option>Disability benefit</option>
-          </Select>
-        </Field>
-        <Field label="Claimed amount (BWP)">
-          <input
-            name="amount"
-            className="input"
-            type="number"
-            min="1"
-            required
-            placeholder="25000"
-          />
-        </Field>
-        <Field label="Event date">
-          <input
-            name="eventDate"
-            className="input"
-            type="date"
-            max="2026-09-29"
-            required
-          />
-        </Field>
-        <Field label="Brief description" full>
-          <textarea
-            name="description"
-            className="textarea"
-            required
-            placeholder="Tell us a little about the event…"
-            rows={3}
-          />
-        </Field>
-      </div>
-      <div className="modal-footer">
-        <Button type="button" variant="secondary" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" icon="Check">
-          Register demo claim
-        </Button>
-      </div>
-    </form>
-  );
-}
 function Detail({
   entity,
   record: r,
@@ -2326,13 +2282,20 @@ function Detail({
   onGo,
   onIssue,
   onApprove,
-  onClaim,
   onReceipt,
-  onVerifyKyc,
   notify,
+  session,
+  profile,
+  onPolicyUpdated,
+  onClaimUpdated,
+  onReview,
 }) {
   const [tab, setTab] = useState("Overview");
   const [evidence, setEvidence] = useState(false);
+  // Policies, claims and customer reviews have a real workflow log; the other records keep the sample timeline.
+  const historyType =
+    entity === "policy" ? "policy" : entity === "claim" ? "claim" : entity === "customer" ? ["kyc", "edd"] : null;
+  const workflowRecord = entity === "policy" || entity === "claim";
   const [summary, setSummary] = useState(false);
   return (
     <>
@@ -2372,6 +2335,9 @@ function Detail({
                   ["Email", r.email],
                   ["Phone", r.phone],
                   ["Verification", r.status],
+                  ["EDD review", r.pep ? r.eddStatus || "PENDING" : "Not required"],
+                  ...(r.kycRejectionReason ? [["KYC rejected because", r.kycRejectionReason]] : []),
+                  ...(r.eddRejectionReason ? [["EDD rejected because", r.eddRejectionReason]] : []),
                   [
                     "Linked policies",
                     policies.filter((p) => p.name === r.name).length,
@@ -2404,10 +2370,25 @@ function Detail({
                   detail="This customer has no policies yet."
                 />
               )}
-              {r.status === "Pending KYC" && (
-                <Button icon="BadgeCheck" onClick={() => onVerifyKyc(r)}>
-                  Mark KYC successful
-                </Button>
+              {profile?.canReviewCustomers && (
+                <div className="detail-actions">
+                  {r.status !== "Verified" && (
+                    <Button icon="BadgeCheck" onClick={() => onReview("kyc", r, "VERIFIED")}>
+                      Mark KYC successful
+                    </Button>
+                  )}
+                  {r.status !== "KYC failed" && (
+                    <ReasonAction label="Reject KYC" onConfirm={(reason) => onReview("kyc", r, "FAILED", reason)} />
+                  )}
+                  {r.pep && r.status === "Verified" && r.eddStatus !== "VERIFIED" && (
+                    <Button icon="ShieldCheck" onClick={() => onReview("edd", r, "VERIFIED")}>
+                      Verify EDD
+                    </Button>
+                  )}
+                  {r.pep && r.status === "Verified" && r.eddStatus === "PENDING" && (
+                    <ReasonAction label="Reject EDD" onConfirm={(reason) => onReview("edd", r, "FAILED", reason)} />
+                  )}
+                </div>
               )}
               <Button
                 variant="secondary"
@@ -2464,19 +2445,26 @@ function Detail({
                   </div>
                 ))}
               </div>
-              {entity === "claim" && (
-                <div className="notice">
-                  <Icon name="HeartHandshake" />
-                  <p>
-                    <strong>{r.type}</strong>
-                    <br />
-                    {r.description ||
-                      "Review the supporting evidence and benefit details before making a decision."}
-                  </p>
-                </div>
+              {entity === "policy" && (
+                <PolicyWorkflowPanel
+                  session={session}
+                  policy={{ ...r, reviewedBy: r.statusChangedBy, reviewNote: r.statusNote }}
+                  canManage={Boolean(profile?.canManagePolicies)}
+                  onUpdated={onPolicyUpdated}
+                  notify={notify}
+                />
               )}
-              <h3 className="section-title">Evidence checklist</h3>
-              {[
+              {entity === "claim" && (
+                <ClaimWorkflowPanel
+                  session={session}
+                  claim={r}
+                  profile={profile}
+                  onUpdated={onClaimUpdated}
+                  notify={notify}
+                />
+              )}
+              {!workflowRecord && <h3 className="section-title">Evidence checklist</h3>}
+              {!workflowRecord && [
                 "Identity verification",
                 "Application / claim declaration",
                 "Supporting documentation",
@@ -2515,17 +2503,6 @@ function Detail({
                       Simulate underwriting acceptance
                     </Button>
                   )}
-                {entity === "claim" && !["Settled"].includes(r.status) && (
-                  <Button
-                    icon="Check"
-                    disabled={r.status === "Evidence needed" && !evidence}
-                    onClick={() => onClaim(r)}
-                  >
-                    {r.status === "Approved"
-                      ? "Simulate settlement"
-                      : "Simulate approval"}
-                  </Button>
-                )}
                 {entity === "collection" && r.status !== "Paid" && (
                   <Button icon="Wallet" onClick={() => onReceipt(r)}>
                     Record demo receipt
@@ -2547,10 +2524,12 @@ function Detail({
                   </Button>
                 )}
               </div>
-              <p className="muted small">
-                Actions are simulated. No cover, financial transaction, or real
-                approval is created.
-              </p>
+              {!workflowRecord && (
+                <p className="muted small">
+                  Actions are simulated. No cover, financial transaction, or real
+                  approval is created.
+                </p>
+              )}
             </>
           )}
           <div className="ai-summary">
@@ -2603,6 +2582,8 @@ function Detail({
             Simulate evidence received
           </Button>
         </>
+      ) : historyType ? (
+        <WorkflowTimeline session={session} type={historyType} refId={r.id} version={JSON.stringify(r)} />
       ) : (
         <div className="timeline">
           {[

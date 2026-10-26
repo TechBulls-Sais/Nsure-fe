@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { request } from "./api";
 import { money, initials } from "./data";
+import {
+  BeneficiaryForm,
+  BeneficiaryList,
+  ClaimChecks,
+  ClaimLodgeForm,
+  PayForm,
+  formatDate,
+} from "./Workflow";
 
 const productImages = {
   "Term Life": "/products/term-life.jpg",
@@ -16,16 +24,22 @@ export default function CustomerPortal({ session, notify, logout, Icon, Button, 
   const [policies, setPolicies] = useState([]);
   const [error, setError] = useState("");
   const [busyProduct, setBusyProduct] = useState("");
+  const [claims, setClaims] = useState([]);
+  const [acting, setActing] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+  const canBuy = Boolean(profile?.kycVerified && !profile?.eddBlocked);
 
   async function load() {
-    const [meR, productsR, policiesR] = await Promise.all([
+    const [meR, productsR, policiesR, claimsR] = await Promise.all([
       request(session, "/portal/me"),
       request(session, "/portal/products"),
       request(session, "/portal/policies"),
+      request(session, "/portal/claims"),
     ]);
     setProfile(meR.data);
     setProducts(productsR.data);
     setPolicies(policiesR.data);
+    setClaims(claimsR.data);
   }
 
   useEffect(() => {
@@ -48,12 +62,29 @@ export default function CustomerPortal({ session, notify, logout, Icon, Button, 
       });
       await load();
       notify(
-        "Policy " + result.data.policyId + " is in force for " + product.name + ".",
+        product.name + " is reserved as " + result.data.policyId + ". Pay the first premium to start your cover.",
       );
     } catch (err) {
       setError(err.message);
     } finally {
       setBusyProduct("");
+    }
+  }
+
+  // A workflow call on the customer's own policy or claim, then a fresh load of the portal.
+  async function act(path, body, done, method = "POST") {
+    setActing(true);
+    setError("");
+    try {
+      await request(session, path, { method, body });
+      await load();
+      if (done) notify(done);
+      return true;
+    } catch (err) {
+      notify(err.message);
+      return false;
+    } finally {
+      setActing(false);
     }
   }
 
@@ -94,8 +125,25 @@ export default function CustomerPortal({ session, notify, logout, Icon, Button, 
       {!profile.kycVerified && (
         <div className="notice">
           <p>
-            <strong>KYC is still pending.</strong> An onboarding specialist must
-            mark your verification successful before you can buy a policy.
+            {profile.kycRejectionReason ? (
+              <>
+                <strong>We could not verify your identity:</strong> {profile.kycRejectionReason}. Please contact us.
+              </>
+            ) : (
+              <>
+                <strong>KYC is still pending.</strong> An onboarding specialist must
+                mark your verification successful before you can buy a policy.
+              </>
+            )}
+          </p>
+        </div>
+      )}
+      {profile.kycVerified && profile.eddBlocked && (
+        <div className="notice">
+          <p>
+            <strong>An extra identity review is in progress.</strong> You can browse cover, and buy it once the
+            review is verified.
+            {profile.eddRejectionReason ? " Reason: " + profile.eddRejectionReason : ""}
           </p>
         </div>
       )}
@@ -104,37 +152,160 @@ export default function CustomerPortal({ session, notify, logout, Icon, Button, 
         <div className="panel-header">
           <div>
             <h2>Your policies</h2>
-            <p className="subtitle">Cover already linked to your account.</p>
+            <p className="subtitle">
+              A policy you buy is reserved until you pay its first premium; cover starts once it is paid.
+            </p>
           </div>
         </div>
         {policies.length === 0 ? (
           <p className="muted">No policies yet. Pick a product below to get started.</p>
         ) : (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Policy</th>
-                  <th>Product</th>
-                  <th>Cover</th>
-                  <th>Premium</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {policies.map((policy) => (
-                  <tr key={policy.id}>
-                    <td>{policy.id}</td>
-                    <td>{policy.product}</td>
-                    <td>{money(policy.amount)}</td>
-                    <td>{money(policy.premium)}</td>
-                    <td>
-                      <Badge>{policy.status}</Badge>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="portal-policies">
+            {policies.map((policy) => {
+              const editable = ["Pending Payment", "Active"].includes(policy.status);
+              return (
+                <article className="portal-policy" key={policy.id}>
+                  <header>
+                    <div>
+                      <strong>{policy.product}</strong>
+                      <small>
+                        {policy.id} · cover {money(policy.amount)} · {money(policy.premium)} / month
+                      </small>
+                    </div>
+                    <Badge>{policy.status}</Badge>
+                  </header>
+                  {policy.status === "Pending Payment" && (
+                    <p className="muted small">
+                      {policy.paymentDueBy
+                        ? "Pay by " + formatDate(policy.paymentDueBy) + " or the reservation expires."
+                        : "Reserved for you with no deadline."}
+                    </p>
+                  )}
+                  {policy.status === "Active" && (
+                    <p className="muted small">
+                      Cover since {formatDate(policy.coverStartDate)} · next premium due{" "}
+                      {formatDate(policy.nextPremiumDue)}
+                      {policy.inGrace ? " · overdue: pay by " + formatDate(policy.gracePeriodEnd) + " to keep your cover" : ""}
+                    </p>
+                  )}
+                  {policy.status === "Lapsed" && (
+                    <p className="muted small">Lapsed on {formatDate(policy.lapseDate)}: the premium was not paid.</p>
+                  )}
+                  {policy.status === "Expired" && (
+                    <p className="muted small">Not paid in time. Buy the cover again to restart.</p>
+                  )}
+                  {policy.status === "Cancelled" && (
+                    <p className="muted small">Cancelled{policy.statusNote ? ": " + policy.statusNote : "."}</p>
+                  )}
+                  {editable && (
+                    <PayForm
+                      busy={acting}
+                      label={(policy.status === "Active" ? "Pay premium " : "Pay ") + money(policy.premium)}
+                      onPay={(method) =>
+                        act(
+                          "/portal/policies/" + policy.id + "/pay",
+                          { method },
+                          policy.status === "Active"
+                            ? "Premium paid for " + policy.id + "."
+                            : policy.id + " is paid. Your cover has started.",
+                        )
+                      }
+                    />
+                  )}
+                  <details>
+                    <summary>Beneficiaries · {policy.beneficiaries?.length || 0} of 5</summary>
+                    <BeneficiaryList
+                      beneficiaries={policy.beneficiaries}
+                      busy={acting}
+                      onRemove={
+                        editable
+                          ? (b) =>
+                              act(
+                                "/portal/policies/" + policy.id + "/beneficiaries/" + b.id,
+                                undefined,
+                                b.fullName + " removed.",
+                                "DELETE",
+                              )
+                          : null
+                      }
+                    />
+                    {editable && (policy.beneficiaries?.length || 0) < 5 && (
+                      <BeneficiaryForm
+                        busy={acting}
+                        onSave={(body) =>
+                          act("/portal/policies/" + policy.id + "/beneficiaries", body, "Beneficiary added.")
+                        }
+                      />
+                    )}
+                  </details>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Your claims</h2>
+            <p className="subtitle">
+              We check a claim straight away. A clear claim that pays a registered beneficiary can be approved at
+              once; others are reviewed by our claims team.
+            </p>
+          </div>
+          {!claiming && policies.some((p) => ["Active", "Lapsed"].includes(p.status)) && (
+            <Button onClick={() => setClaiming(true)}>Make a claim</Button>
+          )}
+        </div>
+        {claiming && (
+          <ClaimLodgeForm
+            policies={policies.filter((p) => ["Active", "Lapsed"].includes(p.status))}
+            busy={acting}
+            submitLabel="Submit claim"
+            onCancel={() => setClaiming(false)}
+            onSave={async (body) => {
+              const ok = await act("/portal/claims", body, "Your claim is received.");
+              if (ok) setClaiming(false);
+            }}
+          />
+        )}
+        {claims.length === 0 ? (
+          !claiming && <p className="muted">You have not made a claim.</p>
+        ) : (
+          <div className="portal-policies">
+            {claims.map((claim) => (
+              <article className="portal-policy" key={claim.id}>
+                <header>
+                  <div>
+                    <strong>
+                      {claim.id} · {claim.product}
+                    </strong>
+                    <small>
+                      Policy {claim.policy} · {claim.claimant}
+                      {claim.eventDate ? " · event " + formatDate(claim.eventDate) : ""}
+                    </small>
+                  </div>
+                  <Badge>{claim.status}</Badge>
+                </header>
+                {claim.status === "Rejected" && <p className="muted small">Not approved: {claim.rejectionReason}</p>}
+                {claim.status === "Approved" && (
+                  <p className="muted small">
+                    Approved for {money(claim.payoutAmount)}. The payout to {claim.payee?.name} is on its way.
+                  </p>
+                )}
+                {claim.status === "Paid" && (
+                  <p className="muted small">
+                    {money(claim.payoutAmount)} paid to {claim.payee?.name}
+                    {claim.paidAt ? " on " + formatDate(claim.paidAt) : ""}.
+                  </p>
+                )}
+                <details>
+                  <summary>Checks</summary>
+                  <ClaimChecks checks={claim.checks} />
+                </details>
+              </article>
+            ))}
           </div>
         )}
       </section>
@@ -170,7 +341,7 @@ export default function CustomerPortal({ session, notify, logout, Icon, Button, 
                           <small> / month</small>
                         </div>
                         <Button
-                          disabled={!profile.kycVerified || busyProduct === product.name}
+                          disabled={!canBuy || busyProduct === product.name}
                           onClick={() => buy(product)}
                         >
                           {busyProduct === product.name ? "Buying…" : "Buy policy"}
@@ -188,7 +359,7 @@ export default function CustomerPortal({ session, notify, logout, Icon, Button, 
                       <strong>{product.cover}</strong>
                     </div>
                     <Button
-                      disabled={!profile.kycVerified || busyProduct === product.name}
+                      disabled={!canBuy || busyProduct === product.name}
                       onClick={() => buy(product)}
                     >
                       {busyProduct === product.name ? "Buying…" : "Buy policy"}
