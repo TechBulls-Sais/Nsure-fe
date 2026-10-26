@@ -99,6 +99,7 @@ import ProductConfig from "./ProductConfig";
 import { request } from "./api";
 import AssistantStudio from "./AssistantStudio";
 import Platform from "./Platform";
+import CustomerPortal from "./CustomerPortal";
 import {
   AnimatedWorkspace,
   AnimatedMetric,
@@ -356,6 +357,7 @@ function Stat({
 }
 
 function Login({ onLogin }) {
+  const [mode, setMode] = useState("workspace");
   const [email, setEmail] = useState("admin");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -402,7 +404,7 @@ function Login({ onLogin }) {
             </div>
           </div>
         </div>
-        <p className="login-note">Nsure Life © 2026 · Frontend showcase</p>
+        <p className="login-note">Nsure Life © 2026</p>
       </section>
       <section className="login-card">
         <div className="login-form">
@@ -411,7 +413,35 @@ function Login({ onLogin }) {
             <br />
             next chapter.
           </h2>
-          <p className="subtitle">Sign in and make yourself at home. 👋</p>
+          <p className="subtitle">Sign in and make yourself at home.</p>
+          <div className="access-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "workspace"}
+              className={"filter-tab " + (mode === "workspace" ? "active" : "")}
+              onClick={() => {
+                setMode("workspace");
+                setEmail("admin");
+                setError("");
+              }}
+            >
+              Workspace
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "customer"}
+              className={"filter-tab " + (mode === "customer" ? "active" : "")}
+              onClick={() => {
+                setMode("customer");
+                setEmail("amara");
+                setError("");
+              }}
+            >
+              Customer portal
+            </button>
+          </div>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -419,9 +449,20 @@ function Login({ onLogin }) {
               setBusy(true);
               const next = { username: email.trim().toLowerCase(), password };
               try {
-                await request(next, "/portfolio/customers");
+                const me = await request(next, "/me");
+                const portal = !!me.data.customerPortal;
+                if (mode === "customer" && !portal) {
+                  throw Object.assign(new Error("This account is for the operations workspace."), {
+                    status: 403,
+                  });
+                }
+                if (mode === "workspace" && portal) {
+                  throw Object.assign(new Error("This account is for the customer portal."), {
+                    status: 403,
+                  });
+                }
                 sessionStorage.setItem("nsure-session", JSON.stringify(next));
-                onLogin(next);
+                onLogin(next, me.data);
               } catch (err) {
                 setError(err.status === 401 ? "Username or password is incorrect." : err.message);
               } finally {
@@ -461,18 +502,25 @@ function Login({ onLogin }) {
             </Field>
             {error && <p className="form-error">{error}</p>}
             <div className="login-hint">
-              <Icon name="Info" small /> Dev admin username is admin. Password is password.
+              <Icon name="Info" small />
+              {mode === "customer"
+                ? "Try amara, thabo, or naledi. Password is password."
+                : "Staff: admin, onboarding, claims. Password is password."}
             </div>
             <Button type="submit" icon="ArrowRight" disabled={busy}>
-              {busy ? "Signing in…" : "Enter workspace"}
+              {busy
+                ? "Signing in…"
+                : mode === "customer"
+                  ? "Enter customer portal"
+                  : "Enter workspace"}
             </Button>
           </form>
           <div className="notice">
             <Icon name="ShieldCheck" />
             <p>
-              <strong>A safe space to explore.</strong>
+              <strong>Your Nsure account.</strong>
               <br />
-              Sign-in uses your Nsure account. Records are loaded from the database.
+              Workspace users manage KYC and policies. Customers choose a product and buy cover.
             </p>
           </div>
           <p className="login-note">Made for people who care for people.</p>
@@ -490,7 +538,9 @@ export default function App() {
       return null;
     }
   });
+  const [profile, setProfile] = useState(null);
   const loggedIn = Boolean(session);
+  const customerPortal = !!profile?.customerPortal;
   const [page, setPage] = useState(() => location.hash.slice(2) || "overview");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -509,6 +559,10 @@ export default function App() {
   const [compact, setCompact] = useState(false);
   const [period, setPeriod] = useState("Last 6 months");
   const notify = (msg) => setToast(msg);
+  const handleLogin = (next, me) => {
+    setSession(next);
+    setProfile(me);
+  };
   const go = (next) => {
     location.hash = "/" + next;
     setPage(next);
@@ -549,6 +603,7 @@ export default function App() {
   const logout = () => {
     sessionStorage.removeItem("nsure-session");
     setSession(null);
+    setProfile(null);
     setModal(null);
   };
   useEffect(() => {
@@ -556,6 +611,10 @@ export default function App() {
     let active = true;
     (async () => {
       try {
+        const meR = await request(session, "/me");
+        if (!active) return;
+        setProfile(meR.data);
+        if (meR.data.customerPortal) return;
         const [
           customersR,
           applicationsR,
@@ -647,7 +706,43 @@ export default function App() {
     setModal({ type: "detail", entity: "claim", record: updated.data });
     notify(status === "Settled" ? "Settlement saved." : "Claim approval saved.");
   };
-  if (!loggedIn) return <Login onLogin={setSession} />;
+  if (!loggedIn) return <Login onLogin={handleLogin} />;
+  if (customerPortal) {
+    return (
+      <div className="app-shell customer-shell">
+        {toast && (
+          <div className="toast" role="status">
+            <Icon name="CircleCheck" />
+            {toast}
+            <button
+              className="icon-btn"
+              aria-label="Dismiss notification"
+              onClick={() => setToast("")}
+            >
+              <Icon name="X" small />
+            </button>
+          </div>
+        )}
+        <CustomerPortal
+          session={session}
+          notify={notify}
+          logout={logout}
+          Icon={Icon}
+          Button={Button}
+          Badge={Badge}
+        />
+      </div>
+    );
+  }
+  if (!profile) {
+    return (
+      <div className="login-page">
+        <p className="subtitle" style={{ margin: "auto" }}>
+          Loading workspace…
+        </p>
+      </div>
+    );
+  }
 
   function Filters({
     statuses = ["All"],
@@ -750,7 +845,7 @@ export default function App() {
         <section className="hero">
           <div className="hero-copy">
             <span className="eyebrow">
-              <Icon name="Sparkles" small /> NSURE INTELLIGENCE · DEMO
+              <Icon name="Sparkles" small /> NSURE INTELLIGENCE
             </span>
             <h2>
               A little intelligence.
@@ -1053,7 +1148,7 @@ export default function App() {
         </Heading>
         <div className="stat-grid three">
           <Stat
-            label="Customers in this demo"
+            label="Customers"
             value={customers.length}
             change="2 new"
             note="this week"
@@ -1261,7 +1356,7 @@ export default function App() {
       <>
         <Heading
           title="Different lives. Thoughtful protection."
-          subtitle="Explore the product experiences in your showcase."
+          subtitle="Explore products and open an application for a customer."
         >
           <Button icon="Settings2" onClick={() => go("product-config")}>
             Configure products
@@ -1270,8 +1365,8 @@ export default function App() {
         <div className="notice">
           <Icon name="Info" />
           <p>
-            All benefits and premiums below are illustrative demo figures, not
-            approved insurance quotations.
+            Cover and premium figures come from the product catalogue in the
+            database.
           </p>
         </div>
         <div className="product-grid">
@@ -1325,7 +1420,7 @@ export default function App() {
                       <span className={"product-icon " + p.color}>
                         <Icon name={p.icon} />
                       </span>
-                      <Badge>Demo product</Badge>
+                      <Badge>Catalogue</Badge>
                     </div>
                     <h2>{p.name}</h2>
                     <p>{p.description}</p>
@@ -1560,7 +1655,7 @@ export default function App() {
               Zero real-world transactions.
             </p>
             <span className="demo-pill">
-              <span className="live-dot" /> Demo mode
+              <span className="live-dot" /> Live workspace
             </span>
           </div>
           <a
@@ -1615,7 +1710,7 @@ export default function App() {
             </button>
             <MotionToggle />
             <span className="topbar-demo">
-              <span className="live-dot" /> AI showcase · Simulated
+              <span className="live-dot" /> Connected
             </span>
             <button
               className="icon-btn notification"
@@ -1675,7 +1770,7 @@ export default function App() {
             <span>
               Thoughtfully connected. <strong>Nsure Life.</strong>
             </span>
-            <span>Fictional data · No live transactions</span>
+            <span>Records from your Nsure database</span>
           </footer>
         </AnimatedWorkspace>
       </main>
@@ -1894,6 +1989,22 @@ export default function App() {
                   record: updated.data,
                 });
                 notify("Receipt saved.");
+              }}
+              onVerifyKyc={async (record) => {
+                const updated = await request(
+                  session,
+                  "/portfolio/customers/" + record.id,
+                  { method: "PUT", body: { status: "Verified" } },
+                );
+                setCustomers((rows) =>
+                  rows.map((row) => (row.id === record.id ? updated.data : row)),
+                );
+                setModal({
+                  type: "detail",
+                  entity: "customer",
+                  record: updated.data,
+                });
+                notify("KYC successful. Customer is verified.");
               }}
               notify={notify}
             />
@@ -2217,6 +2328,7 @@ function Detail({
   onApprove,
   onClaim,
   onReceipt,
+  onVerifyKyc,
   notify,
 }) {
   const [tab, setTab] = useState("Overview");
@@ -2291,6 +2403,11 @@ function Detail({
                   text="A fresh start"
                   detail="This customer has no policies yet."
                 />
+              )}
+              {r.status === "Pending KYC" && (
+                <Button icon="BadgeCheck" onClick={() => onVerifyKyc(r)}>
+                  Mark KYC successful
+                </Button>
               )}
               <Button
                 variant="secondary"

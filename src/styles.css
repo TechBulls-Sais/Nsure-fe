@@ -3479,3 +3479,55 @@ p {
     grid-template-columns: 1fr;
   }
 }
+
+.customer-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(214, 232, 214, 0.9), transparent 40%),
+    linear-gradient(180deg, #f7faf6 0%, #eef4ef 100%);
+}
+.customer-portal {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+.customer-portal-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+.customer-portal-account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(40, 70, 50, 0.08);
+  border-radius: 16px;
+  padding: 12px 14px;
+}
+.customer-portal-account small {
+  display: block;
+  color: #6b7a70;
+}
+.customer-portal .product-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.login-form .access-tabs {
+  margin: 0 0 18px;
+}
+@media (max-width: 720px) {
+  .customer-portal-top {
+    flex-direction: column;
+  }
+}
+
+.access-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 18px;
+}
