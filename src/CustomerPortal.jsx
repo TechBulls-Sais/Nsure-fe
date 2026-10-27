@@ -23,6 +23,7 @@ import {
   BeneficiaryForm,
   BeneficiaryList,
   ClaimChecks,
+  ClaimDocuments,
   ClaimLodgeForm,
   PayForm,
   formatDate,
@@ -647,6 +648,19 @@ export default function CustomerPortal({
                         Checks <ChevronDown size={14} aria-hidden="true" />
                       </summary>
                       <ClaimChecks checks={item.checks} />
+                    </details>
+                    <details className="customer-policy-details">
+                      <summary>
+                        Documents ({(item.documents || []).length}) <ChevronDown size={14} aria-hidden="true" />
+                      </summary>
+                      <ClaimDocuments
+                        session={session}
+                        claim={item}
+                        basePath={"/portfolio/shop/claims/" + item.id + "/documents"}
+                        canUpload
+                        onUploaded={onShop}
+                        notify={notify}
+                      />
                     </details>
                   </div>
                   <span className="customer-request-status">{item.status}</span>

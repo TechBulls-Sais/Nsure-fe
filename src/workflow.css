@@ -111,3 +111,69 @@
   gap: 8px;
   width: 100%;
 }
+
+/* Claim documents (ClaimDocuments in Workflow.jsx). */
+.wf-docs {
+  display: grid;
+  gap: 12px;
+}
+
+.wf-doc-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wf-doc-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 10px;
+}
+
+.wf-doc-list li > div {
+  display: grid;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.wf-doc-list small {
+  color: var(--muted, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.wf-doc-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wf-doc-upload {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--line, #d1d5db);
+  border-radius: 10px;
+}
+
+.wf-doc-upload .input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.wf-doc-upload small {
+  flex-basis: 100%;
+}
+
+.wf-doc-generate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}

@@ -5,14 +5,18 @@ import {
   CircleCheck,
   CircleX,
   Clock3,
+  Download,
+  Eye,
+  FileText,
   RotateCcw,
   ShieldCheck,
   Trash2,
+  Upload,
   UserPlus,
   Wallet,
   X,
 } from "lucide-react";
-import { request } from "./api";
+import { fetchFile, request, uploadFile } from "./api";
 import { money } from "./data";
 import "./workflow.css";
 
@@ -122,6 +126,158 @@ export function ClaimChecks({ checks = [] }) {
           <em>{check.result}</em>
         </div>
       ))}
+    </div>
+  );
+}
+
+// Same list and limit as ClaimDocumentService on the server.
+export const DOCUMENT_TYPES = [
+  "Identity document",
+  "Signed declaration",
+  "Death certificate",
+  "Medical report",
+  "Hospital bill",
+  "Supporting evidence",
+];
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+const DOCUMENT_ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
+
+function fileSize(bytes) {
+  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+/**
+ * Evidence on one claim: list, view, download and (while the claim is open) upload. `basePath` is the staff
+ * path (/portfolio/claims/{ref}/documents) or the customer's (/portfolio/shop/claims/{ref}/documents);
+ * `onUploaded` receives whatever that endpoint answers.
+ */
+export function ClaimDocuments({ session, claim, basePath, canUpload, canGenerate, onUploaded, notify }) {
+  const documents = claim.documents || [];
+  const open = !["Paid", "Rejected"].includes(claim.status);
+  const [type, setType] = useState(DOCUMENT_TYPES[0]);
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [inputKey, setInputKey] = useState(0);
+
+  const choose = (event) => {
+    const picked = event.target.files?.[0] || null;
+    if (picked && picked.size > MAX_DOCUMENT_BYTES) {
+      notify("Files can be at most 10 MB.");
+      setInputKey((k) => k + 1);
+      setFile(null);
+      return;
+    }
+    setFile(picked);
+  };
+
+  const upload = async () => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const result = await uploadFile(session, basePath, file, { type });
+      onUploaded(result.data);
+      notify(file.name + " uploaded.");
+      setFile(null);
+      setInputKey((k) => k + 1);
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Staff only: a PDF snapshot of the claim, filed with its documents. Allowed on closed claims too.
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const result = await request(session, basePath + "/summary", { method: "POST" });
+      onUploaded(result.data);
+      notify("Claim summary generated.");
+    } catch (error) {
+      notify(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The tab opens on the click itself so the popup blocker allows it; the file arrives a moment later.
+  const view = async (doc) => {
+    const tab = window.open("", "_blank");
+    try {
+      const url = URL.createObjectURL(await fetchFile(session, basePath + "/" + doc.id));
+      if (tab) tab.location.href = url;
+      else window.location.assign(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      tab?.close();
+      notify(error.message);
+    }
+  };
+
+  const download = async (doc) => {
+    try {
+      const url = URL.createObjectURL(await fetchFile(session, basePath + "/" + doc.id));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = doc.fileName;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      notify(error.message);
+    }
+  };
+
+  return (
+    <div className="wf-docs">
+      {canGenerate && (
+        <div className="wf-doc-generate">
+          <Btn variant="secondary" icon={FileText} disabled={busy} onClick={generate}>
+            Generate claim summary
+          </Btn>
+          <small className="muted">A PDF of the claim, checks, payee, decision and history as they stand now.</small>
+        </div>
+      )}
+      {documents.length === 0 ? (
+        <p className="muted small">No documents have been uploaded for this claim yet.</p>
+      ) : (
+        <ul className="wf-doc-list">
+          {documents.map((doc) => (
+            <li key={doc.id}>
+              <FileText size={18} aria-hidden="true" />
+              <div>
+                <strong>{doc.type}</strong>
+                <small>
+                  {doc.fileName} · {fileSize(doc.size)} · {doc.uploadedBy}, {formatDate(doc.uploadedAt)}
+                </small>
+              </div>
+              <span className="wf-doc-actions">
+                <Btn variant="secondary" icon={Eye} onClick={() => view(doc)} aria-label={"View " + doc.fileName}>
+                  View
+                </Btn>
+                <Btn variant="secondary" icon={Download} onClick={() => download(doc)} aria-label={"Download " + doc.fileName}>
+                  Download
+                </Btn>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canUpload && open && (
+        <div className="wf-doc-upload">
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)} aria-label="Document type">
+            {DOCUMENT_TYPES.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </select>
+          <input key={inputKey} className="input" type="file" accept={DOCUMENT_ACCEPT} onChange={choose} aria-label="Document file" />
+          <Btn icon={Upload} disabled={!file || busy} onClick={upload}>
+            {busy ? "Uploading…" : "Upload"}
+          </Btn>
+          <small className="muted">PDF, JPG or PNG, up to 10 MB.</small>
+        </div>
+      )}
+      {canUpload && !open && <p className="muted small">This claim is closed, so no more documents can be added.</p>}
     </div>
   );
 }
