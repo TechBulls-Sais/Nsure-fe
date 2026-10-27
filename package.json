@@ -1,5 +1,5 @@
 {
-  "name": "nsure-life-showcase",
+  "name": "nsure-fe",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -8,7 +8,12 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "format": "prettier --write src index.html README.md",
-    "test": "node scripts/smoke.cjs"
+    "test": "node scripts/smoke.cjs",
+    "test:smoke": "node scripts/smoke.cjs",
+    "test:products": "node scripts/product-config-smoke.cjs",
+    "test:intelligence": "node scripts/intelligence-smoke.cjs",
+    "test:select": "node scripts/select-smoke.cjs",
+    "test:landing": "node scripts/landing-smoke.cjs"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",

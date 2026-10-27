@@ -33,8 +33,8 @@ const os = require("node:os");
     await page
       .getByRole("textbox", { name: "Describe a product" })
       .fill("Create a hospital cash plan for individuals");
-    await page.getByRole("button", { name: "Generate demo blueprint" }).click();
-    await page.getByText("Working on your demo…").waitFor();
+    await page.getByRole("button", { name: "Generate blueprint" }).click();
+    await page.getByText("Working on it…").waitFor();
     await page.getByLabel("Product name", { exact: true }).waitFor();
     assert.equal(
       await page.getByLabel("Product name", { exact: true }).inputValue(),
@@ -61,7 +61,7 @@ const os = require("node:os");
     await page.getByText(/Nothing has been sent/).waitFor();
     await page.getByRole("button", { name: "Clear conversation" }).click();
     await page
-      .getByRole("textbox", { name: "Message the demo assistant" })
+      .getByRole("textbox", { name: "Message the assistant" })
       .fill("Show document extraction");
     await page.keyboard.press("Enter");
     await page.getByText(/No document was actually processed/).waitFor();

@@ -299,8 +299,8 @@ export function IntelligenceOrb({ small = false }) {
 export function AIComposer({
   onSubmit,
   busy = false,
-  placeholder = "Ask anything about your demo workspace…",
-  label = "Message the demo assistant",
+  placeholder = "Ask anything about your workspace…",
+  label = "Message the assistant",
   buttonLabel = "Send message",
   onSample,
 }) {
@@ -348,7 +348,7 @@ export function AIComposer({
       <div className="composer-tools">
         <div>
           <span className="composer-model">
-            <Sparkles size={13} /> Nsure intelligence <span>DEMO</span>
+            <Sparkles size={13} /> Nsure intelligence
           </span>
           {onSample && (
             <button
@@ -384,7 +384,7 @@ export function ThinkingSteps({
   steps = [
     "Reading sample context",
     "Organizing the key details",
-    "Preparing a demo response",
+    "Preparing a response",
   ],
 }) {
   const [index, setIndex] = useState(0);
@@ -402,7 +402,7 @@ export function ThinkingSteps({
         <Sparkles size={16} />
       </span>
       <div>
-        <ShimmerText>Working on your demo…</ShimmerText>
+        <ShimmerText>Working on it…</ShimmerText>
         <AnimatePresence mode="wait">
           <motion.p
             key={index}
@@ -619,7 +619,7 @@ export function ProductDraftPrompt({ onDraft }) {
               <AIComposer
                 label="Describe a product"
                 placeholder="e.g. A family funeral plan with affordable monthly premiums…"
-                buttonLabel="Generate demo blueprint"
+                buttonLabel="Generate blueprint"
                 onSubmit={generate}
               />
             )}

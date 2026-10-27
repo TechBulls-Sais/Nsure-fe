@@ -3,13 +3,14 @@ import { defineConfig } from "vite";
 export default defineConfig({
   server: {
     host: "127.0.0.1",
-    port: 5173,
+    // Nsure has its own ports so it never collides with MIPAS (5173 / 8080) on the same machine.
+    port: 5180,
+    strictPort: true,
     proxy: {
       "/api": {
-        target: process.env.NSURE_API_URL || "http://127.0.0.1:8080",
+        target: process.env.NSURE_API_URL || "http://127.0.0.1:8091",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
-        // The proxy makes API calls same-origin; dropping Origin lets any local dev port reach the backend.
         configure: (proxy) => {
           proxy.on("proxyReq", (proxyReq) => {
             proxyReq.removeHeader("origin");

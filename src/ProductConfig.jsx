@@ -18,7 +18,6 @@ import {
   Sparkles,
   Search,
   ChevronRight,
-  Info,
 } from "lucide-react";
 import "./product-config.css";
 import { ProductDraftPrompt, StepReveal, BorderBeam } from "./ui/animated";
@@ -70,7 +69,7 @@ function Status({ value }) {
     <span
       className={
         "badge " +
-        (value === "Demo active"
+        (value === "Active"
           ? "green"
           : value === "In review"
             ? "amber"
@@ -193,7 +192,7 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
     );
     setEditing(null);
     notify(
-      status === "Demo active"
+      status === "Active"
         ? "Product configuration saved."
         : status === "In review"
           ? "Product configuration submitted for review."
@@ -275,8 +274,8 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
               "amber",
             ],
             [
-              "Demo active",
-              records.filter((p) => p.status === "Demo active").length,
+              "Active",
+              records.filter((p) => p.status === "Active").length,
               ShieldCheck,
               "blue",
             ],
@@ -303,7 +302,7 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
           </div>
           <div className="filters">
             <div className="filter-tabs">
-              {["All", "Draft", "In review", "Demo active"].map((s) => (
+              {["All", "Draft", "In review", "Active"].map((s) => (
                 <button
                   className={"filter-tab " + (s === filter ? "active" : "")}
                   key={s}
@@ -392,14 +391,6 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
             <span>Changes stay in this session</span>
           </div>
         </section>
-        <div className="notice">
-          <Info className="icon" />
-          <p>
-            <strong>A space to experiment.</strong> These settings are dummy
-            configurations. They do not change the sales catalogue, calculate
-            real premiums, or enable live insurance products.
-          </p>
-        </div>
       </>
     );
   return (
@@ -707,8 +698,8 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
                       onChange={(e) => update("underwriting", e.target.value)}
                     >
                       <option>Manual review</option>
-                      <option>Rules-based referral (demo)</option>
-                      <option>Simplified acceptance (demo)</option>
+                      <option>Rules-based referral</option>
+                      <option>Simplified acceptance</option>
                     </Select>
                   </Field>
                 </div>
@@ -810,7 +801,7 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
                   />
                   <span>
                     I understand this is a dummy configuration. Publishing only
-                    changes its status in this demo; no real insurance product
+                    changes its status; no real insurance product
                     is enabled.
                   </span>
                 </label>
@@ -833,10 +824,10 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
                 <button
                   type="button"
                   className="btn secondary"
-                  onClick={() => save("Demo active")}
+                  onClick={() => save("Active")}
                 >
                   <ShieldCheck size={15} />
-                  Activate demo
+                  Activate
                 </button>
               )}
               <button type="submit" className="btn primary">

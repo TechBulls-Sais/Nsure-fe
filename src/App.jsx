@@ -1,4 +1,11 @@
 import Select from "./ui/Select";
+import CoveredLives, {
+  LifeCoverList,
+  completeLives,
+  livesBody,
+  otherLives,
+  useLifeQuote,
+} from "./CoveredLives";
 import React, { useState, useEffect, useRef } from "react";
 import {
   ArrowRight,
@@ -9,6 +16,7 @@ import {
   Building2,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   ChevronsUpDown,
   Circle,
@@ -28,6 +36,7 @@ import {
   Layers3,
   LayoutDashboard,
   Lightbulb,
+  LogIn,
   LogOut,
   Menu,
   MessageSquareText,
@@ -37,8 +46,10 @@ import {
   Search,
   SearchX,
   Settings2,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Table2,
   TrendingUp,
   Upload,
   UserPlus,
@@ -56,6 +67,7 @@ const Icons = {
   Building2,
   CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   ChevronsUpDown,
   Circle,
@@ -75,6 +87,7 @@ const Icons = {
   Layers3,
   LayoutDashboard,
   Lightbulb,
+  LogIn,
   LogOut,
   Menu,
   MessageSquareText,
@@ -84,8 +97,10 @@ const Icons = {
   Search,
   SearchX,
   Settings2,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Table2,
   TrendingUp,
   Upload,
   UserPlus,
@@ -96,9 +111,10 @@ const Icons = {
 };
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
+import RateTables from "./RateTables";
 import { request } from "./api";
 import AssistantStudio from "./AssistantStudio";
-import Platform from "./Platform";
+import AccessAdmin from "./AccessAdmin";
 import CustomerPortal from "./CustomerPortal";
 import {
   CLAIM_STATES,
@@ -109,31 +125,17 @@ import {
   ReasonAction,
   WorkflowTimeline,
 } from "./Workflow";
+import LandingPage from "./LandingPage";
 import {
   AnimatedWorkspace,
   AnimatedMetric,
   ShimmerText,
-  SpotlightCard,
   IntelligenceOrb,
   BorderBeam,
   ActionSearch,
   MotionToggle,
 } from "./ui/animated";
 
-const productImages = {
-  "Term Life": "/products/term-life.jpg",
-  "Whole of Life": "/products/whole-of-life.jpg",
-  "Family Funeral": "/products/family-funeral.jpg",
-  "Care Cash": "/products/care-cash.jpg",
-  "Individual Credit": "/products/individual-credit.jpg",
-};
-const productImageFocus = {
-  "Term Life": "center 30%",
-  "Whole of Life": "center 35%",
-  "Family Funeral": "center 40%",
-  "Care Cash": "center 40%",
-  "Individual Credit": "center 45%",
-};
 
 const navItems = [
   ["overview", "Overview", "LayoutDashboard"],
@@ -144,9 +146,9 @@ const navItems = [
   ["schemes", "Group schemes", "Building2"],
   ["products", "Products", "Layers3"],
   ["product-config", "Product studio", "Settings2"],
+  ["rate-tables", "Rate tables", "Table2"],
   ["collections", "Collections", "Wallet"],
   ["assistant", "AI assistant", "Sparkles"],
-  ["platform", "Platform", "ShieldCheck"],
 ];
 function Icon({ name, small = false, ...props }) {
   const C = Icons[name] || Icons.Circle;
@@ -307,7 +309,7 @@ function Modal({ title, onClose, children, wide = false }) {
       >
         <div className="modal-header">
           <div>
-            <span className="eyebrow">NSURE LIFE · DEMO</span>
+            <span className="eyebrow">Nsure</span>
             <h2>{title}</h2>
           </div>
           <button
@@ -365,37 +367,47 @@ function Stat({
   );
 }
 
-function Login({ onLogin }) {
-  const [mode, setMode] = useState("workspace");
-  const [email, setEmail] = useState("admin");
+function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
+  const audience = initialAudience;
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const customerLogin = audience === "customer";
   return (
     <div className="login-page">
       <section className="login-story">
         <div className="brand">
-          <span className="brand-mark">
-            <Icon name="ShieldCheck" />
-          </span>
-          <span>
-            nsure<span className="brand-light"> life</span>
-            <small>INSURANCE, CONNECTED.</small>
-          </span>
+          <img
+            className="brand-logo"
+            src="/brand/nsure-life-logo-light.svg"
+            alt="Nsure Life"
+          />
         </div>
         <div className="login-story-content">
           <span className="demo-pill">
-            A little clarity. A lot of confidence.
+            {customerLogin ? "Customer sign-in" : "A little clarity. A lot of confidence."}
           </span>
           <h1>
-            Behind every policy,
-            <br />
-            there’s a <em>person.</em>
+            {customerLogin ? (
+              <>
+                Sign in, choose a product,
+                <br />
+                and <em>request your cover.</em>
+              </>
+            ) : (
+              <>
+                Behind every policy,
+                <br />
+                there’s a <em>person.</em>
+              </>
+            )}
           </h1>
           <p>
-            Bring your people, policies, and possibilities together in one
-            thoughtful workspace.
+            {customerLogin
+              ? "Use the username and password saved on your customer record."
+              : "Bring your people, policies, and possibilities together in one thoughtful workspace."}
           </p>
           <img
             className="login-photo"
@@ -413,44 +425,43 @@ function Login({ onLogin }) {
             </div>
           </div>
         </div>
-        <p className="login-note">Nsure Life © 2026</p>
+        <p className="login-note">Nsure © 2026 · Frontend showcase</p>
       </section>
       <section className="login-card">
         <div className="login-form">
-          <h2>
-            Welcome to your
-            <br />
-            next chapter.
-          </h2>
-          <p className="subtitle">Sign in and make yourself at home.</p>
-          <div className="access-tabs" role="tablist">
+          <a className="login-home-link" href="#/home">← Back to Nsure</a>
+          <div className="login-switch" aria-label="Sign-in type">
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "workspace"}
-              className={"filter-tab " + (mode === "workspace" ? "active" : "")}
+              className={customerLogin ? "" : "active"}
               onClick={() => {
-                setMode("workspace");
-                setEmail("admin");
+                onAudienceChange("admin");
+                setEmail("");
+                setPassword("");
                 setError("");
               }}
             >
-              Workspace
+              Admin
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "customer"}
-              className={"filter-tab " + (mode === "customer" ? "active" : "")}
+              className={customerLogin ? "active" : ""}
               onClick={() => {
-                setMode("customer");
-                setEmail("amara");
+                onAudienceChange("customer");
+                setEmail("");
+                setPassword("");
                 setError("");
               }}
             >
-              Customer portal
+              Customer
             </button>
           </div>
+          <h2>{customerLogin ? "Customer sign-in" : "Admin sign-in"}</h2>
+          <p className="subtitle">
+            {customerLogin
+              ? "Sign in with the username and password on your customer record. Then choose a product and send a request; our team reviews it before it becomes your policy."
+              : "Sign in to the operations workspace."}
+          </p>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -459,19 +470,17 @@ function Login({ onLogin }) {
               const next = { username: email.trim().toLowerCase(), password };
               try {
                 const me = await request(next, "/me");
-                const portal = !!me.data.customerPortal;
-                if (mode === "customer" && !portal) {
-                  throw Object.assign(new Error("This account is for the operations workspace."), {
-                    status: 403,
-                  });
+                if (customerLogin && !me.data.customerPortal) {
+                  setError("This form is for customers. Use the username and password saved on the customer.");
+                  return;
                 }
-                if (mode === "workspace" && portal) {
-                  throw Object.assign(new Error("This account is for the customer portal."), {
-                    status: 403,
-                  });
+                // Customer accounts sign in on the customer portal only, never the operations workspace.
+                if (!customerLogin && me.data.customerPortal) {
+                  setError("This is a customer account. Choose Customer above to sign in to the customer portal.");
+                  return;
                 }
                 sessionStorage.setItem("nsure-session", JSON.stringify(next));
-                onLogin(next, me.data);
+                onLogin(next);
               } catch (err) {
                 setError(err.status === 401 ? "Username or password is incorrect." : err.message);
               } finally {
@@ -484,6 +493,7 @@ function Login({ onLogin }) {
                 className="input"
                 required
                 value={email}
+                placeholder={customerLogin ? "customer" : "admin"}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
               />
@@ -511,25 +521,21 @@ function Login({ onLogin }) {
             </Field>
             {error && <p className="form-error">{error}</p>}
             <div className="login-hint">
-              <Icon name="Info" small />
-              {mode === "customer"
-                ? "Try amara, thabo, or naledi. Password is password."
-                : "Staff: admin, onboarding, claims. Password is password."}
+              <Icon name="Info" small />{" "}
+              {customerLogin
+                ? "Use the username and password set when the customer was added. The sample login is customer / password."
+                : "Staff username is admin or onboarding. Password is password."}
             </div>
             <Button type="submit" icon="ArrowRight" disabled={busy}>
-              {busy
-                ? "Signing in…"
-                : mode === "customer"
-                  ? "Enter customer portal"
-                  : "Enter workspace"}
+              {busy ? "Signing in…" : customerLogin ? "Sign in" : "Enter workspace"}
             </Button>
           </form>
           <div className="notice">
             <Icon name="ShieldCheck" />
             <p>
-              <strong>Your Nsure account.</strong>
+              <strong>A safe space to explore.</strong>
               <br />
-              Workspace users manage KYC and policies. Customers choose a product and buy cover.
+              Sign-in uses your Nsure account. Records are loaded from the database.
             </p>
           </div>
           <p className="login-note">Made for people who care for people.</p>
@@ -547,10 +553,9 @@ export default function App() {
       return null;
     }
   });
-  const [profile, setProfile] = useState(null);
   const loggedIn = Boolean(session);
-  const customerPortal = !!profile?.customerPortal;
   const [page, setPage] = useState(() => location.hash.slice(2) || "overview");
+  const [profile, setProfile] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [modal, setModal] = useState(null);
@@ -564,14 +569,11 @@ export default function App() {
   const [schemes, setSchemes] = useState([]);
   const [productConfigs, setProductConfigs] = useState([]);
   const [receipts, setReceipts] = useState([]);
+  const [shop, setShop] = useState(null);
   const [notifications, setNotifications] = useState(true);
   const [compact, setCompact] = useState(false);
   const [period, setPeriod] = useState("Last 6 months");
   const notify = (msg) => setToast(msg);
-  const handleLogin = (next, me) => {
-    setSession(next);
-    setProfile(me);
-  };
   const go = (next) => {
     location.hash = "/" + next;
     setPage(next);
@@ -613,7 +615,9 @@ export default function App() {
     sessionStorage.removeItem("nsure-session");
     setSession(null);
     setProfile(null);
+    setShop(null);
     setModal(null);
+    go("home");
   };
   useEffect(() => {
     if (!session) return undefined;
@@ -623,7 +627,17 @@ export default function App() {
         const meR = await request(session, "/me");
         if (!active) return;
         setProfile(meR.data);
-        if (meR.data.customerPortal) return;
+        if (meR.data.customerPortal) {
+          try {
+            const shopR = await request(session, "/portfolio/shop");
+            if (!active) return;
+            setShop(shopR.data);
+          } catch (error) {
+            if (!active) return;
+            setShop({ error: error.message, products: [], policies: [] });
+          }
+          return;
+        }
         const [
           customersR,
           applicationsR,
@@ -633,16 +647,24 @@ export default function App() {
           schemesR,
           receiptsR,
           configsR,
-        ] = await Promise.all([
-          request(session, "/portfolio/customers"),
-          request(session, "/portfolio/applications"),
-          request(session, "/portfolio/policies"),
-          request(session, "/portfolio/claims"),
-          request(session, "/portfolio/products"),
-          request(session, "/portfolio/schemes"),
-          request(session, "/portfolio/receipts"),
-          request(session, "/portfolio/product-configs"),
-        ]);
+        ] = await Promise.all(
+          [
+            "/portfolio/customers",
+            "/portfolio/applications",
+            "/portfolio/policies",
+            "/portfolio/claims",
+            "/portfolio/products",
+            "/portfolio/schemes",
+            "/portfolio/receipts",
+            "/portfolio/product-configs",
+          ].map((path) =>
+            // Each list needs its own read permission; a role without it sees an empty list.
+            request(session, path).catch((error) => {
+              if (error.status === 403) return { data: [] };
+              throw error;
+            }),
+          ),
+        );
         if (!active) return;
         setCustomers(customersR.data);
         setApplications(applicationsR.data);
@@ -662,8 +684,11 @@ export default function App() {
       active = false;
     };
   }, [session]);
+  const menuItems = profile?.superAdmin
+    ? [...navItems, ["access", "Access", "ShieldCheck"]]
+    : navItems;
   const activeName =
-    navItems.find((n) => n[0] === page)?.[1] ||
+    menuItems.find((n) => n[0] === page)?.[1] ||
     (page === "settings" ? "Settings" : "Overview");
   const visible = (rows) =>
     rows.filter(
@@ -674,27 +699,74 @@ export default function App() {
   const detail = (type, record) =>
     setModal({ type: "detail", entity: type, record });
   const exportRows = (name, rows) => {
+    const withTier = name === "policies";
     downloadCSV(name + ".csv", [
-      ["Reference", "Name", "Product", "Amount", "Status"],
-      ...rows.map((r) => [r.id, r.name, r.product, r.amount || "", r.status]),
+      ["Reference", "Name", "Product", ...(withTier ? ["Tier"] : []), "Amount", "Status"],
+      ...rows.map((r) => [
+        r.id, r.name, r.product, ...(withTier ? [r.tier || ""] : []), r.amount || "", r.status,
+      ]),
     ]);
-    notify("Your demo export is ready.");
+    notify("Your export is ready.");
   };
+  // KYC or EDD outcome: VERIFIED, or FAILED with a reason the customer sees. Returns the updated customer, or null.
+  const reviewCustomer = async (review, customer, decision, reason) => {
+    try {
+      const updated = await request(session, "/portfolio/customers/" + customer.id + "/" + review, {
+        method: "POST",
+        body: { decision, reason },
+      });
+      setCustomers((rows) => rows.map((row) => (row.id === customer.id ? updated.data : row)));
+      notify(
+        customer.name + " " + review.toUpperCase() +
+          (decision === "VERIFIED" ? " review is verified." : " review is rejected."),
+      );
+      return updated.data;
+    } catch (error) {
+      notify(error.message);
+      return null;
+    }
+  };
+  const reviewEdd = (customer, decision, reason) => reviewCustomer("edd", customer, decision, reason);
+  const reviewKyc = (customer, decision, reason) => reviewCustomer("kyc", customer, decision, reason);
+  // A workflow action returned the record's new state: keep the list and the open detail in step.
+  const policyUpdated = (record) => {
+    setPolicies((rows) => rows.map((row) => (row.id === record.id ? record : row)));
+    setModal({ type: "detail", entity: "policy", record });
+    if (record.status === "Active") {
+      request(session, "/portfolio/customers").then((r) => setCustomers(r.data)).catch(() => {});
+      request(session, "/portfolio/receipts").then((r) => setReceipts(r.data)).catch(() => {});
+    }
+  };
+  const claimUpdated = (record) => {
+    setClaims((rows) => rows.map((row) => (row.id === record.id ? record : row)));
+    setModal({ type: "detail", entity: "claim", record });
+  };
+  const pendingPolicies = policies.filter((p) => p.status === "Pending Payment");
   const issue = async (record) => {
-    const created = await request(session, "/portfolio/policies", {
-      method: "POST",
-      body: {
-        name: record.name,
-        product: record.product,
-        amount: record.amount,
-        premium: record.premium || 0,
-        status: "Active",
-      },
-    });
-    await request(session, "/portfolio/applications/" + record.id, {
-      method: "PUT",
-      body: { status: "Issued" },
-    });
+    let created;
+    try {
+      created = await request(session, "/portfolio/policies", {
+        method: "POST",
+        body: {
+          name: record.name,
+          product: record.product,
+          tier: record.tier || undefined,
+          amount: record.amount,
+          premium: record.premium || 0,
+          status: "Active",
+          // The application's other lives carry over and are re-priced at issue (R-18).
+          ...(record.lives?.length ? { lives: otherLives(record) } : {}),
+        },
+      });
+      await request(session, "/portfolio/applications/" + record.id, {
+        method: "PUT",
+        body: { status: "Issued" },
+      });
+    } catch (error) {
+      // The backend refuses a policy until the customer's KYC is verified; say so instead of failing silently.
+      notify(error.message);
+      return;
+    }
     setPolicies((p) => [created.data, ...p]);
     setApplications((a) =>
       a.map((x) => (x.id === record.id ? { ...x, status: "Issued" } : x)),
@@ -705,78 +777,32 @@ export default function App() {
     setModal({ type: "detail", entity: "policy", record: created.data });
     notify("Policy issued and saved.");
   };
-  // The shared workflow panels name claim actions by MIPAS permission; Nsure grants them as capabilities.
-  const workflowProfile = profile && {
-    ...profile,
-    canUpdateClaims: profile.canAssessClaims,
-    canSettleClaims: profile.canApproveClaims,
-  };
-  // KYC or EDD outcome: VERIFIED, or FAILED with a reason the customer sees. Returns the updated customer, or null.
-  const reviewCustomer = async (review, customer, decision, reason) => {
-    try {
-      const updated = await request(session, "/portfolio/customers/" + customer.id + "/" + review, {
-        method: "POST",
-        body: { decision, reason },
-      });
-      setCustomers((rows) => rows.map((row) => (row.id === customer.id ? updated.data : row)));
-      setModal({ type: "detail", entity: "customer", record: updated.data });
-      notify(
-        customer.name + " " + review.toUpperCase() +
-          (decision === "VERIFIED" ? " review is verified." : " review is rejected."),
-      );
-      return true;
-    } catch (error) {
-      notify(error.message);
-      return false;
-    }
-  };
-  // A workflow action returned the record's new state: keep the list and the open detail in step.
-  const policyUpdated = (record) => {
-    setPolicies((rows) => rows.map((row) => (row.id === record.id ? record : row)));
-    setModal({ type: "detail", entity: "policy", record });
-    if (record.status === "Active") {
-      request(session, "/portfolio/receipts").then((r) => setReceipts(r.data)).catch(() => {});
-    }
-  };
-  const claimUpdated = (record) => {
-    setClaims((rows) => rows.map((row) => (row.id === record.id ? record : row)));
-    setModal({ type: "detail", entity: "claim", record });
-  };
-  if (!loggedIn) return <Login onLogin={handleLogin} />;
-  if (customerPortal) {
-    return (
-      <div className="app-shell customer-shell">
-        {toast && (
-          <div className="toast" role="status">
-            <Icon name="CircleCheck" />
-            {toast}
-            <button
-              className="icon-btn"
-              aria-label="Dismiss notification"
-              onClick={() => setToast("")}
-            >
-              <Icon name="X" small />
-            </button>
-          </div>
-        )}
-        <CustomerPortal
-          session={session}
-          notify={notify}
-          logout={logout}
-          Icon={Icon}
-          Button={Button}
-          Badge={Badge}
-        />
-      </div>
-    );
+  if (!loggedIn) {
+    const publicPages = ["overview", "home", "cover", "how-it-works", "questions"];
+    if (publicPages.includes(page)) return <LandingPage section={page} />;
+    return <Login
+      key={page}
+      initialAudience={page === "login/customer" ? "customer" : "staff"}
+      onAudienceChange={(audience) => go("login/" + audience)}
+      onLogin={(next) => { setSession(next); go("overview"); }}
+    />;
   }
   if (!profile) {
     return (
       <div className="login-page">
-        <p className="subtitle" style={{ margin: "auto" }}>
-          Loading workspace…
-        </p>
+        <p className="login-note">Loading your workspace…</p>
       </div>
+    );
+  }
+  if (profile.customerPortal) {
+    return (
+      <CustomerPortal
+        session={session}
+        shop={shop}
+        notify={notify}
+        onLogout={logout}
+        onShop={setShop}
+      />
     );
   }
 
@@ -819,6 +845,7 @@ export default function App() {
             <tr>
               <th>{type === "claim" ? "Claimant" : "Customer"}</th>
               <th>Product</th>
+              {type === "policy" && <th>Tier</th>}
               {!short && (
                 <th>
                   {type === "collection" ? "Amount due" : "Cover / benefit"}
@@ -838,6 +865,15 @@ export default function App() {
                   <Person name={r.name} sub={r.id} />
                 </td>
                 <td>{r.product}</td>
+                {type === "policy" && (
+                  <td>
+                    {r.tier ? (
+                      <span className={"tier-pill " + r.tier.toLowerCase()}>{r.tier}</span>
+                    ) : (
+                      <span className="muted">-</span>
+                    )}
+                  </td>
+                )}
                 {!short && <td className="amount">{money(r.amount)}</td>}
                 <td>
                   <Badge>{r.status}</Badge>
@@ -865,6 +901,7 @@ export default function App() {
       period === "Last 6 months"
         ? [43, 59, 51, 76, 67, 89]
         : [32, 49, 61, 56, 81, 94];
+    const productMix = portfolioMix(policies);
     return (
       <>
         <Heading
@@ -918,7 +955,7 @@ export default function App() {
             <h3>
               <ShimmerText>Your next best step starts here.</ShimmerText>
             </h3>
-            <p>Explore intelligent workflows using sample records.</p>
+            <p>Explore intelligent workflows across your workspace.</p>
           </div>
           <div className="smart-brief-actions">
             <button onClick={() => go("applications")}>
@@ -1027,7 +1064,10 @@ export default function App() {
             subtitle="Your portfolio by product"
           >
             <div className="donut-wrap">
-              <div className="donut">
+              <div
+                className="donut"
+                style={{ background: donutGradient(productMix) }}
+              >
                 <div className="donut-center">
                   <strong>{policies.length}</strong>
                   <span>protected lives</span>
@@ -1035,20 +1075,24 @@ export default function App() {
               </div>
             </div>
             <div className="legend-list">
-              {[
-                ["Term Life", "36%", "green"],
-                ["Whole of Life", "23%", "purple"],
-                ["Family Funeral", "22%", "amber"],
-                ["Other products", "19%", "blue"],
-              ].map(([n, v, c]) => (
-                <div className="legend-row" key={n}>
+              {productMix.length ? (
+                productMix.map((slice) => (
+                  <div className="legend-row" key={slice.name}>
+                    <span>
+                      <i className={"legend-dot " + slice.color} />
+                      {slice.name}
+                    </span>
+                    <strong>{slice.percent}%</strong>
+                  </div>
+                ))
+              ) : (
+                <div className="legend-row">
                   <span>
-                    <i className={"legend-dot " + c} />
-                    {n}
+                    <i className="legend-dot pale" />
+                    No policies yet
                   </span>
-                  <strong>{v}</strong>
                 </div>
-              ))}
+              )}
             </div>
           </Panel>
         </div>
@@ -1170,95 +1214,29 @@ export default function App() {
 
   function Customers() {
     return (
-      <>
-        <Heading
-          title="People, not just policy numbers."
-          subtitle="A clear picture of everyone you care for."
-        >
-          <Button
-            icon="UserPlus"
-            onClick={() => setModal({ type: "customer" })}
-          >
-            Add customer
-          </Button>
-        </Heading>
-        <div className="stat-grid three">
-          <Stat
-            label="Customers"
-            value={customers.length}
-            change="2 new"
-            note="this week"
-            icon="Users"
-          />
-          <Stat
-            label="Identity verified"
-            value={customers.filter((c) => c.status === "Verified").length}
-            change="Up to date"
-            note="verified profiles"
-            icon="BadgeCheck"
-            color="blue"
-          />
-          <Stat
-            label="Awaiting verification"
-            value={customers.filter((c) => c.status === "Pending KYC").length}
-            change="Action needed"
-            note="evidence review"
-            icon="ClipboardList"
-            color="amber"
-          />
-        </div>
-        <Panel
-          title="Your customer directory"
-          subtitle="Select a customer to explore their profile."
-        >
-          {Filters({
-            statuses: ["All", "Verified", "Pending KYC", "KYC failed"],
-            count: customers.length,
-          })}
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Customer</th>
-                  <th>Contact</th>
-                  <th>Policies</th>
-                  <th>Verification</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {visible(customers).map((c) => (
-                  <tr key={c.id}>
-                    <td>
-                      <Person name={c.name} sub={c.id} />
-                    </td>
-                    <td>
-                      {c.email}
-                      <div className="person-sub">{c.phone}</div>
-                    </td>
-                    <td>
-                      {c.policies} {c.policies === 1 ? "policy" : "policies"}
-                    </td>
-                    <td>
-                      <Badge>{c.status}</Badge>
-                    </td>
-                    <td>
-                      <button
-                        className="icon-btn"
-                        aria-label={"View " + c.name}
-                        onClick={() => detail("customer", c)}
-                      >
-                        <Icon name="ArrowUpRight" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!visible(customers).length && <Empty />}
-          </div>
-        </Panel>
-      </>
+      <CustomerDirectory
+        customers={customers}
+        search={search}
+        setSearch={setSearch}
+        canReviewKyc={Boolean(profile?.canReviewKyc)}
+        canReviewEdd={Boolean(profile?.canReviewEdd)}
+        onEdd={reviewEdd}
+        onAddCustomer={() => setModal({ type: "customer" })}
+        onAddPolicy={(c) => setModal({ type: "policy", customer: c.name })}
+        onView={(c) => detail("customer", c)}
+        onKyc={reviewKyc}
+        onExport={(rows) => {
+          downloadCSV("customers.csv", [
+            ["Customer ID", "Full name", "POI type", "POI number", "Date of birth", "Mobile", "Email", "KYC", "EDD review"],
+            ...rows.map((c) => [
+              c.id, c.name, c.poiType || "", c.poiNumber || "", c.dateOfBirth || "",
+              c.phone || "", c.email || "",
+              kycLabel(c), eddLabel(c) || "N/A",
+            ]),
+          ]);
+          notify("Customer export is ready.");
+        }}
+      />
     );
   }
   function RecordsPage({ kind }) {
@@ -1283,7 +1261,7 @@ export default function App() {
         sub: "Every policy, every person, all in one place.",
         rows: policies,
         type: "policy",
-        action: "New application",
+        action: "Add policy",
         statuses: ["All", ...POLICY_STATES],
       },
       claims: {
@@ -1317,7 +1295,14 @@ export default function App() {
             <Button
               icon="Plus"
               onClick={() =>
-                setModal({ type: kind === "claims" ? "claim" : "application" })
+                setModal({
+                  type:
+                    kind === "claims"
+                      ? "claim"
+                      : kind === "policies"
+                        ? "policy"
+                        : "application",
+                })
               }
             >
               {config.action}
@@ -1359,13 +1344,17 @@ export default function App() {
                   ? "Claims workbench"
                   : "Premium transactions"
           }
-          subtitle={`${config.rows.length} sample records · changes stay in this session`}
+          subtitle={
+            kind === "policies"
+              ? `${config.rows.length} policies saved in this workspace`
+              : `${config.rows.length} records`
+          }
         >
           {Filters({ statuses: config.statuses, count: config.rows.length })}
           <RecordsTable rows={visible(config.rows)} type={config.type} />
           <div className="table-footer">
             Showing {visible(config.rows).length} of {config.rows.length}{" "}
-            records<span>Demo data · BWP</span>
+            records<span>BWP</span>
           </div>
         </Panel>
         {kind === "applications" && (
@@ -1383,103 +1372,81 @@ export default function App() {
   }
   function Products() {
     return (
-      <>
+      <section className="product-catalog" aria-label="Product catalogue">
         <Heading
-          title="Different lives. Thoughtful protection."
-          subtitle="Explore products and open an application for a customer."
+          title="Your protection lineup"
+          subtitle="Thoughtful cover for every chapter. Find the right fit for your customers."
         >
           <Button icon="Settings2" onClick={() => go("product-config")}>
             Configure products
           </Button>
         </Heading>
-        <div className="notice">
-          <Icon name="Info" />
+        <div className="catalog-toolbar">
+          <div className="catalog-label">
+            <h2>Explore products</h2>
+            <span>{products.length} available</span>
+          </div>
           <p>
-            Cover and premium figures come from the product catalogue in the
-            database.
+            <Icon name="Info" small /> Illustrative benefits and premiums only
           </p>
         </div>
         <div className="product-grid">
-          {products.map((p) => {
-            const image = productImages[p.name];
-            return (
-              <SpotlightCard
-                className={"product-card " + p.color + (image ? " has-photo" : "")}
-                key={p.name}
-              >
-                {image ? (
-                  <div className="product-photo-wrap">
-                    <img
-                      className="product-photo"
-                      src={image}
-                      alt=""
-                      style={{ objectPosition: productImageFocus[p.name] || "center" }}
-                    />
-                    <div className="product-overlay">
-                      <div className="product-card-top">
-                        <span className={"product-icon " + p.color}>
-                          <Icon name={p.icon} />
-                        </span>
-                      </div>
-                      <h2>{p.name}</h2>
-                      <p>{p.description}</p>
-                      <div className="product-cover">
-                        <small>ILLUSTRATIVE COVER</small>
-                        <strong>{p.cover}</strong>
-                      </div>
-                      <div className="product-footer">
-                        <div>
-                          <strong>BWP {p.premium}</strong>
-                          <small> / month · sample</small>
-                        </div>
-                        <button
-                          className="icon-btn"
-                          aria-label={"Quote " + p.name}
-                          onClick={() =>
-                            setModal({ type: "application", product: p.name })
-                          }
-                        >
-                          <Icon name="ArrowRight" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+          {products.map((p) => (
+            <article className="product-card" key={p.name}>
+              <div className="catalog-image">
+                {p.image ? (
+                  <img
+                    src={p.image}
+                    alt=""
+                    style={{ objectPosition: p.imageFocus || "center" }}
+                  />
                 ) : (
-                  <>
-                    <div className="product-card-top">
-                      <span className={"product-icon " + p.color}>
-                        <Icon name={p.icon} />
-                      </span>
-                      <Badge>Catalogue</Badge>
-                    </div>
-                    <h2>{p.name}</h2>
-                    <p>{p.description}</p>
-                    <div className="product-cover">
-                      <small>ILLUSTRATIVE COVER</small>
-                      <strong>{p.cover}</strong>
-                    </div>
-                    <div className="product-footer">
-                      <div>
-                        <strong>BWP {p.premium}</strong>
-                        <small> / month · sample</small>
-                      </div>
-                      <button
-                        className="icon-btn"
-                        aria-label={"Quote " + p.name}
-                        onClick={() =>
-                          setModal({ type: "application", product: p.name })
-                        }
-                      >
-                        <Icon name="ArrowRight" />
-                      </button>
-                    </div>
-                  </>
+                  <div className="catalog-image-placeholder">
+                    <Icon name={p.icon} />
+                  </div>
                 )}
-              </SpotlightCard>
-            );
-          })}
+                <span className="catalog-category">
+                  {p.highlight || p.needLabel || "Protection"}
+                </span>
+              </div>
+              <div className="catalog-card-body">
+                <div className="catalog-title">
+                  <span className="catalog-icon">
+                    <Icon name={p.icon} />
+                  </span>
+                  <h2>{p.name}</h2>
+                  {p.productType && <span className="rt-type">{p.productType}</span>}
+                </div>
+                <p className="catalog-description">{p.description}</p>
+                <dl className="catalog-pricing">
+                  <div>
+                    <dt>Illustrative cover</dt>
+                    <dd>{p.cover}</dd>
+                  </div>
+                  <div>
+                    <dt>Monthly premium</dt>
+                    <dd>{p.premium}</dd>
+                  </div>
+                </dl>
+                <button
+                  type="button"
+                  className="catalog-action"
+                  aria-label={"Start application for " + p.name}
+                  onClick={() =>
+                    setModal({ type: "application", product: p.name })
+                  }
+                >
+                  <span>Start application</span>
+                  <Icon name="ArrowUpRight" />
+                </button>
+              </div>
+            </article>
+          ))}
         </div>
-      </>
+        <p className="catalog-disclaimer">
+          Figures do not constitute approved insurance quotations.
+        </p>
+      </section>
     );
   }
   function Schemes() {
@@ -1490,12 +1457,12 @@ export default function App() {
           subtitle="One connected home for employers, schemes, and their people."
         >
           <Button icon="Upload" onClick={() => setModal({ type: "census" })}>
-            Demo census import
+            Census import
           </Button>
         </Heading>
         <div className="stat-grid three">
           <Stat
-            label="Active demo schemes"
+            label="Active schemes"
             value="3"
             change="Growing"
             note="together"
@@ -1565,18 +1532,18 @@ export default function App() {
       <>
         <Heading
           title="Make yourself at home."
-          subtitle="A few preferences for your demo workspace."
+          subtitle="A few preferences for this workspace."
         />
         <div className="settings-grid">
-          <Panel title="Your profile" subtitle="Demo identity">
+          <Panel title="Your profile" subtitle="Signed-in account">
             <Person
-              name="Sarah Williams"
-              sub="Operations manager · demo@nsure.life"
+              name={profile?.username || "Signed in"}
+              sub={(profile?.roles || []).join(", ") || "Staff"}
             />
             <div className="detail-grid">
               <div className="detail-item">
                 <small>Workspace</small>
-                <strong>Nsure Life showcase</strong>
+                <strong>Nsure showcase</strong>
               </div>
               <div className="detail-item">
                 <small>Currency</small>
@@ -1587,13 +1554,13 @@ export default function App() {
           <Panel title="Workspace preferences">
             <div className="setting-row">
               <div>
-                <strong>Demo notifications</strong>
+                <strong>Notifications</strong>
                 <p>Show the activity notification indicator.</p>
               </div>
               <button
                 role="switch"
                 aria-checked={notifications}
-                aria-label="Demo notifications"
+                aria-label="Notifications"
                 className={"toggle " + (notifications ? "active" : "")}
                 onClick={() => setNotifications(!notifications)}
               />
@@ -1621,7 +1588,7 @@ export default function App() {
               icon="RotateCcw"
               onClick={() => setModal({ type: "reset" })}
             >
-              Reset demo data
+              Reset data
             </Button>
           </Panel>
         </div>
@@ -1636,13 +1603,11 @@ export default function App() {
       )}
       <aside className={"sidebar " + (mobileOpen ? "open" : "")}>
         <a href="#/overview" className="brand" onClick={() => go("overview")}>
-          <span className="brand-mark">
-            <Icon name="ShieldCheck" />
-          </span>
-          <span>
-            nsure<span className="brand-light"> life</span>
-            <small>INSURANCE, CONNECTED.</small>
-          </span>
+          <img
+            className="brand-logo"
+            src="/brand/nsure-life-logo-light.svg"
+            alt="Nsure Life"
+          />
         </a>
         <div className="workspace-label">
           <span className="workspace-icon">N</span>
@@ -1654,7 +1619,7 @@ export default function App() {
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav aria-label="Main navigation">
-          {navItems.map(([key, label, icon]) => (
+          {menuItems.map(([key, label, icon]) => (
             <a
               key={key}
               href={"#/" + key}
@@ -1672,6 +1637,11 @@ export default function App() {
                   {applications.filter((a) => a.status !== "Issued").length}
                 </span>
               )}
+              {key === "policies" && profile?.canManagePolicies && pendingPolicies.length > 0 && (
+                <span className="nav-count" title="Customer purchases awaiting payment">
+                  {pendingPolicies.length}
+                </span>
+              )}
               {key === "assistant" && <span className="ai-nav-badge">NEW</span>}
             </a>
           ))}
@@ -1680,13 +1650,10 @@ export default function App() {
           <div className="sidebar-note">
             <span>🌿 A space to explore</span>
             <p>
-              Big possibilities.
+              People, policies, and claims
               <br />
-              Zero real-world transactions.
+              in one workspace.
             </p>
-            <span className="demo-pill">
-              <span className="live-dot" /> Live workspace
-            </span>
           </div>
           <a
             href="#/settings"
@@ -1699,11 +1666,17 @@ export default function App() {
             <Icon name="Settings2" />
             Settings
           </a>
+          <button type="button" className="nav-item" onClick={logout}>
+            <Icon name="LogIn" />
+            Customer sign-in
+          </button>
           <div className="user-profile">
-            <span className="avatar">SW</span>
+            <span className="avatar">
+              {(profile?.username || "IN").slice(0, 2).toUpperCase()}
+            </span>
             <div className="user-info">
-              <strong>Sarah Williams</strong>
-              <small>Operations manager</small>
+              <strong>{profile?.username || "Signed in"}</strong>
+              <small>{(profile?.roles || []).join(", ") || "Staff"}</small>
             </div>
             <button
               className="logout icon-btn"
@@ -1739,9 +1712,6 @@ export default function App() {
               <kbd>⌘ K</kbd>
             </button>
             <MotionToggle />
-            <span className="topbar-demo">
-              <span className="live-dot" /> Connected
-            </span>
             <button
               className="icon-btn notification"
               aria-label="View notifications"
@@ -1755,7 +1725,7 @@ export default function App() {
               aria-label="Your profile"
               onClick={() => go("settings")}
             >
-              SW
+              {(profile?.username || "IN").slice(0, 2).toUpperCase()}
             </button>
           </div>
         </header>
@@ -1770,6 +1740,8 @@ export default function App() {
             RecordsPage({ kind: page })
           ) : page === "products" ? (
             Products()
+          ) : page === "rate-tables" ? (
+            <RateTables session={session} notify={notify} />
           ) : page === "product-config" ? (
             <ProductConfig
               records={productConfigs}
@@ -1789,18 +1761,23 @@ export default function App() {
             Schemes()
           ) : page === "assistant" ? (
             <AssistantStudio />
+          ) : page === "access" ? (
+            profile?.superAdmin ? (
+              <AccessAdmin session={session} notify={notify} />
+            ) : (
+              <Panel title="Access is limited">
+                <p>Only a super admin can manage roles, permissions, and users.</p>
+              </Panel>
+            )
           ) : page === "settings" ? (
             Settings()
-          ) : page === "platform" ? (
-            <Platform session={session} />
           ) : (
             Overview()
           )}
           <footer className="page-footer">
             <span>
-              Thoughtfully connected. <strong>Nsure Life.</strong>
+              Thoughtfully connected. <strong>Nsure.</strong>
             </span>
-            <span>Records from your Nsure database</span>
           </footer>
         </AnimatedWorkspace>
       </main>
@@ -1822,6 +1799,8 @@ export default function App() {
           title={
             modal.type === "application"
               ? "Start a new application"
+              : modal.type === "policy"
+                ? "Add a policy"
               : modal.type === "customer"
                 ? "Welcome a new customer"
                 : modal.type === "claim"
@@ -1833,10 +1812,10 @@ export default function App() {
                       : modal.type === "notifications"
                         ? "Your latest updates"
                         : modal.type === "reset"
-                          ? "Reset this demo?"
+                          ? "Reset this workspace?"
                           : modal.type === "command"
                             ? "Your workspace, one shortcut away."
-                            : "Demo"
+                            : "Nsure"
           }
           onClose={close}
           wide={modal.type === "census"}
@@ -1859,7 +1838,7 @@ export default function App() {
                   label,
                   description:
                     id === "product-config"
-                      ? "Create a product with your demo copilot"
+                      ? "Create a product with your copilot"
                       : "Open the " + label.toLowerCase() + " workspace",
                 })),
               ]}
@@ -1874,19 +1853,54 @@ export default function App() {
           )}
           {modal.type === "application" && (
             <ApplicationForm
+              session={session}
               defaultProduct={modal.product}
               customers={customers}
               products={products}
               onCancel={close}
               onSave={async (data) => {
-                const created = await request(session, "/portfolio/applications", {
-                  method: "POST",
-                  body: data,
-                });
-                setApplications((a) => [created.data, ...a]);
-                close();
-                go("applications");
-                notify("Application saved.");
+                try {
+                  const created = await request(session, "/portfolio/applications", {
+                    method: "POST",
+                    body: data,
+                  });
+                  setApplications((a) => [created.data, ...a]);
+                  close();
+                  go("applications");
+                  notify("Application saved.");
+                } catch (error) {
+                  notify(error.message);
+                }
+              }}
+            />
+          )}
+          {modal.type === "policy" && (
+            <PolicyForm
+              session={session}
+              customers={customers}
+              products={products}
+              defaultCustomer={modal.customer}
+              onCancel={close}
+              onSave={async (data) => {
+                try {
+                  const created = await request(session, "/portfolio/policies", {
+                    method: "POST",
+                    body: data,
+                  });
+                  setPolicies((rows) => [created.data, ...rows]);
+                  setCustomers((rows) =>
+                    rows.map((row) =>
+                      row.name === data.name
+                        ? { ...row, policies: row.policies + 1, product: data.product }
+                        : row,
+                    ),
+                  );
+                  close();
+                  go("policies");
+                  notify("Policy added.");
+                } catch (error) {
+                  notify(error.message);
+                }
               }}
             />
           )}
@@ -1894,14 +1908,22 @@ export default function App() {
             <CustomerForm
               onCancel={close}
               onSave={async (data) => {
-                const created = await request(session, "/portfolio/customers", {
-                  method: "POST",
-                  body: data,
-                });
-                setCustomers((c) => [created.data, ...c]);
-                close();
-                go("customers");
-                notify("Customer saved. Verification is pending.");
+                try {
+                  const created = await request(session, "/portfolio/customers", {
+                    method: "POST",
+                    body: data,
+                  });
+                  setCustomers((c) => [created.data, ...c]);
+                  close();
+                  go("customers");
+                  notify(
+                    "Customer saved. Sign in as " +
+                      created.data.loginUsername +
+                      " after KYC is successful.",
+                  );
+                } catch (error) {
+                  notify(error.message);
+                }
               }}
             />
           )}
@@ -1934,7 +1956,7 @@ export default function App() {
               onDone={() => {
                 close();
                 notify(
-                  "Demo preview completed: 3 accepted rows, 1 rejected. Live membership is unchanged.",
+                  "Preview completed: 3 accepted rows, 1 rejected. Live membership is unchanged.",
                 );
               }}
             />
@@ -1942,6 +1964,17 @@ export default function App() {
           {modal.type === "notifications" && (
             <div className="activity-list">
               {[
+                ...(profile?.canManagePolicies && pendingPolicies.length
+                  ? [
+                      [
+                        pendingPolicies.length === 1
+                          ? "A policy is awaiting its first premium"
+                          : pendingPolicies.length + " policies are awaiting their first premium",
+                        "Record the payment, or cancel a purchase the customer no longer wants.",
+                        "policies",
+                      ],
+                    ]
+                  : []),
                 [
                   "Underwriting needs a look",
                   "Two applications are waiting for a review.",
@@ -1986,7 +2019,7 @@ export default function App() {
                   Keep exploring
                 </Button>
                 <Button icon="RotateCcw" onClick={() => location.reload()}>
-                  Reset demo
+                  Reset
                 </Button>
               </div>
             </>
@@ -2014,10 +2047,24 @@ export default function App() {
                 notify("Underwriting accepted and saved.");
               }}
               session={session}
-              profile={workflowProfile}
+              profile={profile}
               onPolicyUpdated={policyUpdated}
               onClaimUpdated={claimUpdated}
-              onReview={reviewCustomer}
+              canReviewKyc={Boolean(profile?.canReviewKyc)}
+              canReviewEdd={Boolean(profile?.canReviewEdd)}
+              onEdd={async (record, decision, reason) => {
+                const updated = await reviewEdd(record, decision, reason);
+                if (updated) setModal({ type: "detail", entity: "customer", record: updated });
+                return Boolean(updated);
+              }}
+              onKyc={async (record, decision, reason) => {
+                const updated = await reviewKyc(record, decision, reason);
+                if (updated) setModal({ type: "detail", entity: "customer", record: updated });
+                return Boolean(updated);
+              }}
+              onAddPolicy={(record) =>
+                setModal({ type: "policy", customer: record.name })
+              }
               onReceipt={async (r) => {
                 const updated = await request(session, "/portfolio/receipts/" + r.id, {
                   method: "PUT",
@@ -2040,20 +2087,33 @@ export default function App() {
   );
 }
 
-function ApplicationForm({ defaultProduct, customers, products = [], onSave, onCancel }) {
+function ApplicationForm({ session, defaultProduct, customers, products = [], onSave, onCancel }) {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(() => {
-    const p = products.find((item) => item.name === (defaultProduct || "Term Life")) ||
-      products[0] || { name: "Term Life", cover: "0", premium: "0" };
+    const p = products.find((item) => item.name === defaultProduct) ||
+      popularProduct(products) || { name: "", cover: "0", premium: "0" };
+    const tier = defaultTier(p);
     return {
       name: customers[0]?.name || "",
       product: p.name,
-      amount: Number(String(p.cover).replace(/[^0-9]/g, "")) || 0,
-      premium: Number(p.premium) || 0,
+      tier: tier?.name || "",
+      amount: tier ? tier.cover : amountOf(p.cover),
+      premium: tier ? tier.premium : amountOf(p.premium),
     };
   });
   const [consent, setConsent] = useState(false);
-  const chosen = products.find((p) => p.name === data.product) || { premium: data.premium };
+  const chosen = products.find((p) => p.name === data.product);
+  const tiers = productTiers(chosen);
+  const ratedTier = tiers.find((t) => t.name === data.tier && t.priceIsFrom);
+  const [lives, setLives] = useState([]);
+  const priced = useLifeQuote(
+    session,
+    "/portfolio/quote",
+    { name: data.name, product: data.product, tier: data.tier, lives: livesBody(completeLives(lives)) },
+    Boolean(ratedTier && data.name),
+  );
+  const save = (status) =>
+    onSave({ ...data, status, ...(ratedTier ? { lives: livesBody(lives) } : {}) });
   return (
     <>
       <div className="stepper">
@@ -2073,7 +2133,7 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
         onSubmit={(e) => {
           e.preventDefault();
           if (step < 2) setStep(step + 1);
-          else onSave({ ...data, status: "Under review" });
+          else save("Under review");
         }}
       >
         {step === 0 ? (
@@ -2111,11 +2171,14 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
                   value={data.product}
                   onChange={(e) => {
                     const p = products.find((p) => p.name === e.target.value);
+                    const tier = defaultTier(p);
+                    setLives([]);
                     setData({
                       ...data,
                       product: p.name,
-                      premium: Number(p.premium),
-                      amount: Number(p.cover.replace(/[^0-9]/g, "")),
+                      tier: tier?.name || "",
+                      premium: tier ? tier.premium : amountOf(p.premium),
+                      amount: tier ? tier.cover : amountOf(p.cover),
                     });
                   }}
                 >
@@ -2124,10 +2187,29 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
                   ))}
                 </Select>
               </Field>
+              {tiers.length > 0 && (
+                <Field label="Tier">
+                  <Select
+                    className="select"
+                    value={data.tier}
+                    onChange={(e) => {
+                      const tier = tiers.find((t) => t.name === e.target.value);
+                      if (!tier.priceIsFrom) setLives([]);
+                      setData({ ...data, tier: tier.name, amount: tier.cover, premium: tier.premium });
+                    }}
+                  >
+                    {tiers.map((tier) => (
+                      <option key={tier.name} value={tier.name}>
+                        {tierOptionLabel(tier, chosen)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
               <Field
                 label={
-                  data.product === "Care Cash"
-                    ? "Daily benefit (BWP)"
+                  chosen?.coverUnit
+                    ? "Benefit per " + chosen.coverUnit + " (BWP)"
                     : "Cover amount (BWP)"
                 }
               >
@@ -2136,6 +2218,8 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
                   className="input"
                   min="1"
                   required
+                  readOnly={Boolean(data.tier)}
+                  title={data.tier ? "Set by the " + data.tier + " tier" : undefined}
                   value={data.amount}
                   onChange={(e) =>
                     setData({ ...data, amount: Number(e.target.value) })
@@ -2143,17 +2227,28 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
                 />
               </Field>
             </div>
-            <div className="quote-summary">
-              <span>Illustrative monthly premium</span>
-              <strong>
-                BWP {chosen.premium}
-                <small> / month</small>
-              </strong>
-              <p>
-                Fixed demo premium. Changing cover does not calculate a real
-                quote.
-              </p>
-            </div>
+            {ratedTier ? (
+              <CoveredLives
+                tier={ratedTier}
+                mainName={data.name}
+                lives={lives}
+                onChange={setLives}
+                {...priced}
+              />
+            ) : (
+              <div className="quote-summary">
+                <span>Illustrative monthly premium</span>
+                <strong>
+                  BWP {data.premium}
+                  <small> / month</small>
+                </strong>
+                <p>
+                  {data.tier
+                    ? "Cover and premium are set by the " + data.tier + " tier."
+                    : "Fixed premium. Changing cover does not calculate a real quote."}
+                </p>
+              </div>
+            )}
           </>
         ) : (
           <>
@@ -2162,8 +2257,16 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
               {[
                 ["Customer", data.name],
                 ["Product", data.product],
+                ...(data.tier ? [["Tier", data.tier]] : []),
                 ["Illustrative cover", money(data.amount)],
-                ["Monthly premium", money(data.premium)],
+                [
+                  "Monthly premium",
+                  ratedTier
+                    ? priced.quote
+                      ? money(priced.quote.premium)
+                      : "Set when you submit"
+                    : money(data.premium),
+                ],
               ].map(([k, v]) => (
                 <div className="detail-item" key={k}>
                   <small>{k}</small>
@@ -2171,6 +2274,12 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
                 </div>
               ))}
             </div>
+            {ratedTier && priced.error && (
+              <p className="covered-lives-error" role="alert">
+                {priced.error}
+              </p>
+            )}
+            {ratedTier && <LifeCoverList lives={priced.quote?.lives} />}
             <label className="checkbox-label">
               <input
                 type="checkbox"
@@ -2178,8 +2287,8 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
                 checked={consent}
                 onChange={(e) => setConsent(e.target.checked)}
               />
-              I understand this is a demo submission and does not create
-              insurance cover.
+              I understand this submission does not create insurance cover
+              until a policy is issued.
             </label>
           </>
         )}
@@ -2195,7 +2304,7 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
             <Button
               type="button"
               variant="secondary"
-              onClick={() => onSave({ ...data, status: "Draft" })}
+              onClick={() => save("Draft")}
             >
               Save draft
             </Button>
@@ -2208,6 +2317,398 @@ function ApplicationForm({ defaultProduct, customers, products = [], onSave, onC
     </>
   );
 }
+// Overview donut: share of policies per product, top three plus "Other products".
+const mixColors = [
+  ["green", "#789769"],
+  ["purple", "#b5a3c8"],
+  ["amber", "#dfcd9c"],
+  ["blue", "#b2cbd9"],
+];
+function portfolioMix(policies) {
+  const counts = new Map();
+  for (const policy of policies) {
+    const name = policy.product || "Unspecified";
+    counts.set(name, (counts.get(name) || 0) + 1);
+  }
+  const ranked = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const slices = ranked.slice(0, 3).map(([name, count]) => ({ name, count }));
+  const rest = ranked.slice(3).reduce((sum, [, count]) => sum + count, 0);
+  if (rest) slices.push({ name: "Other products", count: rest });
+  // Largest remainder, so the legend always adds up to 100%.
+  const total = policies.length;
+  const exact = slices.map((s) => (s.count * 100) / (total || 1));
+  const percents = exact.map(Math.floor);
+  let left = total ? 100 - percents.reduce((a, b) => a + b, 0) : 0;
+  exact
+    .map((value, i) => [value - percents[i], i])
+    .sort((a, b) => b[0] - a[0])
+    .forEach(([, i]) => left-- > 0 && percents[i]++);
+  return slices.map((s, i) => ({
+    ...s,
+    percent: percents[i],
+    color: mixColors[i][0],
+    hex: mixColors[i][1],
+  }));
+}
+function donutGradient(mix) {
+  const total = mix.reduce((sum, s) => sum + s.count, 0);
+  if (!total) return "#eef0e8";
+  let at = 0;
+  const stops = mix.map((s) => {
+    const from = at;
+    at += (s.count * 100) / total;
+    // A thin white gap after each slice, as in the original design.
+    const end = mix.length > 1 ? Math.max(from, at - 0.8) : at;
+    return `${s.hex} ${from}% ${end}%, #fff ${end}% ${at}%`;
+  });
+  return `conic-gradient(${stops.join(", ")})`;
+}
+function productTiers(product) {
+  return product?.tiers || [];
+}
+// The product with the most live policies; the first in catalogue order on a tie.
+function popularProduct(products) {
+  return products.reduce((best, p) => (!best || p.count > best.count ? p : best), null);
+}
+// Headline figures are display strings ("from BWP 230"); this reads the number back out
+// for a product that has no tiers.
+function amountOf(text) {
+  return Number(String(text ?? "").replace(/[^0-9]/g, "")) || 0;
+}
+function defaultTier(product) {
+  const tiers = productTiers(product);
+  return tiers.find((tier) => tier.popular) || tiers[0] || null;
+}
+function tierOptionLabel(tier, product) {
+  const unit = product?.coverUnit ? " / " + product.coverUnit : "";
+  const price = (tier.priceIsFrom ? "from BWP " : "BWP ") + tier.premium + "/mo";
+  return tier.name + " · " + money(tier.cover) + unit + " · " + price;
+}
+function formatDob(value) {
+  if (!value) return "-";
+  const [y, m, d] = value.split("-").map(Number);
+  if (!y || !m || !d) return value;
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+function kycLabel(c) {
+  if (c.kycStatus === "VERIFIED") return "Verified";
+  if (c.kycStatus === "FAILED") return "Failed";
+  return "Pending";
+}
+// Why an EDD review cannot be recorded for this customer (spec BR-36: only PEP customers have one), or null.
+function eddBlockedReason(c) {
+  if (c.kycStatus !== "VERIFIED") return "KYC must be verified first";
+  if (!c.eddStatus) return "EDD applies only to PEP customers";
+  return null;
+}
+function eddLabel(c) {
+  if (c.eddStatus === "VERIFIED") return "Verified";
+  if (c.eddStatus === "PENDING") return "Pending";
+  if (c.eddStatus === "FAILED") return "Failed";
+  return null;
+}
+function CustomerDirectory({
+  customers,
+  search,
+  setSearch,
+  canReviewKyc,
+  canReviewEdd,
+  onEdd,
+  onAddCustomer,
+  onAddPolicy,
+  onView,
+  onKyc,
+  onExport,
+}) {
+  const [selected, setSelected] = useState(() => new Set());
+  const [hidden, setHidden] = useState(() => new Set());
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  const term = search.trim().toLowerCase();
+  const rows = customers.filter(
+    (c) =>
+      !term ||
+      [c.name, c.id, c.poiNumber, c.phone, c.email]
+        .join(" ")
+        .toLowerCase()
+        .includes(term),
+  );
+  const picked = customers.filter((c) => selected.has(c.id));
+  const single = picked.length === 1 ? picked[0] : null;
+  const pendingKyc = picked.filter((c) => c.kycStatus !== "VERIFIED");
+  // EDD applies only to customers flagged for it (politically exposed), and is recorded after KYC.
+  const eddReady = picked.filter((c) => c.kycStatus === "VERIFIED" && ["PENDING", "FAILED"].includes(c.eddStatus));
+  // A rejection always says why; the customer sees the reason.
+  const askReason = (what) => {
+    const reason = window.prompt("Why is " + what + " rejected? The customer is told this reason.");
+    return reason && reason.trim() ? reason.trim() : null;
+  };
+  const allChecked = rows.length > 0 && rows.every((c) => selected.has(c.id));
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onDown = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const toggle = (set, id) => {
+    const next = new Set(set);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  };
+  const run = (fn) => {
+    setMenuOpen(false);
+    fn();
+  };
+  const actions = [
+    { label: "Add customer", icon: "UserPlus", onClick: onAddCustomer },
+    {
+      label: "Add policy",
+      icon: "ShieldCheck",
+      disabled: !single || single.kycStatus !== "VERIFIED",
+      hint: !single
+        ? "Select one customer"
+        : single.kycStatus !== "VERIFIED"
+          ? "KYC must be verified first"
+          : null,
+      onClick: () => onAddPolicy(single),
+    },
+    canReviewKyc && {
+      label: "Mark KYC successful",
+      icon: "BadgeCheck",
+      disabled: !pendingKyc.length,
+      hint: pendingKyc.length
+        ? null
+        : single?.kycStatus === "VERIFIED"
+          ? "KYC is already verified"
+          : "Select customers with pending KYC",
+      onClick: async () => {
+        for (const c of pendingKyc) await onKyc(c, "VERIFIED");
+      },
+    },
+    canReviewKyc && {
+      label: "Reject KYC",
+      icon: "ShieldAlert",
+      disabled: !single || single.kycStatus === "FAILED",
+      hint: !single ? "Select one customer" : null,
+      onClick: () => {
+        const reason = askReason(single.name + "'s KYC");
+        if (reason) onKyc(single, "FAILED", reason);
+      },
+    },
+    canReviewEdd && {
+      label: "Verify EDD review",
+      icon: "ShieldCheck",
+      disabled: !eddReady.length,
+      hint: eddReady.length
+        ? null
+        : !single
+          ? "Select PEP customers awaiting EDD"
+          : eddBlockedReason(single) || "EDD is already verified",
+      onClick: async () => {
+        for (const c of eddReady) await onEdd(c, "VERIFIED");
+      },
+    },
+    canReviewEdd && {
+      label: "Reject EDD review",
+      icon: "ShieldAlert",
+      disabled: !single || single.kycStatus !== "VERIFIED" || !single.eddStatus || single.eddStatus === "FAILED",
+      hint: !single
+        ? "Select one customer"
+        : eddBlockedReason(single) || (single.eddStatus === "FAILED" ? "EDD is already rejected" : null),
+      onClick: () => {
+        const reason = askReason(single.name + "'s EDD review");
+        if (reason) onEdd(single, "FAILED", reason);
+      },
+    },
+    {
+      label: "View profile",
+      icon: "ArrowUpRight",
+      disabled: !single,
+      hint: !single ? "Select one customer" : null,
+      onClick: () => onView(single),
+    },
+    {
+      label: picked.length ? `Export selected (${picked.length})` : "Export all",
+      icon: "Download",
+      onClick: () => onExport(picked.length ? picked : rows),
+    },
+  ].filter(Boolean);
+
+  return (
+    <div className="customer-directory">
+      <div className="cd-heading">
+        <h1>Customers</h1>
+        <p>All registered policy customers</p>
+      </div>
+      <div className="cd-toolbar">
+        <label className="cd-search">
+          <Icon name="Search" small />
+          <input
+            aria-label="Search records"
+            placeholder="Search by name, Proof of Identity (POI), or mobile..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </label>
+        <div className="cd-action" ref={menuRef}>
+          <button
+            type="button"
+            className="cd-action-btn"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            Action <Icon name="ChevronDown" small />
+          </button>
+          {menuOpen && (
+            <div className="cd-menu" role="menu">
+              {actions.map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  role="menuitem"
+                  className="cd-menu-item"
+                  disabled={a.disabled}
+                  title={a.hint || undefined}
+                  onClick={() => run(a.onClick)}
+                >
+                  <Icon name={a.icon} small />
+                  <span className="cd-menu-text">
+                    <span>{a.label}</span>
+                    {/* A greyed-out action says why, so it does not look broken. */}
+                    {a.disabled && a.hint && <small className="cd-menu-hint">{a.hint}</small>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="cd-card">
+        <div className="cd-scroll">
+          <table className="cd-table">
+            <thead>
+              <tr>
+                <th className="cd-check">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all customers"
+                    checked={allChecked}
+                    onChange={() =>
+                      setSelected(
+                        allChecked ? new Set() : new Set(rows.map((c) => c.id)),
+                      )
+                    }
+                  />
+                </th>
+                <th>Customer ID</th>
+                <th>Full name</th>
+                <th>Proof of identity (POI)</th>
+                <th>Date of birth</th>
+                <th>Mobile</th>
+                <th>Email</th>
+                <th>KYC</th>
+                <th>EDD review</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((c) => {
+                const masked = hidden.has(c.id);
+                const kyc = kycLabel(c);
+                const edd = eddLabel(c);
+                return (
+                  <tr key={c.id} className={selected.has(c.id) ? "selected" : ""}>
+                    <td className="cd-check">
+                      <input
+                        type="checkbox"
+                        aria-label={"Select " + c.name}
+                        checked={selected.has(c.id)}
+                        onChange={() => setSelected((s) => toggle(s, c.id))}
+                      />
+                    </td>
+                    <td className="cd-strong">{c.id}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="cd-name"
+                        onClick={() => onView(c)}
+                      >
+                        {c.name}
+                      </button>
+                    </td>
+                    <td>
+                      {c.poiNumber ? (
+                        <span className="cd-poi">
+                          <span className="cd-poi-number">
+                            {masked
+                              ? "•".repeat(Math.max(c.poiNumber.length - 3, 3)) +
+                                c.poiNumber.slice(-3)
+                              : c.poiNumber}
+                          </span>
+                          {c.poiType && <span className="cd-chip">{c.poiType}</span>}
+                          <button
+                            type="button"
+                            className="cd-eye"
+                            aria-label={(masked ? "Show " : "Hide ") + c.name + " POI number"}
+                            onClick={() => setHidden((s) => toggle(s, c.id))}
+                          >
+                            <Icon name={masked ? "Eye" : "EyeOff"} small />
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="cd-muted">-</span>
+                      )}
+                    </td>
+                    <td>{formatDob(c.dateOfBirth)}</td>
+                    <td className="cd-nowrap">{c.phone || "-"}</td>
+                    <td className="cd-email" title={c.email || undefined}>
+                      {c.email || "-"}
+                    </td>
+                    <td>
+                      <span className={"cd-pill " + kyc.toLowerCase()}>{kyc}</span>
+                    </td>
+                    <td>
+                      {edd ? (
+                        <span className={"cd-pill " + edd.toLowerCase()}>{edd}</span>
+                      ) : (
+                        <span className="cd-muted">N/A</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {!rows.length && <Empty />}
+        </div>
+        <div className="cd-footer">
+          <span>
+            Showing {rows.length} of {customers.length} customers
+          </span>
+          {picked.length > 0 && (
+            <button type="button" className="cd-clear" onClick={() => setSelected(new Set())}>
+              {picked.length} selected · Clear
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 function CustomerForm({ onSave, onCancel }) {
   return (
     <form
@@ -2218,14 +2719,8 @@ function CustomerForm({ onSave, onCancel }) {
       }}
     >
       <p className="subtitle">
-        Add a fictional customer to explore the onboarding journey.
+        The username and password are what this customer uses on the Customer sign-in.
       </p>
-      <label className="form-label full">
-        <span>
-          <input type="checkbox" name="pep" /> Politically exposed person (PEP): needs an enhanced due diligence
-          review before choosing cover
-        </span>
-      </label>
       <div className="field-grid">
         <Field label="Full name" full>
           <input
@@ -2254,12 +2749,63 @@ function CustomerForm({ onSave, onCancel }) {
             required
           />
         </Field>
+        <Field label="Proof of identity type">
+          <select name="poiType" className="input" defaultValue="Omang" required>
+            <option value="Omang">Omang</option>
+            <option value="Passport">Passport</option>
+          </select>
+        </Field>
+        <Field label="Proof of identity number">
+          <input
+            name="poiNumber"
+            className="input"
+            placeholder="e.g. 880618404"
+            required
+            minLength={5}
+            maxLength={40}
+          />
+        </Field>
+        <Field label="Date of birth">
+          <input
+            name="dateOfBirth"
+            className="input"
+            type="date"
+            max={new Date().toISOString().slice(0, 10)}
+            required
+          />
+        </Field>
+        <Field label="Sign-in username">
+          <input
+            name="username"
+            className="input"
+            placeholder="e.g. dineo"
+            required
+            minLength={3}
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="Sign-in password">
+          <input
+            name="password"
+            className="input"
+            type="password"
+            placeholder="At least 8 characters"
+            required
+            minLength={8}
+            autoComplete="new-password"
+          />
+        </Field>
+        <label className="form-label full">
+          <span>
+            <input type="checkbox" name="pep" /> Politically exposed person (PEP): needs an enhanced due diligence
+            review before choosing cover
+          </span>
+        </label>
       </div>
       <div className="notice">
         <Icon name="Info" />
         <p>
-          Use fictional information only. New profiles start with pending
-          verification.
+          New profiles start with pending verification.
         </p>
       </div>
       <div className="modal-footer">
@@ -2268,6 +2814,132 @@ function CustomerForm({ onSave, onCancel }) {
         </Button>
         <Button type="submit" icon="UserPlus">
           Add customer
+        </Button>
+      </div>
+    </form>
+  );
+}
+function PolicyForm({ session, customers, products = [], defaultCustomer, onSave, onCancel }) {
+  const ready = customers.filter((customer) => customer.kycStatus === "VERIFIED");
+  const first = ready.find((customer) => customer.name === defaultCustomer) || ready[0];
+  const initialProduct = products[0] || { name: "", cover: "0", premium: "0" };
+  const [customerName, setCustomerName] = useState(first?.name || "");
+  const [productName, setProductName] = useState(initialProduct.name);
+  const product = products.find((item) => item.name === productName) || initialProduct;
+  const tiers = productTiers(product);
+  const [tierName, setTierName] = useState(defaultTier(initialProduct)?.name || "");
+  const tier = tiers.find((item) => item.name === tierName) || null;
+  const rated = tier?.priceIsFrom ? tier : null;
+  const [lives, setLives] = useState([]);
+  const priced = useLifeQuote(
+    session,
+    "/portfolio/quote",
+    { name: customerName, product: product.name, tier: tierName, lives: livesBody(completeLives(lives)) },
+    Boolean(rated && customerName),
+  );
+  if (!ready.length) {
+    return (
+      <>
+        <p className="subtitle">
+          Mark KYC successful on a customer before a policy can be added.
+        </p>
+        <div className="modal-footer">
+          <Button type="button" variant="secondary" onClick={onCancel}>
+            Close
+          </Button>
+        </div>
+      </>
+    );
+  }
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave({
+          name: customerName,
+          product: product.name,
+          tier: tier?.name,
+          amount: tier ? tier.cover : amountOf(product.cover),
+          premium: tier ? tier.premium : amountOf(product.premium),
+          status: "Active",
+          ...(rated ? { lives: livesBody(lives) } : {}),
+        });
+      }}
+    >
+      <p className="subtitle">
+        Only customers with successful KYC can receive a policy.
+      </p>
+      <div className="field-grid">
+        <Field label="Customer">
+          <Select
+            className="select"
+            value={customerName}
+            onChange={(event) => setCustomerName(event.target.value)}
+          >
+            {ready.map((customer) => (
+              <option key={customer.id} value={customer.name}>
+                {customer.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Product">
+          <Select
+            className="select"
+            value={productName}
+            onChange={(event) => {
+              const next = products.find((item) => item.name === event.target.value);
+              setProductName(event.target.value);
+              setTierName(defaultTier(next)?.name || "");
+              setLives([]);
+            }}
+          >
+            {products.map((item) => (
+              <option key={item.name}>{item.name}</option>
+            ))}
+          </Select>
+        </Field>
+        {tiers.length > 0 && (
+          <Field label="Tier">
+            <Select
+              className="select"
+              value={tierName}
+              onChange={(event) => {
+                setTierName(event.target.value);
+                if (!tiers.find((item) => item.name === event.target.value)?.priceIsFrom) setLives([]);
+              }}
+            >
+              {tiers.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {tierOptionLabel(item, product)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+      </div>
+      <div className="quote-summary">
+        <span>{tier ? tier.name + " cover" : "Cover"}</span>
+        <strong>
+          {tier
+            ? money(tier.cover) + (product.coverUnit ? " / " + product.coverUnit : "")
+            : product.cover}
+        </strong>
+        <p>
+          {rated
+            ? "Priced per covered life by age from rate table " + rated.rateTable
+            : "Monthly premium " + (tier ? money(tier.premium) : product.premium)}
+        </p>
+      </div>
+      {rated && (
+        <CoveredLives tier={rated} mainName={customerName} lives={lives} onChange={setLives} {...priced} />
+      )}
+      <div className="modal-footer">
+        <Button type="button" variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" icon="ShieldCheck">
+          Add policy
         </Button>
       </div>
     </form>
@@ -2288,7 +2960,11 @@ function Detail({
   profile,
   onPolicyUpdated,
   onClaimUpdated,
-  onReview,
+  canReviewKyc,
+  onKyc,
+  onAddPolicy,
+  canReviewEdd,
+  onEdd,
 }) {
   const [tab, setTab] = useState("Overview");
   const [evidence, setEvidence] = useState(false);
@@ -2296,6 +2972,9 @@ function Detail({
   const historyType =
     entity === "policy" ? "policy" : entity === "claim" ? "claim" : entity === "customer" ? ["kyc", "edd"] : null;
   const workflowRecord = entity === "policy" || entity === "claim";
+  // An application's identity check is its customer's KYC; a policy can only be issued once it is verified.
+  const applicant = entity === "application" ? customers.find((c) => c.name === r.name) : null;
+  const identityStatus = applicant ? kycLabel(applicant) : "Verified";
   const [summary, setSummary] = useState(false);
   return (
     <>
@@ -2334,10 +3013,11 @@ function Detail({
                 {[
                   ["Email", r.email],
                   ["Phone", r.phone],
-                  ["Verification", r.status],
-                  ["EDD review", r.pep ? r.eddStatus || "PENDING" : "Not required"],
+                  ["Verification", r.kycStatus === "VERIFIED" ? "KYC success" : r.status],
+                  ["EDD review", eddLabel(r) || "Not required"],
                   ...(r.kycRejectionReason ? [["KYC rejected because", r.kycRejectionReason]] : []),
                   ...(r.eddRejectionReason ? [["EDD rejected because", r.eddRejectionReason]] : []),
+                  ["Sign-in", r.loginUsername || "No login yet"],
                   [
                     "Linked policies",
                     policies.filter((p) => p.name === r.name).length,
@@ -2356,7 +3036,10 @@ function Detail({
                   <div className="linked-record" key={p.id}>
                     <Icon name="ShieldCheck" />
                     <div>
-                      <strong>{p.product}</strong>
+                      <strong>
+                        {p.product}
+                        {p.tier ? " · " + p.tier : ""}
+                      </strong>
                       <small>
                         {p.id} · {money(p.amount)}
                       </small>
@@ -2370,33 +3053,31 @@ function Detail({
                   detail="This customer has no policies yet."
                 />
               )}
-              {profile?.canReviewCustomers && (
-                <div className="detail-actions">
-                  {r.status !== "Verified" && (
-                    <Button icon="BadgeCheck" onClick={() => onReview("kyc", r, "VERIFIED")}>
-                      Mark KYC successful
-                    </Button>
-                  )}
-                  {r.status !== "KYC failed" && (
-                    <ReasonAction label="Reject KYC" onConfirm={(reason) => onReview("kyc", r, "FAILED", reason)} />
-                  )}
-                  {r.pep && r.status === "Verified" && r.eddStatus !== "VERIFIED" && (
-                    <Button icon="ShieldCheck" onClick={() => onReview("edd", r, "VERIFIED")}>
-                      Verify EDD
-                    </Button>
-                  )}
-                  {r.pep && r.status === "Verified" && r.eddStatus === "PENDING" && (
-                    <ReasonAction label="Reject EDD" onConfirm={(reason) => onReview("edd", r, "FAILED", reason)} />
-                  )}
-                </div>
-              )}
-              <Button
-                variant="secondary"
-                icon="ArrowRight"
-                onClick={() => onGo("applications")}
-              >
-                Open applications
-              </Button>
+              <div className="detail-actions">
+                {canReviewKyc && r.kycStatus !== "VERIFIED" && (
+                  <Button icon="BadgeCheck" onClick={() => onKyc(r, "VERIFIED")}>
+                    KYC success
+                  </Button>
+                )}
+                {canReviewKyc && r.kycStatus !== "FAILED" && (
+                  <ReasonAction label="Reject KYC" onConfirm={(reason) => onKyc(r, "FAILED", reason)} />
+                )}
+                {canReviewEdd && r.kycStatus === "VERIFIED" && ["PENDING", "FAILED"].includes(r.eddStatus) && (
+                  <Button icon="ShieldCheck" onClick={() => onEdd(r, "VERIFIED")}>
+                    Verify EDD
+                  </Button>
+                )}
+                {canReviewEdd && r.kycStatus === "VERIFIED" && r.eddStatus === "PENDING" && (
+                  <ReasonAction label="Reject EDD" onConfirm={(reason) => onEdd(r, "FAILED", reason)} />
+                )}
+                <Button
+                  icon="ShieldCheck"
+                  disabled={r.kycStatus !== "VERIFIED"}
+                  onClick={() => onAddPolicy(r)}
+                >
+                  Add policy
+                </Button>
+              </div>
             </>
           ) : entity === "scheme" ? (
             <>
@@ -2445,10 +3126,16 @@ function Detail({
                   </div>
                 ))}
               </div>
+              {r.lives?.length > 0 && (
+                <>
+                  <h3 className="section-title">Covered lives · {r.rateTableVersion}</h3>
+                  <LifeCoverList lives={r.lives} />
+                </>
+              )}
               {entity === "policy" && (
                 <PolicyWorkflowPanel
                   session={session}
-                  policy={{ ...r, reviewedBy: r.statusChangedBy, reviewNote: r.statusNote }}
+                  policy={r}
                   canManage={Boolean(profile?.canManagePolicies)}
                   onUpdated={onPolicyUpdated}
                   notify={notify}
@@ -2468,26 +3155,28 @@ function Detail({
                 "Identity verification",
                 "Application / claim declaration",
                 "Supporting documentation",
-              ].map((t, i) => (
-                <div className="checklist-item" key={t}>
-                  <Icon
-                    name={
-                      i === 2 && !evidence && r.status === "Evidence needed"
-                        ? "Clock3"
-                        : "CircleCheck"
-                    }
-                  />
-                  <span>{t}</span>
-                  <Badge>
-                    {i === 2 && !evidence && r.status === "Evidence needed"
+              ].map((t, i) => {
+                const state =
+                  i === 0
+                    ? identityStatus
+                    : i === 2 && !evidence && r.status === "Evidence needed"
                       ? "Pending"
-                      : "Verified"}
-                  </Badge>
-                </div>
-              ))}
+                      : "Verified";
+                return (
+                  <div className="checklist-item" key={t}>
+                    <Icon name={state === "Verified" ? "CircleCheck" : "Clock3"} />
+                    <span>{t}</span>
+                    <Badge>{state}</Badge>
+                  </div>
+                );
+              })}
               <div className="detail-actions">
                 {entity === "application" && r.status === "Ready to issue" && (
-                  <Button icon="ShieldCheck" onClick={() => onIssue(r)}>
+                  <Button
+                    icon="ShieldCheck"
+                    disabled={identityStatus !== "Verified"}
+                    onClick={() => onIssue(r)}
+                  >
                     Simulate policy issue
                   </Button>
                 )}
@@ -2505,7 +3194,7 @@ function Detail({
                   )}
                 {entity === "collection" && r.status !== "Paid" && (
                   <Button icon="Wallet" onClick={() => onReceipt(r)}>
-                    Record demo receipt
+                    Record receipt
                   </Button>
                 )}
                 {entity === "policy" && (
@@ -2545,7 +3234,7 @@ function Detail({
                 {r.status === "Evidence needed"
                   ? "Supporting documentation needs review before the case can proceed."
                   : "Review the record and its evidence before taking the next action."}{" "}
-                This is a scripted summary of the displayed demo record.
+                This is a scripted summary of the displayed record.
               </p>
             )}
           </div>
@@ -2576,7 +3265,7 @@ function Detail({
             icon="Upload"
             onClick={() => {
               setEvidence(true);
-              notify("Supporting evidence marked received in this demo view.");
+              notify("Supporting evidence marked received.");
             }}
           >
             Simulate evidence received
@@ -2590,7 +3279,7 @@ function Detail({
             [
               "Record created",
               r.date || "24 Sep 2026",
-              "Demo record entered into the workspace.",
+              "Record entered into the workspace.",
             ],
             [
               "Information reviewed",
@@ -2630,7 +3319,7 @@ function Census({ onDone }) {
             <Icon name="Upload" />
           </span>
           <h3>Try a sample census file</h3>
-          <p>4 fictional members · no upload needed</p>
+          <p>4 sample members · no upload needed</p>
           <span className="btn primary">
             Load sample data <Icon name="ArrowRight" small />
           </span>

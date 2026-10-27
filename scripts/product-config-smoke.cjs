@@ -91,8 +91,8 @@ const os = require("node:os");
         name: /I understand this is a dummy configuration/,
       })
       .check();
-    await page.getByRole("button", { name: "Activate demo" }).click();
-    await row.getByText("Demo active", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Activate" }).click();
+    await row.getByText("Active", { exact: true }).waitFor();
     await row.getByText("v2.0", { exact: true }).waitFor();
     await page
       .getByRole("button", {

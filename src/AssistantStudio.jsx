@@ -40,12 +40,12 @@ const prompts = [
 ];
 function sampleReply(text) {
   if (/summari|application|case/i.test(text))
-    return "Sample case · APP-2048\nAmara Dube has applied for Term Life with illustrative cover of BWP 500,000 at BWP 420/month. The application is under review. Identity and declaration checks are recorded. Next step: an underwriter reviews the evidence and accepted terms.\nSource: seeded demo application APP-2048. No automated decision has been made.";
+    return "Sample case · APP-2048\nAmara Dube has applied for Term Life with illustrative cover of BWP 500,000 at BWP 420/month. The application is under review. Identity and declaration checks are recorded. Next step: an underwriter reviews the evidence and accepted terms.\nSource: application APP-2048. No automated decision has been made.";
   if (/draft|message|email/i.test(text))
     return "Sample draft · missing evidence\nHello Naledi, thank you for your claim submission. To help us continue the review, please provide your hospital discharge summary through the secure portal. Your reference is CLM-0841. Our team is here if you need a hand.\nThis draft is for staff review. Nothing has been sent.";
   if (/extract|document/i.test(text))
-    return "Sample extraction · fictional identity document\nFull name: Amara Dube · confidence 99%\nDate of birth: 15 June 1992 · confidence 97%\nDocument type: National identity card · confidence 96%\nVerification: human review required.\nNo document was actually processed. These fields demonstrate the proposed extraction experience.";
-  return "This is a scripted AI showcase, so I cannot answer arbitrary questions or access live records. Try “Summarize an application”, “Draft a customer message”, or “Show document extraction” to explore the three demo experiences.";
+    return "Sample extraction · identity document\nFull name: Amara Dube · confidence 99%\nDate of birth: 15 June 1992 · confidence 97%\nDocument type: National identity card · confidence 96%\nVerification: human review required.\nNo document was actually processed. These fields demonstrate the proposed extraction experience.";
+  return "This is a scripted AI showcase, so I cannot answer arbitrary questions or access live records. Try “Summarize an application”, “Draft a customer message”, or “Show document extraction” to explore the three experiences.";
 }
 export default function AssistantStudio() {
   const [messages, setMessages] = useState([]);
@@ -87,7 +87,7 @@ export default function AssistantStudio() {
     <div className="intelligence-studio">
       <header className="ai-studio-header">
         <div className="intelligence-label">
-          <Sparkles size={14} /> NSURE INTELLIGENCE <span>DEMO</span>
+          <Sparkles size={14} /> NSURE INTELLIGENCE
         </div>
         <h1>
           Your next step.

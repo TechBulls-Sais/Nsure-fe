@@ -107,7 +107,7 @@ const path = require("node:path");
     await page
       .getByLabel("Brief description", { exact: true })
       .fill("Test fictional claim");
-    await page.getByRole("button", { name: "Register demo claim" }).click();
+    await page.getByRole("button", { name: "Register claim" }).click();
     const row = page.getByRole("row").filter({ hasText: "CLM-843" });
     await row.getByText("Family Funeral", { exact: true }).waitFor();
     await page

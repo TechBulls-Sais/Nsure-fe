@@ -517,7 +517,13 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         <p className="muted small">
           Assessed by {c.recommendedBy}
           {c.adjudicatedBy ? " · decided by " + c.adjudicatedBy : ""}
-          {c.fourEyesApplied === true ? " · four-eyes applied" : c.fourEyesApplied === false ? " · four-eyes control was off" : ""}
+          {c.fourEyesApplied === true
+            ? " · four-eyes applied"
+            : c.fourEyesApplied === false
+              ? c.adjudicatedBy === c.recommendedBy
+                ? " · four-eyes overridden by super admin"
+                : " · four-eyes control was off"
+              : ""}
         </p>
       )}
       {c.status === "Rejected" && (
@@ -594,7 +600,11 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         )}
       </div>
       {c.status === "Recommended" && c.recommendedBy === profile?.username && (
-        <p className="muted small">You assessed this claim, so a different person must approve it (four-eyes).</p>
+        <p className="muted small">
+          {profile?.superAdmin
+            ? "You assessed this claim. As super admin you can still approve it; it is recorded as a four-eyes override."
+            : "You assessed this claim, so a different person must approve it (four-eyes)."}
+        </p>
       )}
     </div>
   );
@@ -603,6 +613,10 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
 /** Lodge a claim on a policy: who is claiming, what happened, and when. */
 export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = "Lodge claim", busy }) {
   const today = new Date().toISOString().slice(0, 10);
+  // With several policies, nothing is pre-selected: the claim is filed under the chosen policy's holder,
+  // so defaulting to the first (newest) policy put claims under the wrong customer.
+  const [policyId, setPolicyId] = useState(policies.length === 1 ? policies[0].id : "");
+  const chosen = policies.find((p) => p.id === policyId);
   if (!policies.length) {
     return <p className="muted">There is no policy to claim on yet.</p>;
   }
@@ -616,7 +630,18 @@ export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = 
       <div className="field-grid">
         <label className="form-label full">
           <span>Policy</span>
-          <select name="policy" className="input" required>
+          <select
+            name="policy"
+            className="input"
+            required
+            value={policyId}
+            onChange={(e) => setPolicyId(e.target.value)}
+          >
+            {policies.length > 1 && (
+              <option value="" disabled>
+                Choose the policy this claim is for…
+              </option>
+            )}
             {policies.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.id} · {p.name} · {p.product}
@@ -624,6 +649,11 @@ export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = 
               </option>
             ))}
           </select>
+          {chosen && (
+            <small className="muted small">
+              Filed under policyholder <strong>{chosen.name}</strong>. The claimant below is the person reporting it.
+            </small>
+          )}
         </label>
         <label className="form-label">
           <span>Claimant full name</span>

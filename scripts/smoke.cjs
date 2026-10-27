@@ -83,15 +83,15 @@ const out = process.env.NSURE_SCREENSHOT_DIR || os.tmpdir();
     .waitFor();
   await page.getByRole("button", { name: "Close dialog" }).click();
   await page.getByRole("link", { name: "Group schemes", exact: true }).click();
-  await page.getByRole("button", { name: "Demo census import" }).click();
+  await page.getByRole("button", { name: "Census import" }).click();
   await page.getByRole("button", { name: /Try a sample census file/ }).click();
   await page.getByText("Unknown category", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Finish preview" }).click();
   await page.getByRole("link", { name: /AI assistant/ }).click();
   await page.getByRole("button", { name: /Summarize an application/ }).click();
-  await page.getByText(/Source: seeded demo application APP-2048/).waitFor();
+  await page.getByText(/Source: application APP-2048/).waitFor();
   await page.getByRole("link", { name: "Products", exact: true }).click();
-  await page.getByRole("button", { name: "Quote Family Funeral" }).click();
+  await page.getByRole("button", { name: "Start application for Family Funeral" }).click();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   assert.equal(
     await page

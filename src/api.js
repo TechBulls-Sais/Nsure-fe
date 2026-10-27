@@ -34,7 +34,7 @@ export async function request(session, path, options = {}) {
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
   } catch {
-    throw new ApiError(0, "The API is not reachable. Start the backend on port 8080.");
+    throw new ApiError(0, "The API is not reachable. Start the Nsure backend on port 8091.");
   }
 
   const data = await readBody(response);

@@ -1,17 +1,17 @@
-# Nsure Life — frontend showcase
+# Nsure — frontend
 
-A React + Vite insurance workspace with fictional data, dummy sign-in, and connected demonstration journeys. No backend, credentials, AI provider, or external business service is required.
+A React + Vite insurance workspace. Sign-in and portfolio records use the Nsure backend.
 
 ## Run locally
 
-Requires Node.js 22.12+ (Node.js 24 recommended).
+Start `Nsure-be` on port 8091, then from this folder (Node.js 22.12+):
 
 ```sh
 npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite. Dummy credentials are prefilled; any valid email and password of at least four characters enters the same demo identity. These are not real authentication controls.
+Open http://127.0.0.1:5180. Dev login is username `admin` and password `password`.
 
 ```sh
 npm run build
@@ -51,7 +51,7 @@ Tables support search/status filters and CSV export where shown. Details include
 
 Replace seed state and local mutation handlers with a typed API client when the backend is introduced. Define OpenAPI contracts, split pages into feature modules, and add real identity/object authorization before using real customer data. The backend must own product/rate versions, calculations, validation, approval guards, audit evidence, idempotency, state transitions, and financial effects. UI guards are demonstration behavior only.
 
-Scope follows the supplied Nsure Life specification: Individual Life application/policy journeys, customer records, claims, Group scheme previews, products, collections, and governed AI previews. Commissions, reinsurance, subledger posting, provider integrations, and a full product rule engine are outside this frontend milestone.
+Scope follows the supplied Nsure specification: Individual Life application/policy journeys, customer records, claims, Group scheme previews, products, collections, and governed AI previews. Commissions, reinsurance, subledger posting, provider integrations, and a full product rule engine are outside this frontend milestone.
 
 ## Browser smoke check
 
@@ -91,6 +91,18 @@ The UI now uses adapted open-source components from **Kokonut UI** and **Magic U
 - Workspace command palette: **Cmd/Ctrl+K** opens search with arrow-key navigation, Enter selection, and Escape dismissal. It opens pages or starts applications/claims.
 - Motion: the header toggle pauses decorative animation. System reduced-motion preferences are respected, including changes while the app is open. Page timelines clean up on navigation; decorative effects have bounded repeats. Thinking animation exists only during a finite simulated response.
 
-Run all browser checks with `npm test` while the dev server is running, or run only the new interactions with `npm run test:intelligence`. No backend, live AI calls, web searches, or credentials were added. Briefs and records remain in frontend memory.
+Run all browser checks with `npm test` while the dev server and backend are running, or run only the new interactions with `npm run test:intelligence`. AI replies stay scripted in the browser. Portfolio records are stored by the backend.
 
 Dropdown fields share a themed Radix Select menu with selected checkmarks, keyboard navigation, and mobile-aware positioning. Run `npm run test:select` for selection, premium updates, focus/Escape, mobile bounds, and claim submission checks.
+
+## Public landing page
+
+The root URL now opens a responsive Nsure landing page. It includes product cards with explicit flip controls, a short getting-started guide, expandable FAQs, and an Admin dropdown with both **Customer login** and **Admin login** links. Product copy is introductory and illustrative; current products and eligibility remain in the authenticated portal.
+
+- `#/home`: landing page; `#/cover`, `#/how-it-works`, and `#/questions`: landing sections.
+- `#/login/customer`: existing customer sign-in form.
+- `#/login/admin`: existing staff/admin sign-in form.
+- Signing out returns to the landing page. Successful sign-in retains the existing backend-based customer/staff routing.
+- `src/LandingPage.jsx` and `src/landing.css`: isolated landing UI, responsive styles, accessible interactions, and scoped Anime.js entrance animation.
+
+Use `npm run test:landing` with the dev server running for the standalone landing-page checks. These verify public navigation, both login entry points, flip controls, FAQs, mobile bounds, and reduced motion without needing the backend. Existing portfolio smoke scripts depend on a running backend and their original showcase fixture assumptions.

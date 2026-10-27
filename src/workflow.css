@@ -111,35 +111,3 @@
   gap: 8px;
   width: 100%;
 }
-
-/* Nsure customer portal: one card per policy or claim. */
-.portal-policies {
-  display: grid;
-  gap: 12px;
-}
-
-.portal-policy {
-  display: grid;
-  gap: 8px;
-  padding: 14px 16px;
-  border: 1px solid var(--line, #e5e7eb);
-  border-radius: 14px;
-}
-
-.portal-policy header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.portal-policy header small {
-  display: block;
-  color: var(--muted, #6b7280);
-}
-
-.portal-policy details summary {
-  cursor: pointer;
-  font-size: 0.88rem;
-  margin-bottom: 8px;
-}

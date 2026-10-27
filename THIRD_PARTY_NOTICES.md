@@ -1,6 +1,6 @@
 # Open-source UI attribution
 
-The Nsure Life showcase adapts the components below to plain React JSX and the existing CSS design system. Source reviewed on 29 September 2026. Original license texts are retained in `public/licenses/` and copied into production builds by Vite. No paid Kokonut Pro templates are used.
+The Nsure showcase adapts the components below to plain React JSX and the existing CSS design system. Source reviewed on 29 September 2026. Original license texts are retained in `public/licenses/` and copied into production builds by Vite. No paid Kokonut Pro templates are used.
 
 ## Kokonut UI
 
@@ -37,3 +37,13 @@ Full license files for Anime.js, Motion, Framer Motion, Motion DOM, and Motion U
 ## Radix UI Select
 
 The shared styled dropdown uses `@radix-ui/react-select` for keyboard navigation, focus management, and viewport-aware popover positioning. MIT License — [full license](public/licenses/radix-select.txt). Source: https://github.com/radix-ui/primitives
+
+## Landing page design references
+
+The landing page uses original React/CSS implementations inspired by the user-supplied references:
+
+- Kokonut UI Card Flip: https://kokonutui.com/docs/cards/card-flip — 3D front/back product cards, adapted here as explicit keyboard- and touch-operable buttons rather than hover-only reveals.
+- Uiverse loader by lukepadiachy: https://uiverse.io/lukepadiachy/funny-moose-89 — inspiration for the small geometric cube motif. No source code was copied; Nsure uses original clipped CSS faces and a bounded floating animation.
+- Anime.js timeline defaults: https://animejs.com/documentation/timeline/timeline-playback-settings/defaults — shared timing/easing defaults for the scoped hero entrance. Uses the existing Anime.js dependency and retained license.
+
+Landing-page motion follows the existing system/user reduced-motion preference. The product photography is reused from this project's existing public assets.

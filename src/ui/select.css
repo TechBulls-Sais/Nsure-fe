@@ -63,7 +63,7 @@
   isolation: isolate;
   min-width: var(--radix-select-trigger-width);
   max-width: calc(100vw - 24px);
-  max-height: min(310px, var(--radix-select-content-available-height));
+  max-height: min(480px, var(--radix-select-content-available-height));
   border: 1px solid #dfe6d6;
   border-radius: 12px;
   background: #fff;

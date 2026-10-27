@@ -1,0 +1,329 @@
+/* Loaded before styles.css, so rules that styles.css also sets carry an extra .customer-main.
+   Customer portal: accepted policies as a collapsible list of compact cards, and the requests awaiting review.
+   Selectors are scoped under .customer-policies / .customer-requests so they win over the older card styles. */
+
+.customer-main .customer-policies {
+  padding: 24px;
+}
+.customer-main .customer-policies .customer-section-head {
+  margin-bottom: 16px;
+}
+
+/* The tappable summary row that opens the full list. */
+.customer-policies .customer-policy-toggle {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 60px;
+  padding: 12px 16px;
+  border: 1px solid #ffffff2e;
+  border-radius: 12px;
+  background: #ffffff12;
+  color: #eef4e8;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.customer-policies .customer-policy-toggle:hover {
+  background: #ffffff1f;
+}
+.customer-policies .customer-policy-toggle:focus-visible {
+  outline: 3px solid #c6dcac;
+  outline-offset: 2px;
+}
+.customer-policy-toggle-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.customer-policy-toggle-summary strong {
+  font-size: 15px;
+  color: #fff;
+}
+.customer-policy-toggle-summary span {
+  font-size: 12px;
+  color: #c9dccd;
+}
+.customer-policy-toggle-products {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.customer-policy-toggle-products em {
+  font-style: normal;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ffffff1a;
+  color: #dfeadb;
+  white-space: nowrap;
+}
+.customer-policy-toggle-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.customer-policy-toggle-action svg {
+  transition: transform 0.2s;
+}
+.customer-policies.is-open .customer-policy-toggle-action svg {
+  transform: rotate(180deg);
+}
+
+/* Compact cards. */
+.customer-main .customer-policies .customer-policy-list {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.customer-policies .customer-policy-list > li {
+  padding: 14px 14px 0;
+  border-radius: 12px;
+}
+.customer-policies .customer-policy-card-head {
+  justify-content: flex-start;
+  gap: 10px;
+  margin-bottom: 0;
+}
+.customer-policies .customer-policy-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.customer-policy-title {
+  min-width: 0;
+  flex: 1;
+}
+.customer-policies .customer-policy-list h3 {
+  font-size: 14px;
+  line-height: 1.3;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.customer-policies .customer-policy-reference {
+  font-size: 11px;
+  margin-top: 1px;
+  color: #6b7a72;
+}
+.customer-policies .customer-policy-status {
+  font-size: 10px;
+  padding: 3px 7px;
+  flex-shrink: 0;
+}
+.customer-policies .customer-policy-values {
+  gap: 10px;
+  margin: 12px 0;
+}
+.customer-policies .customer-policy-values > div + div {
+  padding-left: 10px;
+}
+.customer-policies .customer-policy-values dt {
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+.customer-policies .customer-policy-values dd {
+  font-size: 15px;
+  letter-spacing: -0.2px;
+}
+.customer-policies .customer-policy-values small {
+  font-size: 10px;
+}
+.customer-policies .customer-policy-details summary {
+  min-height: 38px;
+  font-size: 11px;
+}
+.customer-policies .customer-policy-details dl {
+  gap: 10px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.customer-policies .customer-policy-details dd {
+  font-size: 12px;
+}
+.customer-policies .customer-policy-details .covered-lives-saved {
+  margin: 0 0 12px;
+}
+
+/* Requests awaiting review, or rejected with the reviewer's reason. */
+.customer-requests {
+  margin: -22px 0 42px;
+  padding: 18px 20px;
+  border: 1px solid #e3e8df;
+  border-radius: 16px;
+  background: #fff;
+  scroll-margin-top: 128px;
+}
+.customer-requests-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+}
+.customer-requests-head h2 span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding-inline: 6px;
+  border-radius: 6px;
+  background: #f0f4ec;
+  font-size: 12px;
+}
+.customer-requests-head p {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #5e6d65;
+}
+.customer-requests ul {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.customer-requests li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fbf7ea;
+}
+.customer-requests li.is-rejected {
+  background: #fbf0ec;
+}
+.customer-request-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #f3e6bf;
+  color: #7a5a17;
+}
+.customer-requests li.is-rejected .customer-request-icon {
+  background: #f4d9d0;
+  color: #a2412f;
+}
+.customer-requests li > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.customer-requests li strong {
+  font-size: 13px;
+}
+.customer-requests li small {
+  font-size: 11px;
+  color: #6b7a72;
+  overflow-wrap: anywhere;
+}
+.customer-requests li p {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #a2412f;
+}
+.customer-request-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: #f3e6bf;
+  color: #7a5a17;
+  white-space: nowrap;
+}
+.customer-requests li.is-rejected .customer-request-status {
+  background: #f4d9d0;
+  color: #a2412f;
+}
+
+@media (max-width: 760px) {
+  /* The nav now has up to three links (policies, requests, explore); keep each on one line. */
+  .customer-top .customer-nav {
+    justify-content: space-between;
+  }
+  .customer-top .customer-nav a {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    padding: 8px 9px;
+    font-size: 12px;
+  }
+  .customer-top .customer-nav span {
+    width: 20px;
+    height: 20px;
+    margin-left: 4px;
+    font-size: 11px;
+  }
+  .customer-main .customer-policies {
+    padding: 20px 16px;
+  }
+  .customer-policies .customer-policy-toggle {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .customer-policy-toggle-products {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .customer-main .customer-policies .customer-policy-list {
+    grid-template-columns: 1fr;
+  }
+  .customer-requests {
+    margin-top: -14px;
+    padding: 16px;
+  }
+  .customer-requests li {
+    grid-template-columns: auto 1fr;
+  }
+  .customer-request-status {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+/* Workflow additions: payment, beneficiaries and claims in the portal. */
+.customer-workflow {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.customer-workflow h4 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.customer-grace {
+  margin: 8px 0 0;
+  color: #b45309;
+  font-size: 0.88rem;
+}
+
+.customer-requests .wf-pay {
+  margin-top: 8px;
+}
+
+.customer-claims .customer-requests-head .btn {
+  margin-top: 8px;
+}
+
+.customer-claim-form {
+  margin: 12px 0;
+  padding: 16px;
+  border: 1px solid var(--line, #e5e7eb);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+}
