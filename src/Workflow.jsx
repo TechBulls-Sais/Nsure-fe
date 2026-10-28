@@ -148,13 +148,46 @@ function fileSize(bytes) {
 }
 
 /**
- * Evidence on one claim: list, view, download and (while the claim is open) upload. `basePath` is the staff
- * path (/portfolio/claims/{ref}/documents) or the customer's (/portfolio/shop/claims/{ref}/documents);
- * `onUploaded` receives whatever that endpoint answers.
+ * Evidence on one claim: list, view, download, (while the claim is open) upload, and a generated claim summary.
+ * `basePath` is the staff path (/portfolio/claims/{ref}/documents) or the customer's
+ * (/portfolio/shop/claims/{ref}/documents); `onUploaded` receives whatever that endpoint answers.
  */
-export function ClaimDocuments({ session, claim, basePath, canUpload, canGenerate, onUploaded, notify }) {
-  const documents = claim.documents || [];
-  const open = !["Paid", "Rejected"].includes(claim.status);
+export function ClaimDocuments({ claim, ...props }) {
+  return (
+    <DocumentsPanel
+      record={claim}
+      open={!["Paid", "Rejected"].includes(claim.status)}
+      generate={{
+        slug: "summary",
+        label: "Generate claim summary",
+        hint: "A PDF of the claim, checks, payee, decision and history as they stand now.",
+        done: "Claim summary generated.",
+      }}
+      {...props}
+    />
+  );
+}
+
+/** Documents filed on one policy: the generated policy schedule, viewed and downloaded like claim documents. */
+export function PolicyDocuments({ policy, ...props }) {
+  return (
+    <DocumentsPanel
+      record={policy}
+      open={false}
+      canUpload={false}
+      generate={{
+        slug: "schedule",
+        label: "Generate policy schedule",
+        hint: "A PDF of the policy, cover, covered lives, beneficiaries and history as they stand now.",
+        done: "Policy schedule generated.",
+      }}
+      {...props}
+    />
+  );
+}
+
+function DocumentsPanel({ session, record, open, generate, basePath, canUpload, canGenerate, onUploaded, notify }) {
+  const documents = record.documents || [];
   const [type, setType] = useState(DOCUMENT_TYPES[0]);
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -187,13 +220,13 @@ export function ClaimDocuments({ session, claim, basePath, canUpload, canGenerat
     }
   };
 
-  // Staff only: a PDF snapshot of the claim, filed with its documents. Allowed on closed claims too.
-  const generate = async () => {
+  // A PDF snapshot of the record, filed with its documents. Allowed on closed claims too.
+  const runGenerate = async () => {
     setBusy(true);
     try {
-      const result = await request(session, basePath + "/summary", { method: "POST" });
+      const result = await request(session, basePath + "/" + generate.slug, { method: "POST" });
       onUploaded(result.data);
-      notify("Claim summary generated.");
+      notify(generate.done);
     } catch (error) {
       notify(error.message);
     } finally {
@@ -232,14 +265,14 @@ export function ClaimDocuments({ session, claim, basePath, canUpload, canGenerat
     <div className="wf-docs">
       {canGenerate && (
         <div className="wf-doc-generate">
-          <Btn variant="secondary" icon={FileText} disabled={busy} onClick={generate}>
-            Generate claim summary
+          <Btn variant="secondary" icon={FileText} disabled={busy} onClick={runGenerate}>
+            {generate.label}
           </Btn>
-          <small className="muted">A PDF of the claim, checks, payee, decision and history as they stand now.</small>
+          <small className="muted">{generate.hint}</small>
         </div>
       )}
       {documents.length === 0 ? (
-        <p className="muted small">No documents have been uploaded for this claim yet.</p>
+        <p className="muted small">No documents on file yet.</p>
       ) : (
         <ul className="wf-doc-list">
           {documents.map((doc) => (

@@ -26,6 +26,7 @@ import {
   ClaimDocuments,
   ClaimLodgeForm,
   PayForm,
+  PolicyDocuments,
   formatDate,
 } from "./Workflow";
 
@@ -496,6 +497,19 @@ export default function CustomerPortal({
                           </dl>
                           <LifeCoverList lives={policy.lives} />
                           {beneficiaries(policy)}
+                        </details>
+                        <details className="customer-policy-details">
+                          <summary>
+                            Documents ({(policy.documents || []).length}) <ChevronDown size={14} aria-hidden="true" />
+                          </summary>
+                          <PolicyDocuments
+                            session={session}
+                            policy={policy}
+                            basePath={"/portfolio/shop/policies/" + policy.id + "/documents"}
+                            canGenerate
+                            onUploaded={onShop}
+                            notify={notify}
+                          />
                         </details>
                         {policy.inGrace && (
                           <p className="customer-grace">

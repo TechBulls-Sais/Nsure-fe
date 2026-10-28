@@ -125,6 +125,7 @@ import {
   ReasonAction,
   WorkflowTimeline,
   ClaimDocuments,
+  PolicyDocuments,
 } from "./Workflow";
 import LandingPage from "./LandingPage";
 import {
@@ -3248,6 +3249,15 @@ function Detail({
           canUpload={Boolean(profile?.canLodgeClaims || profile?.canUpdateClaims || profile?.canAssessClaims)}
           canGenerate={Boolean(profile?.canLodgeClaims || profile?.canUpdateClaims || profile?.canAssessClaims)}
           onUploaded={(documents) => onClaimUpdated({ ...r, documents })}
+          notify={notify}
+        />
+      ) : tab === "Documents" && entity === "policy" ? (
+        <PolicyDocuments
+          session={session}
+          policy={r}
+          basePath={"/portfolio/policies/" + r.id + "/documents"}
+          canGenerate={Boolean(profile?.canManagePolicies)}
+          onUploaded={(documents) => onPolicyUpdated({ ...r, documents })}
           notify={notify}
         />
       ) : tab === "Documents" ? (
