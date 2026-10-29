@@ -1,0 +1,137 @@
+/* Group administration workspace (GroupAdmin.jsx): small additions on top of styles.css and ui/workspace.css. */
+.group-admin .ga-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.group-admin .ga-scheme-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+.group-admin .scheme-card-top h2 {
+  margin: 0;
+}
+.group-admin .scheme-card .scheme-meta {
+  margin: 0 0 14px;
+}
+.ga-card-flags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 11px;
+  color: light-dark(#7d8c72, oklch(0.659 0.044 132));
+}
+.ga-muted {
+  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
+  font-size: 11px;
+}
+.ga-person {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ga-person strong {
+  font-weight: 550;
+}
+.ga-nowrap {
+  white-space: nowrap;
+}
+.ga-pending {
+  color: light-dark(#8a6512, oklch(0.708 0.109 82));
+  font-weight: 600;
+}
+.ga-bad {
+  color: light-dark(#b42323, oklch(0.724 0.16 27));
+}
+.ga-good {
+  color: light-dark(#23753b, oklch(0.726 0.125 149));
+}
+.ga-current {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ga-row-error {
+  display: inline-block;
+  max-width: 420px;
+  color: light-dark(#9b3528, oklch(0.739 0.146 30));
+  font-size: 11px;
+  line-height: 1.4;
+}
+.ga-prorata {
+  color: light-dark(#2a5f8a, oklch(0.741 0.094 246));
+  font-weight: 600;
+}
+.ga-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ga-filters .input,
+.ga-filters .select {
+  width: auto;
+  min-width: 170px;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+.ga-file {
+  position: relative;
+  align-self: flex-start;
+  cursor: pointer;
+}
+.ga-file input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.ga-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 12px 0;
+  font-size: 11px;
+  color: light-dark(#647658, oklch(0.702 0.053 133));
+  cursor: pointer;
+}
+.ga-paid {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  color: light-dark(#23753b, oklch(0.726 0.125 149));
+  font-size: 12px;
+  font-weight: 550;
+}
+.ga-drawer-section {
+  margin-bottom: 22px;
+}
+.ga-drawer-section h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.ga-drawer-section .subtitle {
+  margin: 0 0 10px;
+}
+
+@media (max-width: 1150px) {
+  .group-admin .ga-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .group-admin .ga-stats {
+    grid-template-columns: 1fr;
+  }
+  .group-admin .ga-scheme-grid {
+    grid-template-columns: 1fr;
+  }
+  .ga-filters,
+  .ga-filters .input,
+  .ga-filters .select {
+    width: 100%;
+  }
+  .group-admin .field-grid {
+    grid-template-columns: 1fr;
+  }
+}

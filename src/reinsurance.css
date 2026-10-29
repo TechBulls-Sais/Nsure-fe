@@ -1,0 +1,18 @@
+/* Reinsurance workspace: the treaty form's product checklist. */
+.ri-products {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.ri-product {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: light-dark(#2f3b28, oklch(0.816 0.038 134));
+  cursor: pointer;
+}
+.ri-product input {
+  width: auto;
+  margin: 0;
+}

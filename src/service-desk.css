@@ -1,0 +1,172 @@
+/* Service desk (SH10) and the portal's "Help & complaints" section. Additions only. */
+.svc-sub {
+  display: block;
+  margin-top: 2px;
+  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
+  font-size: 10px;
+}
+.svc-muted {
+  color: light-dark(#9ba690, oklch(0.609 0.035 129));
+  font-size: 11px;
+}
+.svc-loading {
+  display: grid;
+  gap: 10px;
+}
+.svc-subject {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.svc-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.svc-description {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: light-dark(#4b5a51, oklch(0.751 0.025 159));
+  white-space: pre-wrap;
+}
+.svc-sla {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: light-dark(#f6f9f2, oklch(0.197 0.007 126));
+}
+.svc-sla small {
+  display: block;
+  margin-bottom: 3px;
+  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
+  font-size: 10px;
+}
+.svc-sla strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.svc-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 8px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: light-dark(#eef3f8, oklch(0.206 0.006 248));
+  color: light-dark(#36506b, oklch(0.768 0.058 250));
+  font-size: 12px;
+}
+.svc-note.is-resolved {
+  background: light-dark(#eef7ea, oklch(0.204 0.014 136));
+  color: light-dark(#2f5b2a, oklch(0.765 0.096 142));
+}
+.svc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 6px;
+}
+.svc-prompt {
+  margin-top: 4px;
+}
+.svc-prompt textarea {
+  width: 100%;
+}
+/* The prompt sits mid-drawer, so its buttons must not take the drawer's pinned submit-row styling. */
+.nk-drawer .svc-prompt .ws-form-actions {
+  position: static;
+  margin: 10px 0 0;
+  padding: 0;
+  border-top: 0;
+  background: none;
+}
+.svc-history-title {
+  margin-top: 20px;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .svc-sla {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── customer portal ─────────────────────────────────────────────────────────────────────────── */
+.customer-cases .customer-requests-head .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.customer-cases li.is-done {
+  background: light-dark(#f1f7ee, oklch(0.202 0.009 135));
+}
+.customer-case-form {
+  margin-top: 14px;
+}
+.customer-case-types {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.customer-case-types label {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid light-dark(#e3e8df, oklch(0.33 0.008 131));
+  border-radius: 12px;
+  cursor: pointer;
+}
+.customer-case-types label.active {
+  border-color: light-dark(#8fb07a, oklch(0.719 0.084 134));
+  background: light-dark(#f4f9ef, oklch(0.198 0.01 129));
+}
+.customer-case-types input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.customer-case-types label:focus-within {
+  outline: 2px solid light-dark(#8fb07a, oklch(0.719 0.084 134));
+  outline-offset: 2px;
+}
+.customer-case-types strong {
+  font-size: 13px;
+}
+.customer-case-types small {
+  font-size: 11px;
+  color: light-dark(#5e6d65, oklch(0.714 0.023 162));
+}
+.customer-case-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.customer-case-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: light-dark(#5e6d65, oklch(0.714 0.023 162));
+}
+.customer-case-grid label.full {
+  grid-column: 1 / -1;
+}
+.customer-case-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 14px;
+}
+@media (max-width: 640px) {
+  .customer-case-types,
+  .customer-case-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { fetchFile, request, uploadFile } from "./api";
 import { money } from "./data";
+import { useConfirm } from "./ui/overlay";
 import "./workflow.css";
 
 // The demo server's checkout methods, and the ways a claim or beneficiary can be paid out.
@@ -214,7 +215,7 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
       setFile(null);
       setInputKey((k) => k + 1);
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     } finally {
       setBusy(false);
     }
@@ -228,7 +229,7 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
       onUploaded(result.data);
       notify(generate.done);
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     } finally {
       setBusy(false);
     }
@@ -244,7 +245,7 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (error) {
       tab?.close();
-      notify(error.message);
+      notify(error.message, "error");
     }
   };
 
@@ -257,7 +258,7 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
     }
   };
 
@@ -486,10 +487,10 @@ function useAction(notify) {
     setBusy(true);
     try {
       const result = await fn();
-      if (done) notify(done);
+      if (done) notify(done, "success");
       return result;
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
       return false;
     } finally {
       setBusy(false);
@@ -501,6 +502,7 @@ function useAction(notify) {
 /** Staff view of a policy's lifecycle: dates, beneficiaries, record a premium, cancel an unpaid policy. */
 export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, notify }) {
   const [busy, run] = useAction(notify);
+  const confirm = useConfirm();
   const call = (path, options, done) =>
     run(async () => {
       const result = await request(session, "/portfolio/policies/" + p.id + path, options);
@@ -543,7 +545,15 @@ export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, 
         busy={busy}
         onRemove={
           canManage && ["Pending Payment", "Active"].includes(p.status)
-            ? (b) => call("/beneficiaries/" + b.id, { method: "DELETE" }, b.fullName + " removed.")
+            ? async (b) => {
+                const ok = await confirm({
+                  title: "Remove " + b.fullName + "?",
+                  message: b.fullName + " will no longer be paid from policy " + p.id + ".",
+                  confirmLabel: "Remove beneficiary",
+                  tone: "danger",
+                });
+                if (ok) call("/beneficiaries/" + b.id, { method: "DELETE" }, b.fullName + " removed.");
+              }
             : null
         }
       />
@@ -591,6 +601,7 @@ export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, 
 /** Staff view of a claim's workflow: checks, payee, and the assess / approve / reject / pay actions. */
 export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, notify }) {
   const [busy, run] = useAction(notify);
+  const confirm = useConfirm();
   const [editPayee, setEditPayee] = useState(false);
   const [payout, setPayout] = useState("");
   const open = OPEN_CLAIM.includes(c.status);
@@ -763,20 +774,52 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             <Btn
               icon={Check}
               disabled={busy}
-              onClick={() =>
+              onClick={async () => {
+                const amount = payout ? Number(payout) : c.amount;
+                const ok = await confirm({
+                  title: "Approve " + c.id + "?",
+                  message: (
+                    <>
+                      Approve a payout of <strong>{money(amount)}</strong>
+                      {amount < c.amount ? " (partial, cover " + money(c.amount) + ")" : ""} to{" "}
+                      {payee.name || "the payee"}.
+                      {c.recommendedBy === profile?.username
+                        ? " You assessed this claim, so this is recorded as a four-eyes override."
+                        : ""}
+                    </>
+                  ),
+                  confirmLabel: "Approve payout",
+                });
+                if (!ok) return;
                 call(
                   "/approve",
                   { method: "POST", body: payout ? { payoutAmount: Number(payout) } : {} },
                   c.id + " is approved.",
-                )
-              }
+                );
+              }}
             >
               Approve
             </Btn>
           </span>
         )}
         {can("pay") && profile?.canSettleClaims && (
-          <Btn icon={Wallet} disabled={busy} onClick={() => call("/pay", { method: "POST" }, "Payout sent for " + c.id + ".")}>
+          <Btn
+            icon={Wallet}
+            disabled={busy}
+            onClick={async () => {
+              const ok = await confirm({
+                title: "Pay out " + money(c.payoutAmount) + "?",
+                message: (
+                  <>
+                    Sends {money(c.payoutAmount)} to <strong>{payee.name}</strong> by {payee.payoutMethod}{" "}
+                    {payee.accountRef}. A payout cannot be recalled from here.
+                  </>
+                ),
+                confirmLabel: "Send payout",
+              });
+              if (ok) call("/pay", { method: "POST" }, "Payout sent for " + c.id + ".");
+            }}
+          >
             Pay out {money(c.payoutAmount)}
           </Btn>
         )}

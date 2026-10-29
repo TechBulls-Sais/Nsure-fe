@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useId, useState } from "react";
 import { request } from "./api";
+import { Dialog, useConfirm } from "./ui/workspace";
 
 const PROTECTED_PERMISSIONS = new Set([
   "ALL_FUNCTIONS",
@@ -16,6 +17,20 @@ export default function AccessAdmin({ session, notify }) {
   const [editor, setEditor] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
+
+  async function confirmDelete(kind, name) {
+    return confirm({
+      title: `Delete ${kind} ${name}?`,
+      message: (
+        <>
+          The {kind} <strong>{name}</strong> is deleted permanently. This cannot be undone.
+        </>
+      ),
+      confirmLabel: `Delete ${kind}`,
+      tone: "danger",
+    });
+  }
 
   async function load() {
     const [rolesR, permissionsR, usersR, officesR] = await Promise.all([
@@ -114,12 +129,13 @@ export default function AccessAdmin({ session, notify }) {
             editable={() => true}
             removable={(role) => role.name !== "Super user"}
             onEdit={(role) => setEditor({ kind: "role", record: role })}
-            onDelete={(role) =>
+            onDelete={async (role) => {
+              if (!(await confirmDelete("role", role.name))) return;
               run(
                 () => request(session, "/roles/" + role.id, { method: "DELETE" }),
                 "Role deleted.",
-              )
-            }
+              );
+            }}
           />
         </section>
       )}
@@ -153,12 +169,13 @@ export default function AccessAdmin({ session, notify }) {
             editable={(permission) => !PROTECTED_PERMISSIONS.has(permission.code)}
             removable={(permission) => !PROTECTED_PERMISSIONS.has(permission.code)}
             onEdit={(permission) => setEditor({ kind: "permission", record: permission })}
-            onDelete={(permission) =>
+            onDelete={async (permission) => {
+              if (!(await confirmDelete("permission", permission.code))) return;
               run(
                 () => request(session, "/permissions/" + permission.id, { method: "DELETE" }),
                 "Permission deleted.",
-              )
-            }
+              );
+            }}
           />
         </section>
       )}
@@ -196,12 +213,13 @@ export default function AccessAdmin({ session, notify }) {
             editable={() => true}
             removable={(user) => user.username !== "admin" && user.username !== "system"}
             onEdit={(user) => setEditor({ kind: "user", record: { ...user, password: "" } })}
-            onDelete={(user) =>
+            onDelete={async (user) => {
+              if (!(await confirmDelete("user", user.username))) return;
               run(
                 () => request(session, "/users/" + user.id, { method: "DELETE" }),
                 "User deleted.",
-              )
-            }
+              );
+            }}
           />
         </section>
       )}
@@ -288,223 +306,269 @@ function Editor({ editor, setEditor, roles, permissions, offices, busy, onSave }
         : form.id
           ? "Edit user"
           : "New user";
-  return (
-    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && setEditor(null)}>
-      <section className="modal wide" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="modal-header">
-          <div>
-            <span className="eyebrow">SUPER ADMIN</span>
-            <h2>{title}</h2>
-          </div>
-          <button className="icon-btn" aria-label="Close dialog" onClick={() => setEditor(null)}>
-            ×
-          </button>
-        </div>
-        <form
-          className="modal-body"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSave(form);
-          }}
-        >
-          {editor.kind === "role" && (
+  const formId = useId();
+  const confirm = useConfirm();
+
+  async function submit() {
+    const before = editor.record;
+    if (form.id && editor.kind === "role") {
+      const kept = new Set(form.permissions || []);
+      const removed = (before.permissions || []).filter((code) => !kept.has(code));
+      const disabling = !before.disabled && !!form.disabled;
+      if (disabling || removed.length) {
+        const ok = await confirm({
+          title: disabling
+            ? `Disable role ${form.name}?`
+            : `Remove ${removed.length} permission${removed.length === 1 ? "" : "s"} from ${form.name}?`,
+          message: (
             <>
+              {disabling && (
+                <p>
+                  The role <strong>{form.name}</strong> is saved as disabled.
+                </p>
+              )}
+              {removed.length > 0 && (
+                <p>
+                  These permissions are removed from <strong>{form.name}</strong>: {removed.join(", ")}.
+                </p>
+              )}
+            </>
+          ),
+          confirmLabel: disabling ? "Disable role" : "Remove permissions",
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+    }
+    if (form.id && editor.kind === "user" && before.enabled !== false && form.enabled === false) {
+      const ok = await confirm({
+        title: `Disable user ${form.username}?`,
+        message: (
+          <>
+            <strong>{form.username}</strong> is saved as disabled and can no longer sign in.
+          </>
+        ),
+        confirmLabel: "Disable user",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    onSave(form);
+  }
+
+  return (
+    <Dialog
+      title={title}
+      eyebrow="Access"
+      onClose={() => setEditor(null)}
+      size="lg"
+      footer={
+        <>
+          <button type="button" className="btn secondary" onClick={() => setEditor(null)}>
+            Cancel
+          </button>
+          <button className="btn" form={formId} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit();
+        }}
+      >
+        {editor.kind === "role" && (
+          <>
+            <label className="form-label">
+              Name
+              <input
+                className="input"
+                value={form.name}
+                required
+                onChange={(event) => setForm({ ...form, name: event.target.value })}
+              />
+            </label>
+            <label className="form-label">
+              Description
+              <input
+                className="input"
+                value={form.description}
+                required
+                onChange={(event) => setForm({ ...form, description: event.target.value })}
+              />
+            </label>
+            <label className="form-label">
+              <span>
+                <input
+                  type="checkbox"
+                  checked={!!form.disabled}
+                  onChange={(event) => setForm({ ...form, disabled: event.target.checked })}
+                />{" "}
+                Disabled
+              </span>
+            </label>
+            <fieldset className="perm-group">
+              <h3>
+                Permissions
+                <span className="perm-total">
+                  {(form.permissions || []).length} of {permissions.length} selected
+                </span>
+              </h3>
+              {groupPermissions(permissions).map(([group, items]) => (
+                <div key={group} className="perm-section">
+                  <h4>{group}</h4>
+                  <div className="perm-grid">
+                    {items.map((permission) => (
+                      <label key={permission.code} className="perm-option">
+                        <input
+                          type="checkbox"
+                          checked={(form.permissions || []).includes(permission.code)}
+                          onChange={(event) => {
+                            const current = new Set(form.permissions || []);
+                            if (event.target.checked) current.add(permission.code);
+                            else current.delete(permission.code);
+                            setForm({ ...form, permissions: [...current] });
+                          }}
+                        />
+                        <span>
+                          <span className="perm-function">
+                            {permission.functionName || permission.code}
+                          </span>
+                          <span className="perm-code">{permission.code}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </fieldset>
+          </>
+        )}
+        {editor.kind === "permission" && (
+          <div className="field-grid">
+            <label className="form-label">
+              Code
+              <input
+                className="input"
+                value={form.code}
+                required
+                onChange={(event) => setForm({ ...form, code: event.target.value })}
+              />
+            </label>
+            <label className="form-label">
+              Function
+              <input
+                className="input"
+                value={form.functionName || ""}
+                placeholder="e.g. Create actuary profile"
+                maxLength={150}
+                onChange={(event) => setForm({ ...form, functionName: event.target.value })}
+              />
+            </label>
+            <label className="form-label">
+              Group
+              <input
+                className="input"
+                value={form.grouping}
+                required
+                onChange={(event) => setForm({ ...form, grouping: event.target.value })}
+              />
+            </label>
+            <label className="form-label">
+              Entity
+              <input
+                className="input"
+                value={form.entityName || ""}
+                onChange={(event) => setForm({ ...form, entityName: event.target.value })}
+              />
+            </label>
+            <label className="form-label">
+              Action
+              <input
+                className="input"
+                value={form.actionName || ""}
+                onChange={(event) => setForm({ ...form, actionName: event.target.value })}
+              />
+            </label>
+          </div>
+        )}
+        {editor.kind === "user" && (
+          <>
+            <div className="field-grid">
               <label className="form-label">
-                Name
+                Username
                 <input
                   className="input"
-                  value={form.name}
+                  value={form.username}
                   required
-                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                  onChange={(event) => setForm({ ...form, username: event.target.value })}
                 />
               </label>
               <label className="form-label">
-                Description
+                Password
                 <input
                   className="input"
-                  value={form.description}
-                  required
-                  onChange={(event) => setForm({ ...form, description: event.target.value })}
+                  type="password"
+                  value={form.password || ""}
+                  placeholder={form.id ? "Leave blank to keep the current password" : "At least 8 characters"}
+                  required={!form.id}
+                  minLength={form.password ? 8 : undefined}
+                  onChange={(event) => setForm({ ...form, password: event.target.value })}
                 />
+              </label>
+              <label className="form-label">
+                Office
+                <select
+                  className="input"
+                  value={form.officeId || ""}
+                  required
+                  onChange={(event) => setForm({ ...form, officeId: Number(event.target.value) })}
+                >
+                  {offices.map((office) => (
+                    <option key={office.id} value={office.id}>
+                      {office.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="form-label">
                 <span>
                   <input
                     type="checkbox"
-                    checked={!!form.disabled}
-                    onChange={(event) => setForm({ ...form, disabled: event.target.checked })}
+                    checked={form.enabled !== false}
+                    onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
                   />{" "}
-                  Disabled
+                  Enabled
                 </span>
               </label>
-              <fieldset className="perm-group">
-                <h3>
-                  Permissions
-                  <span className="perm-total">
-                    {(form.permissions || []).length} of {permissions.length} selected
-                  </span>
-                </h3>
-                {groupPermissions(permissions).map(([group, items]) => (
-                  <div key={group} className="perm-section">
-                    <h4>{group}</h4>
-                    <div className="perm-grid">
-                      {items.map((permission) => (
-                        <label key={permission.code} className="perm-option">
-                          <input
-                            type="checkbox"
-                            checked={(form.permissions || []).includes(permission.code)}
-                            onChange={(event) => {
-                              const current = new Set(form.permissions || []);
-                              if (event.target.checked) current.add(permission.code);
-                              else current.delete(permission.code);
-                              setForm({ ...form, permissions: [...current] });
-                            }}
-                          />
-                          <span>
-                            <span className="perm-function">
-                              {permission.functionName || permission.code}
-                            </span>
-                            <span className="perm-code">{permission.code}</span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </fieldset>
-            </>
-          )}
-          {editor.kind === "permission" && (
-            <div className="field-grid">
-              <label className="form-label">
-                Code
-                <input
-                  className="input"
-                  value={form.code}
-                  required
-                  onChange={(event) => setForm({ ...form, code: event.target.value })}
-                />
-              </label>
-              <label className="form-label">
-                Function
-                <input
-                  className="input"
-                  value={form.functionName || ""}
-                  placeholder="e.g. Create actuary profile"
-                  maxLength={150}
-                  onChange={(event) => setForm({ ...form, functionName: event.target.value })}
-                />
-              </label>
-              <label className="form-label">
-                Group
-                <input
-                  className="input"
-                  value={form.grouping}
-                  required
-                  onChange={(event) => setForm({ ...form, grouping: event.target.value })}
-                />
-              </label>
-              <label className="form-label">
-                Entity
-                <input
-                  className="input"
-                  value={form.entityName || ""}
-                  onChange={(event) => setForm({ ...form, entityName: event.target.value })}
-                />
-              </label>
-              <label className="form-label">
-                Action
-                <input
-                  className="input"
-                  value={form.actionName || ""}
-                  onChange={(event) => setForm({ ...form, actionName: event.target.value })}
-                />
-              </label>
             </div>
-          )}
-          {editor.kind === "user" && (
-            <>
-              <div className="field-grid">
-                <label className="form-label">
-                  Username
-                  <input
-                    className="input"
-                    value={form.username}
-                    required
-                    onChange={(event) => setForm({ ...form, username: event.target.value })}
-                  />
-                </label>
-                <label className="form-label">
-                  Password
-                  <input
-                    className="input"
-                    type="password"
-                    value={form.password || ""}
-                    placeholder={form.id ? "Leave blank to keep the current password" : "At least 8 characters"}
-                    required={!form.id}
-                    minLength={form.password ? 8 : undefined}
-                    onChange={(event) => setForm({ ...form, password: event.target.value })}
-                  />
-                </label>
-                <label className="form-label">
-                  Office
-                  <select
-                    className="input"
-                    value={form.officeId || ""}
-                    required
-                    onChange={(event) => setForm({ ...form, officeId: Number(event.target.value) })}
-                  >
-                    {offices.map((office) => (
-                      <option key={office.id} value={office.id}>
-                        {office.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="form-label">
-                  <span>
+            <fieldset className="perm-group">
+              <h3>Roles</h3>
+              <div className="perm-grid">
+                {roles.map((role) => (
+                  <label key={role.id}>
                     <input
                       type="checkbox"
-                      checked={form.enabled !== false}
-                      onChange={(event) => setForm({ ...form, enabled: event.target.checked })}
+                      checked={(form.roleIds || []).includes(role.id)}
+                      onChange={(event) => {
+                        const current = new Set(form.roleIds || []);
+                        if (event.target.checked) current.add(role.id);
+                        else current.delete(role.id);
+                        setForm({ ...form, roleIds: [...current] });
+                      }}
                     />{" "}
-                    Enabled
-                  </span>
-                </label>
+                    {role.name}
+                  </label>
+                ))}
               </div>
-              <fieldset className="perm-group">
-                <h3>Roles</h3>
-                <div className="perm-grid">
-                  {roles.map((role) => (
-                    <label key={role.id}>
-                      <input
-                        type="checkbox"
-                        checked={(form.roleIds || []).includes(role.id)}
-                        onChange={(event) => {
-                          const current = new Set(form.roleIds || []);
-                          if (event.target.checked) current.add(role.id);
-                          else current.delete(role.id);
-                          setForm({ ...form, roleIds: [...current] });
-                        }}
-                      />{" "}
-                      {role.name}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            </>
-          )}
-          <div className="heading-actions" style={{ marginTop: 18 }}>
-            <button type="button" className="btn secondary" onClick={() => setEditor(null)}>
-              Cancel
-            </button>
-            <button className="btn" disabled={busy}>
-              {busy ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </form>
-      </section>
-    </div>
+            </fieldset>
+          </>
+        )}
+      </form>
+    </Dialog>
   );
 }
 

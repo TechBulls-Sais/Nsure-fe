@@ -29,6 +29,8 @@ import {
   PolicyDocuments,
   formatDate,
 } from "./Workflow";
+import { CustomerCases } from "./ServiceDesk";
+import { ThemeSwitch } from "./ui/workspace";
 
 // Products name their "need" icon (need_icon in the database); this maps the name to a component.
 const needIcons = { Users, Infinity, Heart, HeartPulse, Landmark, ShieldCheck };
@@ -205,7 +207,7 @@ export default function CustomerPortal({
       if (done) notify(done);
       return true;
     } catch (err) {
-      notify(err.message);
+      notify(err.message, "error");
       return false;
     } finally {
       setActing(false);
@@ -289,6 +291,9 @@ export default function CustomerPortal({
           <a href="#your-claims" onClick={scrollToSection}>
             Claims <span>{claims.length}</span>
           </a>
+          <a href="#your-help" onClick={scrollToSection}>
+            Help
+          </a>
           <a
             href="#available-cover"
             onClick={scrollToSection}
@@ -305,6 +310,7 @@ export default function CustomerPortal({
             <strong>{customer.name}</strong>
             <small>{customer.id}</small>
           </div>
+          <ThemeSwitch compact />
           <button
             className="customer-signout"
             aria-label="Sign out"
@@ -685,6 +691,8 @@ export default function CustomerPortal({
             !claiming && <p className="subtitle">You have not made a claim.</p>
           )}
         </section>
+
+        <CustomerCases session={session} notify={notify} policies={policies} claims={claims} />
 
         <section
           className="customer-need"

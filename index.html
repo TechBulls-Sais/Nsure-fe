@@ -15,6 +15,14 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/svg+xml" href="/brand/nsure-life-mark.svg" />
+    <script>
+      // Same rule as src/ui/theme.js, run before first paint so a dark choice never flashes light.
+      try {
+        var t = localStorage.getItem("nsure-theme");
+        var dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      } catch (e) {}
+    </script>
     <title>Nsure — Life happens. Let’s make room for it.</title>
   </head>
   <body>

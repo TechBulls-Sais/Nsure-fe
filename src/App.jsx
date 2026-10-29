@@ -14,6 +14,7 @@ import {
   BadgeCheck,
   Bell,
   Building2,
+  Cable,
   CalendarDays,
   Check,
   ChevronDown,
@@ -32,14 +33,19 @@ import {
   Heart,
   HeartHandshake,
   HeartPulse,
+  Handshake,
+  Headset,
   Info,
+  Landmark,
   Layers3,
   LayoutDashboard,
   Lightbulb,
   LogIn,
   LogOut,
+  Mail,
   Menu,
   MessageSquareText,
+  PieChart,
   Plus,
   RotateCcw,
   ScanText,
@@ -48,6 +54,7 @@ import {
   Settings2,
   ShieldAlert,
   ShieldCheck,
+  ShieldPlus,
   Sparkles,
   Table2,
   TrendingUp,
@@ -59,6 +66,13 @@ import {
   X,
 } from "lucide-react";
 const Icons = {
+  Cable,
+  Handshake,
+  Headset,
+  Landmark,
+  Mail,
+  PieChart,
+  ShieldPlus,
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
@@ -115,6 +129,17 @@ import RateTables from "./RateTables";
 import { request } from "./api";
 import AssistantStudio from "./AssistantStudio";
 import AccessAdmin from "./AccessAdmin";
+import GroupAdmin from "./GroupAdmin";
+import Finance from "./Finance";
+import Distribution from "./Distribution";
+import Reinsurance from "./Reinsurance";
+import Communications from "./Communications";
+import ServiceDesk from "./ServiceDesk";
+import IntegrationMonitor from "./IntegrationMonitor";
+import ManagementReports from "./ManagementReports";
+import { can, DataTable, ThemeSwitch } from "./ui/workspace";
+import { Dialog } from "./ui/overlay";
+import { useToast } from "./ui/toast";
 import CustomerPortal from "./CustomerPortal";
 import {
   CLAIM_STATES,
@@ -151,6 +176,16 @@ const navItems = [
   ["rate-tables", "Rate tables", "Table2"],
   ["collections", "Collections", "Wallet"],
   ["assistant", "AI assistant", "Sparkles"],
+];
+// Nsure Life operational workspaces, each shown only to users holding its read permission.
+const lifeNavItems = [
+  ["reports", "Management", "PieChart", "READ_REPORT"],
+  ["finance", "Finance", "Landmark", "READ_FINANCE"],
+  ["distribution", "Distribution", "Handshake", "READ_DISTRIBUTION"],
+  ["reinsurance", "Reinsurance", "ShieldPlus", "READ_REINSURANCE"],
+  ["service-desk", "Service desk", "Headset", "READ_SERVICE_CASE"],
+  ["communications", "Communications", "Mail", "READ_COMMUNICATION"],
+  ["integration", "Integration", "Cable", "READ_INTEGRATION"],
 ];
 function Icon({ name, small = false, ...props }) {
   const C = Icons[name] || Icons.Circle;
@@ -257,74 +292,10 @@ function downloadCSV(filename, rows) {
   setTimeout(() => URL.revokeObjectURL(a.href), 500);
 }
 function Modal({ title, onClose, children, wide = false }) {
-  const ref = useRef();
-  useEffect(() => {
-    const prev = document.activeElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const initialInput = ref.current?.querySelector(
-      'input:not([aria-hidden="true"]),[role="combobox"],textarea',
-    );
-    (initialInput || ref.current)?.focus();
-    const onKey = (e) => {
-      // A portaled select owns keyboard focus until it closes.
-      if (
-        e.defaultPrevented ||
-        document.querySelector("[data-nsure-select-popup]")
-      )
-        return;
-      if (e.key === "Escape") onClose();
-      if (e.key === "Tab") {
-        const els = ref.current.querySelectorAll(
-          'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
-        );
-        const first = els[0],
-          last = els[els.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previousOverflow;
-      prev?.focus();
-    };
-  }, [onClose]);
   return (
-    <div
-      className="modal-backdrop"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <section
-        className={"modal " + (wide ? "wide" : "")}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        ref={ref}
-        tabIndex={-1}
-      >
-        <div className="modal-header">
-          <div>
-            <span className="eyebrow">Nsure</span>
-            <h2>{title}</h2>
-          </div>
-          <button
-            className="icon-btn"
-            aria-label="Close dialog"
-            onClick={onClose}
-          >
-            <Icon name="X" />
-          </button>
-        </div>
-        <div className="modal-body">{children}</div>
-      </section>
-    </div>
+    <Dialog title={title} eyebrow="Nsure" onClose={onClose} size={wide ? "lg" : "md"}>
+      {children}
+    </Dialog>
   );
 }
 function Field({ label, children, full = false }) {
@@ -559,7 +530,6 @@ export default function App() {
   const [page, setPage] = useState(() => location.hash.slice(2) || "overview");
   const [profile, setProfile] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [toast, setToast] = useState("");
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
@@ -575,7 +545,7 @@ export default function App() {
   const [notifications, setNotifications] = useState(true);
   const [compact, setCompact] = useState(false);
   const [period, setPeriod] = useState("Last 6 months");
-  const notify = (msg) => setToast(msg);
+  const notify = useToast();
   const go = (next) => {
     location.hash = "/" + next;
     setPage(next);
@@ -590,16 +560,11 @@ export default function App() {
       setPage(location.hash.slice(2) || "overview");
       setSearch("");
       setFilter("All");
+      setModal(null);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
-  useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(""), 4000);
-      return () => clearTimeout(t);
-    }
-  }, [toast]);
   useEffect(() => {
     const handler = (e) => {
       if (loggedIn && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -679,16 +644,17 @@ export default function App() {
       } catch (error) {
         if (!active) return;
         if (error.status === 401) logout();
-        else setToast(error.message);
+        else notify(error.message, "error");
       }
     })();
     return () => {
       active = false;
     };
   }, [session]);
+  const lifeMenu = lifeNavItems.filter((item) => can(profile, item[3]));
   const menuItems = profile?.superAdmin
-    ? [...navItems, ["access", "Access", "ShieldCheck"]]
-    : navItems;
+    ? [...navItems, ...lifeMenu, ["access", "Access", "ShieldCheck"]]
+    : [...navItems, ...lifeMenu];
   const activeName =
     menuItems.find((n) => n[0] === page)?.[1] ||
     (page === "settings" ? "Settings" : "Overview");
@@ -724,7 +690,7 @@ export default function App() {
       );
       return updated.data;
     } catch (error) {
-      notify(error.message);
+      notify(error.message, "error");
       return null;
     }
   };
@@ -766,7 +732,7 @@ export default function App() {
       });
     } catch (error) {
       // The backend refuses a policy until the customer's KYC is verified; say so instead of failing silently.
-      notify(error.message);
+      notify(error.message, "error");
       return;
     }
     setPolicies((p) => [created.data, ...p]);
@@ -839,63 +805,61 @@ export default function App() {
       </div>
     );
   }
-  function RecordsTable({ rows, type = "application", short = false }) {
+  // Called as a function, not <RecordsTable/>: it is declared inside App, so a JSX
+  // element would remount on every App render and drop the table's sort and page.
+  function RecordsTable({ rows, type = "application", short = false, total }) {
+    const columns = [
+      {
+        key: "name",
+        label: type === "claim" ? "Claimant" : "Customer",
+        render: (r) => <Person name={r.name} sub={r.id} />,
+      },
+      { key: "product", label: "Product" },
+      type === "policy" && {
+        key: "tier",
+        label: "Tier",
+        render: (r) =>
+          r.tier ? (
+            <span className={"tier-pill " + r.tier.toLowerCase()}>{r.tier}</span>
+          ) : (
+            <span className="muted">-</span>
+          ),
+      },
+      !short && {
+        key: "amount",
+        label: type === "collection" ? "Amount due" : "Cover / benefit",
+        className: "amount",
+        render: (r) => money(r.amount),
+      },
+      { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+      !short && {
+        key: "date",
+        label: type === "policy" ? "Inception" : "Created",
+        className: "muted",
+        sortValue: (r) => Date.parse(r.date) || r.date,
+      },
+      {
+        key: "act",
+        label: "",
+        render: (r) => (
+          <button className="icon-btn" aria-label={"View " + r.id} onClick={() => detail(type, r)}>
+            <Icon name="ArrowUpRight" small />
+          </button>
+        ),
+      },
+    ].filter(Boolean);
     return (
-      <div className="table-wrap">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{type === "claim" ? "Claimant" : "Customer"}</th>
-              <th>Product</th>
-              {type === "policy" && <th>Tier</th>}
-              {!short && (
-                <th>
-                  {type === "collection" ? "Amount due" : "Cover / benefit"}
-                </th>
-              )}
-              <th>Status</th>
-              {!short && <th>{type === "policy" ? "Inception" : "Created"}</th>}
-              <th>
-                <span className="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id}>
-                <td>
-                  <Person name={r.name} sub={r.id} />
-                </td>
-                <td>{r.product}</td>
-                {type === "policy" && (
-                  <td>
-                    {r.tier ? (
-                      <span className={"tier-pill " + r.tier.toLowerCase()}>{r.tier}</span>
-                    ) : (
-                      <span className="muted">-</span>
-                    )}
-                  </td>
-                )}
-                {!short && <td className="amount">{money(r.amount)}</td>}
-                <td>
-                  <Badge>{r.status}</Badge>
-                </td>
-                {!short && <td className="muted">{r.date}</td>}
-                <td>
-                  <button
-                    className="icon-btn"
-                    aria-label={"View " + r.id}
-                    onClick={() => detail(type, r)}
-                  >
-                    <Icon name="ArrowUpRight" small />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!rows.length && <Empty />}
-      </div>
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        onRowClick={(r) => detail(type, r)}
+        pageSize={short ? 0 : 10}
+        searchFrom={Infinity}
+        total={short ? undefined : total}
+        empty="No matching records"
+        emptyDetail={short ? undefined : "Try another status or clear the search."}
+      />
     );
   }
   function Overview() {
@@ -1159,7 +1123,7 @@ export default function App() {
               </button>
             }
           >
-            <RecordsTable rows={applications.slice(0, 4)} short />
+            {RecordsTable({ rows: applications.slice(0, 4), short: true })}
           </Panel>
           <Panel
             title="The latest happenings"
@@ -1353,11 +1317,7 @@ export default function App() {
           }
         >
           {Filters({ statuses: config.statuses, count: config.rows.length })}
-          <RecordsTable rows={visible(config.rows)} type={config.type} />
-          <div className="table-footer">
-            Showing {visible(config.rows).length} of {config.rows.length}{" "}
-            records<span>BWP</span>
-          </div>
+          {RecordsTable({ rows: visible(config.rows), type: config.type, total: config.rows.length })}
         </Panel>
         {kind === "applications" && (
           <div className="notice">
@@ -1556,6 +1516,13 @@ export default function App() {
           <Panel title="Workspace preferences">
             <div className="setting-row">
               <div>
+                <strong>Appearance</strong>
+                <p>Light, dark, or follow your device.</p>
+              </div>
+              <ThemeSwitch />
+            </div>
+            <div className="setting-row">
+              <div>
                 <strong>Notifications</strong>
                 <p>Show the activity notification indicator.</p>
               </div>
@@ -1713,6 +1680,7 @@ export default function App() {
               <span>Ask or jump to anything…</span>
               <kbd>⌘ K</kbd>
             </button>
+            <ThemeSwitch compact />
             <MotionToggle />
             <button
               className="icon-btn notification"
@@ -1760,7 +1728,25 @@ export default function App() {
               }}
             />
           ) : page === "schemes" ? (
-            Schemes()
+            can(profile, "READ_SCHEME") ? (
+              <GroupAdmin session={session} notify={notify} profile={profile} />
+            ) : (
+              Schemes()
+            )
+          ) : page === "reports" ? (
+            <ManagementReports session={session} notify={notify} profile={profile} go={go} />
+          ) : page === "finance" ? (
+            <Finance session={session} notify={notify} profile={profile} />
+          ) : page === "distribution" ? (
+            <Distribution session={session} notify={notify} profile={profile} />
+          ) : page === "reinsurance" ? (
+            <Reinsurance session={session} notify={notify} profile={profile} />
+          ) : page === "service-desk" ? (
+            <ServiceDesk session={session} notify={notify} profile={profile} />
+          ) : page === "communications" ? (
+            <Communications session={session} notify={notify} profile={profile} />
+          ) : page === "integration" ? (
+            <IntegrationMonitor session={session} notify={notify} profile={profile} />
           ) : page === "assistant" ? (
             <AssistantStudio />
           ) : page === "access" ? (
@@ -1783,19 +1769,6 @@ export default function App() {
           </footer>
         </AnimatedWorkspace>
       </main>
-      {toast && (
-        <div className="toast" role="status">
-          <Icon name="CircleCheck" />
-          {toast}
-          <button
-            className="icon-btn"
-            aria-label="Dismiss notification"
-            onClick={() => setToast("")}
-          >
-            <Icon name="X" small />
-          </button>
-        </div>
-      )}
       {modal && (
         <Modal
           title={
@@ -1871,7 +1844,7 @@ export default function App() {
                   go("applications");
                   notify("Application saved.");
                 } catch (error) {
-                  notify(error.message);
+                  notify(error.message, "error");
                 }
               }}
             />
@@ -1901,7 +1874,7 @@ export default function App() {
                   go("policies");
                   notify("Policy added.");
                 } catch (error) {
-                  notify(error.message);
+                  notify(error.message, "error");
                 }
               }}
             />
@@ -1924,7 +1897,7 @@ export default function App() {
                       " after KYC is successful.",
                   );
                 } catch (error) {
-                  notify(error.message);
+                  notify(error.message, "error");
                 }
               }}
             />
@@ -1948,7 +1921,7 @@ export default function App() {
                       : created.data.id + " is lodged and sent for review.",
                   );
                 } catch (error) {
-                  notify(error.message);
+                  notify(error.message, "error");
                 }
               }}
             />
@@ -2354,7 +2327,7 @@ function portfolioMix(policies) {
 }
 function donutGradient(mix) {
   const total = mix.reduce((sum, s) => sum + s.count, 0);
-  if (!total) return "#eef0e8";
+  if (!total) return "light-dark(#eef0e8, #2a302b)";
   let at = 0;
   const stops = mix.map((s) => {
     const from = at;

@@ -1,0 +1,94 @@
+/* Nsure Life operational workspaces: small additions on top of styles.css. */
+.ws-panel {
+  margin-bottom: 18px;
+}
+.ws-panel-body {
+  padding: 16px 23px 21px;
+}
+.ws-panel-body > .table-wrap {
+  margin: 0 -23px -21px;
+}
+.ws-tabs {
+  margin: 0 0 16px;
+}
+.ws-stat .stat-value {
+  font-size: 22px;
+}
+.ws-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: light-dark(#fdf0ee, oklch(0.204 0.01 28));
+  color: light-dark(#9b3528, oklch(0.739 0.146 30));
+  font-size: 12px;
+}
+.ws-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 18px;
+}
+.ws-hint {
+  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
+  font-size: 10px;
+  font-weight: 400;
+}
+.ws-clickable {
+  cursor: pointer;
+}
+.ws-clickable:hover td {
+  background: light-dark(#f8faf4, oklch(0.195 0.006 122));
+}
+.ws-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ws-row-actions .btn {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.ws-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.ws-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px 18px;
+  margin: 4px 0 8px;
+}
+.ws-kv small {
+  display: block;
+  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+.ws-kv strong {
+  font-size: 13px;
+  font-weight: 550;
+}
+.ws-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.ws-textarea {
+  min-height: 140px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+@media (max-width: 860px) {
+  .ws-grid-2 {
+    grid-template-columns: 1fr;
+  }
+  .ws-panel-body {
+    padding: 14px 16px 18px;
+  }
+  .ws-panel-body > .table-wrap {
+    margin: 0 -16px -18px;
+  }
+}

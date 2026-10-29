@@ -1,6 +1,7 @@
 import React from "react";
 import * as SelectPrimitive from "@radix-ui/react-select";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import { PortalContainer } from "./overlay";
 import "./select.css";
 
 /** Shared styled select. Native option children keep existing fixture lists readable. */
@@ -22,6 +23,7 @@ export default function Select({
       label: option.props.children,
       disabled: option.props.disabled,
     }));
+  const container = React.useContext(PortalContainer);
   return (
     <SelectPrimitive.Root
       value={value}
@@ -49,7 +51,7 @@ export default function Select({
           <ChevronDown size={16} aria-hidden="true" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal>
+      <SelectPrimitive.Portal container={container || undefined}>
         <SelectPrimitive.Content
           className="ns-select-content"
           data-nsure-select-popup=""

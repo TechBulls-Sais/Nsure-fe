@@ -1,0 +1,70 @@
+/* Communications workspace (SH09B): additions on top of ui/workspace.css. */
+.com-sub {
+  display: block;
+  margin-top: 2px;
+  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
+  font-size: 10px;
+}
+.com-preview {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid light-dark(#e9eee4, oklch(0.316 0.009 129));
+}
+.com-message {
+  max-width: 620px;
+  margin: 10px 0;
+  padding: 14px 16px;
+  border: 1px solid light-dark(#e3e8df, oklch(0.33 0.008 131));
+  border-radius: 12px;
+  background: light-dark(#fbfcf9, oklch(0.191 0.003 122));
+  white-space: pre-wrap;
+}
+.com-message strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.com-message p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: light-dark(#3e4c44, oklch(0.779 0.023 160));
+}
+.com-message.is-whatsapp {
+  border-color: light-dark(#cfe8cf, oklch(0.345 0.026 145));
+  border-radius: 4px 14px 14px 14px;
+  background: light-dark(#eef8ec, oklch(0.202 0.013 141));
+}
+.com-reason {
+  margin: 6px 0;
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+.com-reason.is-info {
+  background: light-dark(#eef3f8, oklch(0.206 0.006 248));
+  color: light-dark(#36506b, oklch(0.768 0.058 250));
+}
+.com-reason.is-error {
+  background: light-dark(#fdf0ee, oklch(0.204 0.01 28));
+  color: light-dark(#9b3528, oklch(0.739 0.146 30));
+}
+.com-lookup {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.com-lookup input {
+  flex: 1;
+  max-width: 320px;
+}
+@media (max-width: 600px) {
+  .com-lookup {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .com-lookup input {
+    max-width: none;
+  }
+}
