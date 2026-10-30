@@ -111,7 +111,7 @@ export default function AccessAdmin({ session, notify }) {
               <h2>Roles</h2>
               <p className="subtitle">Choose which permissions each role may use.</p>
             </div>
-            <button className="btn" onClick={() => setEditor({ kind: "role", record: emptyRole() })}>
+            <button className="btn secondary" onClick={() => setEditor({ kind: "role", record: emptyRole() })}>
               New role
             </button>
           </div>
@@ -148,7 +148,7 @@ export default function AccessAdmin({ session, notify }) {
               <p className="subtitle">Codes the application checks before an action.</p>
             </div>
             <button
-              className="btn"
+              className="btn secondary"
               onClick={() => setEditor({ kind: "permission", record: emptyPermission() })}
             >
               New permission
@@ -188,7 +188,7 @@ export default function AccessAdmin({ session, notify }) {
               <p className="subtitle">Assign one or more roles to each person.</p>
             </div>
             <button
-              className="btn"
+              className="btn secondary"
               onClick={() =>
                 setEditor({
                   kind: "user",
@@ -252,13 +252,13 @@ function groupPermissions(permissions) {
 function ResourceTable({ columns, rows, render, onEdit, onDelete, editable, removable }) {
   return (
     <div className="table-wrap">
-      <table className="data-table">
+      <table className="data-table access-table">
         <thead>
           <tr>
             {columns.map((column) => (
               <th key={column}>{column}</th>
             ))}
-            <th>
+            <th className="access-actions">
               <span className="sr-only">Actions</span>
             </th>
           </tr>
@@ -267,7 +267,7 @@ function ResourceTable({ columns, rows, render, onEdit, onDelete, editable, remo
           {rows.map((row) => (
             <tr key={row.id}>
               {render(row)}
-              <td>
+              <td className="access-actions">
                 {editable(row) && (
                   <button className="btn secondary" onClick={() => onEdit(row)}>
                     Edit
@@ -367,7 +367,7 @@ function Editor({ editor, setEditor, roles, permissions, offices, busy, onSave }
           <button type="button" className="btn secondary" onClick={() => setEditor(null)}>
             Cancel
           </button>
-          <button className="btn" form={formId} disabled={busy}>
+          <button className="btn primary" form={formId} disabled={busy}>
             {busy ? "Saving…" : "Save"}
           </button>
         </>

@@ -44,7 +44,7 @@
   color: light-dark(#fff, oklch(1 0 90));
 }
 .customer-policy-toggle-summary span {
-  font-size: 12px;
+  font-size: 13px;
   color: light-dark(#c9dccd, oklch(0.876 0.029 152));
 }
 .customer-policy-toggle-products {
@@ -56,7 +56,7 @@
 }
 .customer-policy-toggle-products em {
   font-style: normal;
-  font-size: 11px;
+  font-size: 13px;
   padding: 3px 8px;
   border-radius: 999px;
   background: light-dark(#ffffff1a, oklch(0.225 0.006 90 / 0.102));
@@ -68,7 +68,7 @@
   align-items: center;
   gap: 6px;
   margin-left: auto;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -111,12 +111,12 @@
   overflow-wrap: anywhere;
 }
 .customer-policies .customer-policy-reference {
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 1px;
-  color: light-dark(#6b7a72, oklch(0.689 0.023 162));
+  color: light-dark(#39403c, oklch(0.86 0.023 162));
 }
 .customer-policies .customer-policy-status {
-  font-size: 10px;
+  font-size: 13px;
   padding: 3px 7px;
   flex-shrink: 0;
 }
@@ -128,7 +128,7 @@
   padding-left: 10px;
 }
 .customer-policies .customer-policy-values dt {
-  font-size: 10px;
+  font-size: 13px;
   margin-bottom: 3px;
 }
 .customer-policies .customer-policy-values dd {
@@ -136,11 +136,11 @@
   letter-spacing: -0.2px;
 }
 .customer-policies .customer-policy-values small {
-  font-size: 10px;
+  font-size: 13px;
 }
 .customer-policies .customer-policy-details summary {
   min-height: 38px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .customer-policies .customer-policy-details dl {
   gap: 10px;
@@ -148,7 +148,7 @@
   margin-bottom: 12px;
 }
 .customer-policies .customer-policy-details dd {
-  font-size: 12px;
+  font-size: 13px;
 }
 .customer-policies .customer-policy-details .covered-lives-saved {
   margin: 0 0 12px;
@@ -177,12 +177,12 @@
   padding-inline: 6px;
   border-radius: 6px;
   background: light-dark(#f0f4ec, oklch(0.206 0.008 129));
-  font-size: 12px;
+  font-size: 13px;
 }
 .customer-requests-head p {
   margin-top: 4px;
-  font-size: 12px;
-  color: light-dark(#5e6d65, oklch(0.714 0.023 162));
+  font-size: 13px;
+  color: light-dark(#38413c, oklch(0.86 0.023 162));
 }
 .customer-requests ul {
   list-style: none;
@@ -210,11 +210,11 @@
   height: 28px;
   border-radius: 8px;
   background: light-dark(#f3e6bf, oklch(0.226 0.037 92));
-  color: light-dark(#7a5a17, oklch(0.731 0.095 81));
+  color: light-dark(#503b0f, oklch(0.86 0.095 81));
 }
 .customer-requests li.is-rejected .customer-request-icon {
   background: light-dark(#f4d9d0, oklch(0.237 0.023 39));
-  color: light-dark(#a2412f, oklch(0.723 0.139 32));
+  color: light-dark(#692b1f, oklch(0.86 0.139 32));
 }
 .customer-requests li > div {
   display: flex;
@@ -226,27 +226,27 @@
   font-size: 13px;
 }
 .customer-requests li small {
-  font-size: 11px;
-  color: light-dark(#6b7a72, oklch(0.689 0.023 162));
+  font-size: 13px;
+  color: light-dark(#39403c, oklch(0.86 0.023 162));
   overflow-wrap: anywhere;
 }
 .customer-requests li p {
   margin-top: 4px;
-  font-size: 12px;
-  color: light-dark(#a2412f, oklch(0.723 0.139 32));
+  font-size: 13px;
+  color: light-dark(#692b1f, oklch(0.86 0.139 32));
 }
 .customer-request-status {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
   padding: 3px 7px;
   border-radius: 6px;
   background: light-dark(#f3e6bf, oklch(0.226 0.037 92));
-  color: light-dark(#7a5a17, oklch(0.731 0.095 81));
+  color: light-dark(#503b0f, oklch(0.86 0.095 81));
   white-space: nowrap;
 }
 .customer-requests li.is-rejected .customer-request-status {
   background: light-dark(#f4d9d0, oklch(0.237 0.023 39));
-  color: light-dark(#a2412f, oklch(0.723 0.139 32));
+  color: light-dark(#692b1f, oklch(0.86 0.139 32));
 }
 
 @media (max-width: 760px) {
@@ -259,13 +259,13 @@
     align-items: center;
     white-space: nowrap;
     padding: 8px 9px;
-    font-size: 12px;
+    font-size: 13px;
   }
   .customer-top .customer-nav span {
     width: 20px;
     height: 20px;
     margin-left: 4px;
-    font-size: 11px;
+    font-size: 13px;
   }
   .customer-main .customer-policies {
     padding: 20px 16px;
@@ -308,7 +308,7 @@
 
 .customer-grace {
   margin: 8px 0 0;
-  color: light-dark(#b45309, oklch(0.695 0.153 49));
+  color: light-dark(#683005, oklch(0.86 0.153 49));
   font-size: 0.88rem;
 }
 

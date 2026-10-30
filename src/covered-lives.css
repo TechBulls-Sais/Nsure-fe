@@ -3,8 +3,8 @@
   border: 1px solid light-dark(#e4edda, oklch(0.323 0.016 128));
   border-radius: 10px;
   background: light-dark(#fff, oklch(0.225 0.006 90));
-  font-size: 12px;
-  color: light-dark(#43573a, oklch(0.763 0.055 136));
+  font-size: 13px;
+  color: light-dark(#35442d, oklch(0.86 0.055 136));
 }
 .covered-lives > header {
   display: flex;
@@ -17,8 +17,8 @@
 }
 .covered-lives > header small,
 .covered-life small {
-  color: light-dark(#8b9c78, oklch(0.632 0.058 128));
-  font-size: 11px;
+  color: light-dark(#3a4131, oklch(0.86 0.058 128));
+  font-size: 13px;
 }
 .covered-lives ul {
   list-style: none;
@@ -59,7 +59,7 @@
   border-radius: 7px;
   padding: 0 8px;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   color: inherit;
   background: light-dark(#fff, oklch(0.225 0.006 90));
 }
@@ -76,7 +76,7 @@
   flex-direction: column;
   align-items: flex-end;
   font-weight: 550;
-  color: light-dark(#577346, oklch(0.713 0.079 134));
+  color: light-dark(#34442a, oklch(0.86 0.079 134));
   white-space: nowrap;
 }
 .covered-life-remove {
@@ -87,7 +87,7 @@
   border: 0;
   border-radius: 50%;
   background: light-dark(#f1f6e9, oklch(0.204 0.013 124));
-  color: light-dark(#647658, oklch(0.702 0.053 133));
+  color: light-dark(#384231, oklch(0.86 0.053 133));
   cursor: pointer;
 }
 .covered-life-remove:hover {
@@ -109,13 +109,13 @@
   border: 1px dashed light-dark(#b9cfa0, oklch(0.826 0.068 128));
   border-radius: 999px;
   background: light-dark(#f7faf2, oklch(0.196 0.008 123));
-  color: light-dark(#577346, oklch(0.713 0.079 134));
+  color: light-dark(#34442a, oklch(0.86 0.079 134));
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
 }
 .covered-lives-add button small {
-  color: light-dark(#8b9c78, oklch(0.632 0.058 128));
+  color: light-dark(#3a4131, oklch(0.86 0.058 128));
 }
 .covered-lives-add button:disabled {
   opacity: 0.45;
@@ -129,17 +129,17 @@
   padding: 12px 14px;
   background: light-dark(#f1f6e9, oklch(0.204 0.013 124));
   border-radius: 0 0 10px 10px;
-  color: light-dark(#8b9c78, oklch(0.632 0.058 128));
+  color: light-dark(#3a4131, oklch(0.86 0.058 128));
 }
 .covered-lives > footer strong {
   font-size: 18px;
-  color: light-dark(#577346, oklch(0.713 0.079 134));
+  color: light-dark(#34442a, oklch(0.86 0.079 134));
 }
 .covered-lives-error {
   margin: 0;
   padding: 12px 14px;
   white-space: pre-line;
-  color: light-dark(#a2412f, oklch(0.723 0.139 32));
+  color: light-dark(#692b1f, oklch(0.86 0.139 32));
   background: light-dark(#fbefeb, oklch(0.207 0.01 39));
   border-radius: 0 0 10px 10px;
 }

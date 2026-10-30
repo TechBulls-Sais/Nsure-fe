@@ -22,8 +22,8 @@
   padding: 10px 12px;
   border-radius: 8px;
   background: light-dark(#fdf0ee, oklch(0.204 0.01 28));
-  color: light-dark(#9b3528, oklch(0.739 0.146 30));
-  font-size: 12px;
+  color: light-dark(#6f261d, oklch(0.86 0.146 30));
+  font-size: 13px;
 }
 .ws-form-actions {
   display: flex;
@@ -32,8 +32,8 @@
   margin-top: 18px;
 }
 .ws-hint {
-  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
-  font-size: 10px;
+  color: light-dark(#3b4237, oklch(0.86 0.044 133));
+  font-size: 13px;
   font-weight: 400;
 }
 .ws-clickable {
@@ -49,7 +49,7 @@
 }
 .ws-row-actions .btn {
   padding: 5px 10px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .ws-grid-2 {
   display: grid;
@@ -64,8 +64,8 @@
 }
 .ws-kv small {
   display: block;
-  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
-  font-size: 10px;
+  color: light-dark(#3b4237, oklch(0.86 0.044 133));
+  font-size: 13px;
   margin-bottom: 3px;
 }
 .ws-kv strong {
@@ -74,12 +74,12 @@
 }
 .ws-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 13px;
 }
 .ws-textarea {
   min-height: 140px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
 }
 @media (max-width: 860px) {
   .ws-grid-2 {

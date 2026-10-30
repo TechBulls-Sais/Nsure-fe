@@ -28,17 +28,17 @@
 }
 
 .wf-check.pass {
-  color: light-dark(#15803d, oklch(0.71 0.144 150));
+  color: light-dark(#0c4a23, oklch(0.86 0.144 150));
   background: light-dark(rgba(22, 163, 74, 0.07), oklch(0.34 0.07 149 / 0.07));
 }
 
 .wf-check.fail {
-  color: light-dark(#b91c1c, oklch(0.722 0.16 28));
+  color: light-dark(#7d1313, oklch(0.86 0.16 28));
   background: light-dark(rgba(220, 38, 38, 0.07), oklch(0.577 0.215 27 / 0.07));
 }
 
 .wf-check.pending {
-  color: light-dark(#92400e, oklch(0.74 0.131 46));
+  color: light-dark(#682e0a, oklch(0.86 0.131 46));
 }
 
 .wf-beneficiaries {
@@ -76,7 +76,7 @@
   padding: 1px 8px;
   border-radius: 999px;
   background: light-dark(rgba(0, 102, 171, 0.1), oklch(0.499 0.135 248 / 0.1));
-  color: light-dark(#0066ab, oklch(0.726 0.142 248));
+  color: light-dark(#00416c, oklch(0.86 0.142 248));
 }
 
 .wf-inline-form {

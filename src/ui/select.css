@@ -11,7 +11,7 @@
   min-height: 41px;
   padding: 10px 12px;
   line-height: 1.5;
-  color: light-dark(#52674b, oklch(0.731 0.053 138));
+  color: light-dark(#364331, oklch(0.86 0.053 138));
   cursor: pointer;
   outline: none;
   box-shadow: 0 1px 2px light-dark(#203f2503, oklch(0 0 0 / 0.021));
@@ -45,7 +45,7 @@
 .ns-select-chevron {
   display: flex;
   align-items: center;
-  color: light-dark(#92a180, oklch(0.622 0.052 128));
+  color: light-dark(#3a4134, oklch(0.86 0.052 128));
   flex-shrink: 0;
   transition: transform 0.18s;
 }
@@ -55,7 +55,7 @@
 .ns-select-trigger.small-select {
   min-height: 31px;
   padding: 6px 9px;
-  font-size: 10px;
+  font-size: 13px;
 }
 .ns-select-content {
   position: relative;
@@ -75,7 +75,7 @@
   transform-origin: var(--radix-select-content-transform-origin);
   animation: ns-select-enter 0.13s ease-out;
   box-sizing: border-box;
-  color: light-dark(#53664c, oklch(0.732 0.049 137));
+  color: light-dark(#364231, oklch(0.86 0.049 137));
 }
 .ns-select-viewport {
   padding: 0;
@@ -89,7 +89,7 @@
   min-height: 39px;
   padding: 10px 35px 10px 12px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
   font-weight: 450;
   white-space: nowrap;
@@ -98,7 +98,7 @@
   cursor: pointer;
   user-select: none;
   -webkit-user-select: none;
-  color: light-dark(#5c6f52, oklch(0.715 0.052 135));
+  color: light-dark(#374231, oklch(0.86 0.052 135));
   transition:
     background 0.1s,
     color 0.1s;
@@ -106,12 +106,12 @@
 }
 .ns-select-item[data-state="checked"] {
   background: light-dark(#f0f5e8, oklch(0.205 0.013 124));
-  color: light-dark(#46663b, oklch(0.739 0.08 138));
+  color: light-dark(#2f4528, oklch(0.86 0.08 138));
   font-weight: 600;
 }
 .ns-select-item[data-highlighted] {
   background: light-dark(#e7efdb, oklch(0.218 0.019 125));
-  color: light-dark(#35502e, oklch(0.78 0.067 139));
+  color: light-dark(#2e4528, oklch(0.86 0.067 139));
   outline: none;
 }
 .ns-select-item[data-disabled] {
@@ -123,14 +123,14 @@
   right: 12px;
   display: grid;
   place-items: center;
-  color: light-dark(#739653, oklch(0.653 0.107 131));
+  color: light-dark(#344425, oklch(0.86 0.107 131));
 }
 .ns-select-scroll {
   display: flex;
   height: 22px;
   align-items: center;
   justify-content: center;
-  color: light-dark(#8b9e78, oklch(0.629 0.061 129));
+  color: light-dark(#3a4231, oklch(0.86 0.061 129));
   background: linear-gradient(light-dark(#fff, oklch(0.225 0.006 90)), light-dark(#f8faf4, oklch(0.195 0.006 122)));
   cursor: default;
   border-radius: 6px;
@@ -159,7 +159,7 @@
   }
   .ns-select-trigger.select {
     min-height: 42px;
-    font-size: 12px;
+    font-size: 13px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

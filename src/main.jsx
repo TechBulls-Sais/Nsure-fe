@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./ui/kit.css";
+import "./ui/navigation.css";
 import { MotionProvider } from "./ui/animated";
 import { ConfirmProvider } from "./ui/overlay";
 import { applyTheme } from "./ui/theme";

@@ -4,7 +4,8 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     // Nsure has its own ports so it never collides with MIPAS (5173 / 8080) on the same machine.
-    port: 5180,
+    // NSURE_FE_PORT lets each local insurer installation run its own frontend (deploy/run-insurer.ps1).
+    port: Number(process.env.NSURE_FE_PORT || 5180),
     strictPort: true,
     proxy: {
       "/api": {

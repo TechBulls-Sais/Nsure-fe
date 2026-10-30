@@ -17,12 +17,12 @@
   align-items: center;
   gap: 6px;
   margin-bottom: 14px;
-  font-size: 11px;
-  color: light-dark(#7d8c72, oklch(0.659 0.044 132));
+  font-size: 13px;
+  color: light-dark(#3a4235, oklch(0.86 0.044 132));
 }
 .ga-muted {
-  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
-  font-size: 11px;
+  color: light-dark(#3b4237, oklch(0.86 0.044 133));
+  font-size: 13px;
 }
 .ga-person {
   display: flex;
@@ -36,14 +36,14 @@
   white-space: nowrap;
 }
 .ga-pending {
-  color: light-dark(#8a6512, oklch(0.708 0.109 82));
+  color: light-dark(#523c0b, oklch(0.86 0.109 82));
   font-weight: 600;
 }
 .ga-bad {
-  color: light-dark(#b42323, oklch(0.724 0.16 27));
+  color: light-dark(#7d1818, oklch(0.86 0.16 27));
 }
 .ga-good {
-  color: light-dark(#23753b, oklch(0.726 0.125 149));
+  color: light-dark(#154825, oklch(0.86 0.125 149));
 }
 .ga-current {
   font-weight: 700;
@@ -53,12 +53,12 @@
 .ga-row-error {
   display: inline-block;
   max-width: 420px;
-  color: light-dark(#9b3528, oklch(0.739 0.146 30));
-  font-size: 11px;
+  color: light-dark(#6f261d, oklch(0.86 0.146 30));
+  font-size: 13px;
   line-height: 1.4;
 }
 .ga-prorata {
-  color: light-dark(#2a5f8a, oklch(0.741 0.094 246));
+  color: light-dark(#1d4260, oklch(0.86 0.094 246));
   font-weight: 600;
 }
 .ga-filters {
@@ -89,8 +89,8 @@
   align-items: center;
   gap: 7px;
   margin: 12px 0;
-  font-size: 11px;
-  color: light-dark(#647658, oklch(0.702 0.053 133));
+  font-size: 13px;
+  color: light-dark(#384231, oklch(0.86 0.053 133));
   cursor: pointer;
 }
 .ga-paid {
@@ -98,8 +98,8 @@
   align-items: center;
   gap: 7px;
   margin-top: 14px;
-  color: light-dark(#23753b, oklch(0.726 0.125 149));
-  font-size: 12px;
+  color: light-dark(#154825, oklch(0.86 0.125 149));
+  font-size: 13px;
   font-weight: 550;
 }
 .ga-drawer-section {

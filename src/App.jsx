@@ -138,6 +138,9 @@ import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
 import ManagementReports from "./ManagementReports";
 import { can, DataTable, ThemeSwitch } from "./ui/workspace";
+import { CustomFieldInputs, PolicyAttributesPanel, cleanValues, usePolicyForm } from "./configuration/PolicyFields";
+import ConfigReleases from "./ConfigReleases";
+import { environmentLabel, useInsurer } from "./insurer";
 import { Dialog } from "./ui/overlay";
 import { useToast } from "./ui/toast";
 import CustomerPortal from "./CustomerPortal";
@@ -186,7 +189,63 @@ const lifeNavItems = [
   ["service-desk", "Service desk", "Headset", "READ_SERVICE_CASE"],
   ["communications", "Communications", "Mail", "READ_COMMUNICATION"],
   ["integration", "Integration", "Cable", "READ_INTEGRATION"],
+  ["configuration", "Configuration", "Settings2", "READ_CONFIG"],
 ];
+// The sidebar, grouped by area. An item is [page, label, icon, permission?]; a group opens to show its items, and a
+// group with a page (Customers) also goes there when clicked. Items the user cannot open are hidden, and so is a
+// group left empty.
+const navGroups = [
+  { key: "overview", item: ["overview", "Overview", "LayoutDashboard"] },
+  {
+    key: "customer-care",
+    label: "Customers",
+    icon: "Users",
+    page: "customers",
+    items: [
+      ["customers", "All customers", "Users"],
+      ["applications", "Applications", "FilePlus2"],
+      ["policies", "Policies", "ShieldCheck"],
+      ["claims", "Claims", "HeartHandshake"],
+      ["collections", "Collections", "Wallet"],
+      ["service-desk", "Service desk", "Headset", "READ_SERVICE_CASE"],
+      ["communications", "Communications", "Mail", "READ_COMMUNICATION"],
+    ],
+  },
+  { key: "group-business", label: "Group business", icon: "Building2", items: [["schemes", "Group schemes", "Building2"]] },
+  {
+    key: "products",
+    label: "Products & pricing",
+    icon: "Layers3",
+    items: [
+      ["products", "Products", "Layers3"],
+      ["product-config", "Product studio", "Settings2"],
+      ["rate-tables", "Rate tables", "Table2"],
+      ["configuration", "Configuration", "Settings2", "READ_CONFIG"],
+    ],
+  },
+  {
+    key: "finance-partners",
+    label: "Finance & partners",
+    icon: "Landmark",
+    items: [
+      ["finance", "Finance", "Landmark", "READ_FINANCE"],
+      ["distribution", "Distribution", "Handshake", "READ_DISTRIBUTION"],
+      ["reinsurance", "Reinsurance", "ShieldPlus", "READ_REINSURANCE"],
+    ],
+  },
+  {
+    key: "insights",
+    label: "Insights & operations",
+    icon: "PieChart",
+    items: [
+      ["reports", "Management", "PieChart", "READ_REPORT"],
+      ["integration", "Integration", "Cable", "READ_INTEGRATION"],
+      ["assistant", "AI assistant", "Sparkles"],
+    ],
+  },
+  { key: "administration", label: "Administration", icon: "ShieldCheck", superAdmin: true, items: [["access", "Access", "ShieldCheck"]] },
+];
+const NAV_OPEN_KEY = "nsure-nav-open";
 function Icon({ name, small = false, ...props }) {
   const C = Icons[name] || Icons.Circle;
   return (
@@ -519,6 +578,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
 }
 
 export default function App() {
+  const insurer = useInsurer();
   const [session, setSession] = useState(() => {
     try {
       return JSON.parse(sessionStorage.getItem("nsure-session") || "null");
@@ -530,6 +590,21 @@ export default function App() {
   const [page, setPage] = useState(() => location.hash.slice(2) || "overview");
   const [profile, setProfile] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Which sidebar group is open (one at a time); remembered per browser, Customers open the first time.
+  const [navOpen, setNavOpen] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(NAV_OPEN_KEY) || "null") || { "customer-care": true };
+    } catch {
+      return { "customer-care": true };
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(NAV_OPEN_KEY, JSON.stringify(navOpen));
+    } catch {
+      // Storage can be blocked; the sidebar still works for this visit.
+    }
+  }, [navOpen]);
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
@@ -651,10 +726,18 @@ export default function App() {
       active = false;
     };
   }, [session]);
-  const lifeMenu = lifeNavItems.filter((item) => can(profile, item[3]));
-  const menuItems = profile?.superAdmin
-    ? [...navItems, ...lifeMenu, ["access", "Access", "ShieldCheck"]]
-    : [...navItems, ...lifeMenu];
+  const allowed = (item) => !item[3] || can(profile, item[3]);
+  const visibleGroups = navGroups
+    .filter((g) => !g.superAdmin || profile?.superAdmin)
+    .map((g) => (g.items ? { ...g, items: g.items.filter(allowed) } : g))
+    .filter((g) => g.item || g.items.length > 0);
+  const menuItems = visibleGroups.flatMap((g) => (g.item ? [g.item] : g.items));
+  const groupOf = (key) => visibleGroups.find((g) => g.items?.some((item) => item[0] === key))?.key;
+  const activeGroup = groupOf(page);
+  // Opening a page (from search, a link or the address bar) also opens its group, so the highlight is visible.
+  useEffect(() => {
+    if (activeGroup) setNavOpen((open) => (open[activeGroup] ? open : { [activeGroup]: true }));
+  }, [activeGroup]);
   const activeName =
     menuItems.find((n) => n[0] === page)?.[1] ||
     (page === "settings" ? "Settings" : "Overview");
@@ -710,7 +793,8 @@ export default function App() {
     setModal({ type: "detail", entity: "claim", record });
   };
   const pendingPolicies = policies.filter((p) => p.status === "Pending Payment");
-  const issue = async (record) => {
+  // extra: the insurer-configured policy fields collected on the application ({formVersionId, customAttributes}).
+  const issue = async (record, extra = {}) => {
     let created;
     try {
       created = await request(session, "/portfolio/policies", {
@@ -724,6 +808,7 @@ export default function App() {
           status: "Active",
           // The application's other lives carry over and are re-priced at issue (R-18).
           ...(record.lives?.length ? { lives: otherLives(record) } : {}),
+          ...extra,
         },
       });
       await request(session, "/portfolio/applications/" + record.id, {
@@ -1579,41 +1664,81 @@ export default function App() {
           />
         </a>
         <div className="workspace-label">
-          <span className="workspace-icon">N</span>
+          <span className="workspace-icon" style={insurer?.primaryColor ? { background: insurer.primaryColor } : undefined}>
+            {(insurer?.displayName || "N").slice(0, 1)}
+          </span>
           <div>
-            <strong>Nsure workspace</strong>
-            <small>Operations team</small>
+            <strong>{insurer?.displayName || "Nsure workspace"}</strong>
+            <small title={insurer ? "Installation for insurer " + insurer.insurerCode : undefined}>
+              {insurer ? environmentLabel(insurer.environment) + " · " + insurer.currency : "Operations team"}
+            </small>
           </div>
           <Icon name="ChevronsUpDown" small />
         </div>
         <div className="nav-label">WORKSPACE</div>
-        <nav aria-label="Main navigation">
-          {menuItems.map(([key, label, icon]) => (
-            <a
-              key={key}
-              href={"#/" + key}
-              onClick={(e) => {
-                e.preventDefault();
-                go(key);
-              }}
-              className={"nav-item " + (page === key ? "active" : "")}
-              aria-current={page === key ? "page" : undefined}
-            >
-              <Icon name={icon} />
-              <span>{label}</span>
-              {key === "applications" && (
-                <span className="nav-count">
-                  {applications.filter((a) => a.status !== "Issued").length}
-                </span>
-              )}
-              {key === "policies" && profile?.canManagePolicies && pendingPolicies.length > 0 && (
-                <span className="nav-count" title="Customer purchases awaiting payment">
-                  {pendingPolicies.length}
-                </span>
-              )}
-              {key === "assistant" && <span className="ai-nav-badge">NEW</span>}
-            </a>
-          ))}
+        <nav aria-label="Main navigation" className="nav-tree">
+          {visibleGroups.map((group) => {
+            const renderItem = ([key, label, icon], sub) => (
+              <a
+                key={key}
+                href={"#/" + key}
+                onClick={(e) => {
+                  e.preventDefault();
+                  go(key);
+                }}
+                className={"nav-item " + (sub ? "nav-sub-item " : "") + (page === key ? "active" : "")}
+                aria-current={page === key ? "page" : undefined}
+              >
+                <Icon name={icon} />
+                <span>{label}</span>
+                {key === "applications" && (
+                  <span className="nav-count">
+                    {applications.filter((a) => a.status !== "Issued").length}
+                  </span>
+                )}
+                {key === "policies" && profile?.canManagePolicies && pendingPolicies.length > 0 && (
+                  <span className="nav-count" title="Customer purchases awaiting payment">
+                    {pendingPolicies.length}
+                  </span>
+                )}
+                {key === "assistant" && <span className="ai-nav-badge">NEW</span>}
+              </a>
+            );
+            if (group.item) return renderItem(group.item, false);
+            const open = Boolean(navOpen[group.key]);
+            const panelId = "nav-group-" + group.key;
+            return (
+              <div className={"nav-group " + (open ? "open" : "")} key={group.key}>
+                <button
+                  type="button"
+                  className={"nav-item nav-group-head " + (activeGroup === group.key ? "has-active" : "")}
+                  aria-expanded={open}
+                  aria-controls={panelId}
+                  onClick={() => {
+                    // Customers goes to its own page and opens; any other group just opens or closes.
+                    // One group open at a time, so the whole sidebar fits on one screen.
+                    if (group.page && page !== group.page) {
+                      setNavOpen({ [group.key]: true });
+                      go(group.page);
+                    } else {
+                      setNavOpen((o) => (o[group.key] ? {} : { [group.key]: true }));
+                    }
+                  }}
+                >
+                  <Icon name={group.icon} />
+                  <span>{group.label}</span>
+                  <span className="nav-chevron" aria-hidden="true">
+                    <Icon name="ChevronDown" small />
+                  </span>
+                </button>
+                {open && (
+                  <div className="nav-sub" id={panelId} role="group" aria-label={group.label}>
+                    {group.items.map((item) => renderItem(item, true))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
         <div className="sidebar-bottom">
           <div className="sidebar-note">
@@ -1747,6 +1872,8 @@ export default function App() {
             <Communications session={session} notify={notify} profile={profile} />
           ) : page === "integration" ? (
             <IntegrationMonitor session={session} notify={notify} profile={profile} />
+          ) : page === "configuration" ? (
+            <ConfigReleases session={session} notify={notify} profile={profile} products={products} />
           ) : page === "assistant" ? (
             <AssistantStudio />
           ) : page === "access" ? (
@@ -2551,6 +2678,9 @@ function CustomerDirectory({
           </button>
           {menuOpen && (
             <div className="cd-menu" role="menu">
+              {!picked.length && (
+                <div className="cd-menu-note">Tick a customer in the list to unlock the actions below.</div>
+              )}
               {actions.map((a) => (
                 <button
                   key={a.label}
@@ -2806,6 +2936,9 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
   const tier = tiers.find((item) => item.name === tierName) || null;
   const rated = tier?.priceIsFrom ? tier : null;
   const [lives, setLives] = useState([]);
+  // The insurer's approved extra fields for this product (none unless a configuration release defines them).
+  const { form: policyForm, error: policyFormError } = usePolicyForm(session, product.name);
+  const [custom, setCustom] = useState({});
   const priced = useLifeQuote(
     session,
     "/portfolio/quote",
@@ -2838,6 +2971,9 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
           premium: tier ? tier.premium : amountOf(product.premium),
           status: "Active",
           ...(rated ? { lives: livesBody(lives) } : {}),
+          ...(policyForm?.formVersionId
+            ? { formVersionId: policyForm.formVersionId, customAttributes: cleanValues(custom) }
+            : {}),
         });
       }}
     >
@@ -2867,6 +3003,7 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
               setProductName(event.target.value);
               setTierName(defaultTier(next)?.name || "");
               setLives([]);
+              setCustom({});
             }}
           >
             {products.map((item) => (
@@ -2893,6 +3030,8 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
           </Field>
         )}
       </div>
+      <CustomFieldInputs form={policyForm} values={custom} onChange={setCustom} />
+      {policyFormError && <p className="subtitle">Extra policy fields could not be loaded: {policyFormError}</p>}
       <div className="quote-summary">
         <span>{tier ? tier.name + " cover" : "Cover"}</span>
         <strong>
@@ -2951,6 +3090,13 @@ function Detail({
   const applicant = entity === "application" ? customers.find((c) => c.name === r.name) : null;
   const identityStatus = applicant ? kycLabel(applicant) : "Verified";
   const [summary, setSummary] = useState(false);
+  // Extra policy fields the insurer's active configuration requires for this product, filled in before issue.
+  const issuing = entity === "application" && r.status === "Ready to issue";
+  const { form: issueForm, error: issueFormError } = usePolicyForm(session, issuing ? r.product : null);
+  const [issueValues, setIssueValues] = useState({});
+  const missingRequired = (issueForm?.fields || []).filter(
+    (f) => f.required && [undefined, null, ""].includes(issueValues[f.key]),
+  );
   return (
     <>
       <div className="detail-title">
@@ -3108,6 +3254,14 @@ function Detail({
                 </>
               )}
               {entity === "policy" && (
+                <PolicyAttributesPanel
+                  session={session}
+                  policyRef={r.id}
+                  canEdit={Boolean(profile?.canManagePolicies)}
+                  notify={notify}
+                />
+              )}
+              {entity === "policy" && (
                 <PolicyWorkflowPanel
                   session={session}
                   policy={r}
@@ -3145,12 +3299,32 @@ function Detail({
                   </div>
                 );
               })}
+              {issuing && (
+                <>
+                  <CustomFieldInputs form={issueForm} values={issueValues} onChange={setIssueValues} />
+                  {issueFormError && (
+                    <p className="subtitle">Extra policy fields could not be loaded: {issueFormError}</p>
+                  )}
+                  {missingRequired.length > 0 && (
+                    <p className="subtitle">
+                      Fill in {missingRequired.map((f) => f.label).join(", ")} to issue this policy.
+                    </p>
+                  )}
+                </>
+              )}
               <div className="detail-actions">
-                {entity === "application" && r.status === "Ready to issue" && (
+                {issuing && (
                   <Button
                     icon="ShieldCheck"
-                    disabled={identityStatus !== "Verified"}
-                    onClick={() => onIssue(r)}
+                    disabled={identityStatus !== "Verified" || missingRequired.length > 0}
+                    onClick={() =>
+                      onIssue(
+                        r,
+                        issueForm?.formVersionId
+                          ? { formVersionId: issueForm.formVersionId, customAttributes: cleanValues(issueValues) }
+                          : {},
+                      )
+                    }
                   >
                     Simulate policy issue
                   </Button>

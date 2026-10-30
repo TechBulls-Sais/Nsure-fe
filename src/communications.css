@@ -2,8 +2,8 @@
 .com-sub {
   display: block;
   margin-top: 2px;
-  color: light-dark(#8a9a80, oklch(0.634 0.044 133));
-  font-size: 10px;
+  color: light-dark(#3b4237, oklch(0.86 0.044 133));
+  font-size: 13px;
 }
 .com-preview {
   margin-top: 16px;
@@ -26,9 +26,9 @@
   font-weight: 600;
 }
 .com-message p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
-  color: light-dark(#3e4c44, oklch(0.779 0.023 160));
+  color: light-dark(#35413a, oklch(0.86 0.023 160));
 }
 .com-message.is-whatsapp {
   border-color: light-dark(#cfe8cf, oklch(0.345 0.026 145));
@@ -39,15 +39,15 @@
   margin: 6px 0;
   padding: 8px 11px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .com-reason.is-info {
   background: light-dark(#eef3f8, oklch(0.206 0.006 248));
-  color: light-dark(#36506b, oklch(0.768 0.058 250));
+  color: light-dark(#2c4156, oklch(0.86 0.058 250));
 }
 .com-reason.is-error {
   background: light-dark(#fdf0ee, oklch(0.204 0.01 28));
-  color: light-dark(#9b3528, oklch(0.739 0.146 30));
+  color: light-dark(#6f261d, oklch(0.86 0.146 30));
 }
 .com-lookup {
   display: flex;

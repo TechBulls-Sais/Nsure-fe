@@ -1,6 +1,6 @@
 .lp {
   --lp-ink: #193c32;
-  --lp-muted: #68766d;
+  --lp-muted: #2e3a33;
   --lp-paper: #f8f8ef;
   color: var(--lp-ink);
   background: var(--lp-paper);
@@ -21,7 +21,7 @@
   padding-inline: 60px;
 }
 .lp-kicker {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.6px;
   display: block;
@@ -49,7 +49,7 @@
   flex-shrink: 0;
 }
 .lp-brand-period {
-  color: #7f9d4a;
+  color: #364320;
 }
 .lp-brand-symbol {
   display: grid;
@@ -87,7 +87,7 @@
 }
 .lp-nav-links {
   gap: 30px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .lp-nav-links a:hover,
 .lp-footer-links a:hover {
@@ -105,7 +105,7 @@
   justify-content: center;
   align-items: center;
   gap: 27px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   transition:
     background 0.2s,
@@ -125,7 +125,7 @@
   min-height: 43px;
   padding: 12px 17px;
   gap: 20px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .lp-button-plain {
   padding-left: 0;
@@ -166,7 +166,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 9px;
+  font-size: 13px;
 }
 .lp-small-line {
   width: 24px;
@@ -185,7 +185,7 @@
 .lp em {
   font-family: "Fraunces", Georgia, serif;
   font-weight: 550;
-  color: #82936a;
+  color: #3a412f;
 }
 .lp-heading-spark {
   display: inline-block;
@@ -213,8 +213,8 @@
   align-items: center;
   gap: 9px;
   margin-top: 28px;
-  color: #6b7b68;
-  font-size: 10px;
+  color: #394137;
+  font-size: 13px;
 }
 .lp-hero-visual {
   position: relative;
@@ -248,7 +248,7 @@
   color: white;
 }
 .lp-photo-caption span {
-  font-size: 7px;
+  font-size: 13px;
   letter-spacing: 1.6px;
 }
 .lp-photo-caption p {
@@ -276,7 +276,7 @@
   border: 6px solid var(--lp-paper);
 }
 .lp-orbit-stamp span {
-  font-size: 7px;
+  font-size: 13px;
   letter-spacing: 1.7px;
   font-weight: 700;
 }
@@ -310,8 +310,8 @@
 .lp-float-note div > span {
   display: block;
   margin-top: 6px;
-  font-size: 8px;
-  color: #6b7b68;
+  font-size: 13px;
+  color: #394137;
 }
 .lp-note-dot {
   width: 7px;
@@ -326,8 +326,8 @@
   justify-content: center;
   align-items: center;
   gap: 6px;
-  font-size: 9px;
-  color: #7f8a75;
+  font-size: 13px;
+  color: #3c4137;
 }
 .lp-life-label > span {
   width: 5px;
@@ -390,9 +390,9 @@
   padding-block: 26px;
 }
 .lp-values span {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.8;
-  color: #77806e;
+  color: #3d4137;
 }
 .lp-values strong {
   color: var(--lp-ink);
@@ -402,8 +402,8 @@
   display: flex;
   gap: 13px;
   align-items: center;
-  color: #405442;
-  font-size: 12px;
+  color: #324234;
+  font-size: 13px;
 }
 .lp-values svg {
   width: 22px;
@@ -427,15 +427,15 @@
   margin-top: 19px;
 }
 .lp-section-heading > p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.9;
   padding-bottom: 4px;
 }
 .lp-section-heading > p span {
   display: inline-block;
   margin-top: 10px;
-  font-size: 10px;
-  color: #839078;
+  font-size: 13px;
+  color: #3c4136;
 }
 .lp-cover-grid {
   display: grid;
@@ -478,7 +478,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 13px;
 }
 .lp-card-top > span:first-child {
   display: flex;
@@ -486,8 +486,8 @@
   gap: 8px;
 }
 .lp-card-number {
-  color: #7e8b79;
-  font-size: 9px;
+  color: #3b4139;
+  font-size: 13px;
 }
 .lp-card-face h3 {
   font:
@@ -520,7 +520,7 @@
   border: 0;
   background: none;
   padding: 15px 0 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 .lp-round-arrow {
   border: 1px solid #53694850;
@@ -536,8 +536,8 @@
 .lp-card-price {
   display: block;
   margin-top: 3px;
-  font-size: 10px;
-  color: #677360;
+  font-size: 13px;
+  color: #3a4136;
 }
 .lp-card-loading .lp-card-face {
   animation: lp-card-pulse 1.4s ease-in-out infinite alternate;
@@ -559,8 +559,8 @@
   border-radius: 12px;
   background: #e6ebdf;
   padding: 28px 24px;
-  font-size: 12px;
-  color: #4b5d4d;
+  font-size: 13px;
+  color: #364337;
 }
 .lp-card-action:hover .lp-round-arrow {
   background: var(--lp-ink);
@@ -577,16 +577,16 @@
   margin-top: 12px;
 }
 .lp-card-back p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
   margin-top: 14px;
-  color: #4b5d4d;
+  color: #364337;
 }
 .lp-card-back ul {
   list-style: none;
   padding: 0;
   margin: 16px 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 .lp-card-back li {
   display: flex;
@@ -594,14 +594,14 @@
   margin-block: 7px;
 }
 .lp-card-back small {
-  font-size: 9px;
+  font-size: 13px;
   margin-bottom: 17px;
-  color: #677360;
+  color: #3a4136;
 }
 .lp-card-back .lp-button {
   margin-top: auto;
   gap: 10px;
-  font-size: 10px;
+  font-size: 13px;
   min-height: 43px;
   padding: 12px;
 }
@@ -611,7 +611,7 @@
   display: flex;
   justify-content: center;
   gap: 8px;
-  font-size: 10px;
+  font-size: 13px;
   padding: 14px 0 0;
   align-items: center;
 }
@@ -621,7 +621,7 @@
   justify-content: space-between;
   gap: 25px;
   margin-top: 24px;
-  font-size: 10px;
+  font-size: 13px;
 }
 .lp-cover-bottom > a {
   display: flex;
@@ -646,7 +646,7 @@
 }
 .lp-how .lp-kicker {
   color: #c0cba5;
-  font-size: 9px;
+  font-size: 13px;
 }
 .lp-how h2 {
   font-size: 43px;
@@ -658,7 +658,7 @@
   margin-top: 23px;
   max-width: 300px;
   color: #b0bfb0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.8;
 }
 .lp-how .lp-button {
@@ -708,7 +708,7 @@
   padding-bottom: 0;
 }
 .lp-step > span {
-  font-size: 10px;
+  font-size: 13px;
   color: #b8c99d;
   padding-top: 5px;
 }
@@ -716,7 +716,7 @@
   flex: 1;
 }
 .lp-step > svg {
-  color: #a4b493;
+  color: #3a4034;
   flex-shrink: 0;
   width: 17px;
 }
@@ -726,7 +726,7 @@
   letter-spacing: -0.4px;
 }
 .lp-step p {
-  font-size: 11px;
+  font-size: 13px;
   color: #b0bfb0;
   line-height: 1.9;
   margin-top: 10px;
@@ -741,7 +741,7 @@
 }
 .lp-faq > div > p {
   margin-top: 22px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .lp-faq-item {
   border-bottom: 1px solid #233d3025;
@@ -759,14 +759,14 @@
   gap: 20px;
   align-items: center;
   text-align: left;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 .lp-faq-item svg {
   flex-shrink: 0;
 }
 .lp-faq-item p {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.9;
   padding: 0 30px 24px 0;
 }
@@ -790,13 +790,13 @@
   font-size: 43px;
 }
 .lp-final em {
-  color: #667e4e;
+  color: #364229;
 }
 .lp-final > div:nth-child(2) {
   padding-right: 40px;
 }
 .lp-final p {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.8;
 }
 .lp-final .lp-button {
@@ -824,14 +824,14 @@
   font-size: 30px;
 }
 .lp-footer-top p {
-  font-size: 10px;
+  font-size: 13px;
   margin-top: 13px;
 }
 .lp-footer-links {
   display: flex;
   align-items: center;
   gap: 27px;
-  font-size: 10px;
+  font-size: 13px;
 }
 .lp-footer-bottom {
   display: flex;
@@ -839,14 +839,14 @@
   gap: 20px;
   border-top: 1px solid #233d3020;
   padding-top: 23px;
-  font-size: 8px;
-  color: #79836e;
+  font-size: 13px;
+  color: #3c4137;
 }
 .lp-footer-bottom p {
-  font-size: 8px;
+  font-size: 13px;
 }
 .lp .motion-toggle {
-  font-size: 9px;
+  font-size: 13px;
   background: transparent;
   border-color: #233d3020;
 }
@@ -854,9 +854,9 @@
   display: inline-flex;
   gap: 8px;
   align-items: center;
-  font-size: 12px;
+  font-size: 13px;
   margin-bottom: 24px;
-  color: #657b65;
+  color: #374237;
 }
 @keyframes lp-cube-float {
   0%,
@@ -932,7 +932,7 @@
     gap: 16px;
   }
   .lp-hero-actions .lp-button {
-    font-size: 10px;
+    font-size: 13px;
     gap: 14px;
   }
   .lp-how-grid {
@@ -951,7 +951,7 @@
     font-size: 23px;
   }
   .lp-card-back .lp-kicker {
-    font-size: 8px;
+    font-size: 13px;
   }
 }
 @media (max-width: 800px) {
@@ -1007,18 +1007,18 @@
     letter-spacing: -3.5px;
   }
   .lp-hero .lp-kicker {
-    font-size: 7px;
+    font-size: 13px;
     letter-spacing: 1px;
   }
   .lp-hero-description {
-    font-size: 11px;
+    font-size: 13px;
   }
   .lp-hero-actions {
     flex-wrap: wrap;
     gap: 3px;
   }
   .lp-hero-foot {
-    font-size: 8px;
+    font-size: 13px;
     margin-top: 10px;
   }
   .lp-hero-visual {
@@ -1049,7 +1049,7 @@
     right: -14px;
   }
   .lp-orbit-stamp span {
-    font-size: 5px;
+    font-size: 13px;
   }
   .lp-orbit-stamp svg {
     width: 22px;
@@ -1074,7 +1074,7 @@
     width: 45%;
   }
   .lp-values p {
-    font-size: 11px;
+    font-size: 13px;
   }
   .lp h2 {
     font-size: 38px;
@@ -1092,16 +1092,16 @@
     font-size: 21px;
   }
   .lp-card-top {
-    font-size: 9px;
+    font-size: 13px;
   }
   .lp-card-back p {
-    font-size: 10px;
+    font-size: 13px;
   }
   .lp-card-back ul {
-    font-size: 9px;
+    font-size: 13px;
   }
   .lp-card-back .lp-button {
-    font-size: 9px;
+    font-size: 13px;
     gap: 5px;
     padding-inline: 5px;
   }
@@ -1161,7 +1161,7 @@
     margin-top: 24px;
   }
   .lp-hero .lp-kicker {
-    font-size: 8px;
+    font-size: 13px;
     letter-spacing: 1.1px;
   }
   .lp-heading-spark {
@@ -1169,7 +1169,7 @@
     margin-left: 13px;
   }
   .lp-hero-description {
-    font-size: 12px;
+    font-size: 13px;
     margin-top: 22px;
     max-width: 350px;
   }
@@ -1181,7 +1181,7 @@
     margin-top: 23px;
   }
   .lp-hero-actions .lp-button {
-    font-size: 10px;
+    font-size: 13px;
     padding-inline: 15px;
     gap: 11px;
   }
@@ -1189,7 +1189,7 @@
     padding: 10px 0;
   }
   .lp-hero-foot {
-    font-size: 9px;
+    font-size: 13px;
     margin-top: 22px;
   }
   .lp-hero-visual {
@@ -1211,7 +1211,7 @@
     top: 5px;
   }
   .lp-orbit-stamp span {
-    font-size: 6px;
+    font-size: 13px;
   }
   .lp-float-note {
     top: 240px;
@@ -1232,11 +1232,11 @@
     gap: 20px 10px;
   }
   .lp-values p {
-    font-size: 9px;
+    font-size: 13px;
     gap: 9px;
   }
   .lp-values span {
-    font-size: 10px;
+    font-size: 13px;
   }
   .lp-values svg {
     width: 18px;
@@ -1252,12 +1252,12 @@
     font-size: 37px;
   }
   .lp-kicker {
-    font-size: 8px;
+    font-size: 13px;
     letter-spacing: 1.2px;
   }
   .lp-section-heading > p {
     margin-top: 19px;
-    font-size: 11px;
+    font-size: 13px;
   }
   .lp-section-heading > p span {
     margin-top: 5px;
@@ -1273,7 +1273,7 @@
     padding: 24px 24px 17px;
   }
   .lp-card-top {
-    font-size: 11px;
+    font-size: 13px;
   }
   .lp-card-face h3 {
     font-size: 28px;
@@ -1285,18 +1285,18 @@
     font-size: 13px;
   }
   .lp-card-back ul {
-    font-size: 11px;
+    font-size: 13px;
   }
   .lp-card-back .lp-button {
-    font-size: 11px;
+    font-size: 13px;
     gap: 18px;
   }
   .lp-card-back .lp-kicker {
-    font-size: 9px;
+    font-size: 13px;
   }
   .lp-cover-bottom {
     align-items: flex-start;
-    font-size: 9px;
+    font-size: 13px;
     gap: 15px;
     line-height: 1.8;
   }
@@ -1320,10 +1320,10 @@
     padding-block: 55px;
   }
   .lp-faq-item h3 button {
-    font-size: 12px;
+    font-size: 13px;
   }
   .lp-faq-item p {
-    font-size: 12px;
+    font-size: 13px;
   }
   .lp-final {
     margin-inline: 24px;

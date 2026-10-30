@@ -15,7 +15,7 @@
   display: grid;
   place-items: center;
   background: light-dark(#dce8c9, oklch(0.232 0.03 125));
-  color: light-dark(#537348, oklch(0.715 0.079 138));
+  color: light-dark(#31452b, oklch(0.86 0.079 138));
   flex-shrink: 0;
   transform: rotate(-5deg);
 }
@@ -24,7 +24,7 @@
 }
 .config-banner p {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .config-banner > .badge {
   margin-left: auto;
@@ -52,14 +52,14 @@
   line-height: 1.2;
 }
 .config-stat small {
-  font-size: 11px;
-  color: light-dark(#778477, oklch(0.671 0.026 145));
+  font-size: 13px;
+  color: light-dark(#394039, oklch(0.86 0.026 145));
   display: block;
   margin-top: 4px;
 }
 .config-product-mark {
   background: light-dark(#eef2e7, oklch(0.21 0.011 123));
-  color: light-dark(#729454, oklch(0.656 0.103 132));
+  color: light-dark(#344326, oklch(0.86 0.103 132));
   display: grid;
   place-items: center;
   border-radius: 9px;
@@ -73,7 +73,7 @@
 }
 .config-back {
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .config-builder {
   display: grid;
@@ -95,17 +95,17 @@
   border-radius: 10px;
   padding: 15px 10px;
   margin: 5px 0;
-  color: light-dark(#6e7b70, oklch(0.687 0.024 150));
+  color: light-dark(#3a413b, oklch(0.86 0.024 150));
 }
 .config-step:disabled {
   opacity: 0.7;
 }
 .config-step.current {
   background: light-dark(#e9efdf, oklch(0.216 0.015 124));
-  color: light-dark(#274c38, oklch(0.79 0.058 159));
+  color: light-dark(#244533, oklch(0.86 0.058 159));
 }
 .config-step.done {
-  color: light-dark(#638149, oklch(0.689 0.092 132));
+  color: light-dark(#344427, oklch(0.86 0.092 132));
 }
 .config-step-number {
   display: grid;
@@ -114,7 +114,7 @@
   height: 27px;
   border: 1px solid light-dark(#dce2d6, oklch(0.346 0.01 129));
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 13px;
   flex-shrink: 0;
   background: light-dark(#fff, oklch(0.225 0.006 90));
 }
@@ -126,13 +126,13 @@
 }
 .config-step strong {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
 }
 .config-step small {
   display: block;
-  font-size: 9px;
+  font-size: 13px;
   margin-top: 3px;
-  color: light-dark(#85907d, oklch(0.649 0.032 132));
+  color: light-dark(#3c4139, oklch(0.86 0.032 132));
 }
 .config-help {
   margin: 32px 9px 0;
@@ -146,10 +146,10 @@
   margin-bottom: 12px;
 }
 .config-help strong {
-  font-size: 12px;
+  font-size: 13px;
 }
 .config-help p {
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 7px;
   line-height: 1.8;
 }
@@ -162,17 +162,17 @@
   border-bottom: 1px solid var(--line);
 }
 .config-step-pill {
-  font-size: 9px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 1.5px;
-  color: light-dark(#799369, oklch(0.653 0.071 134));
+  color: light-dark(#374230, oklch(0.86 0.071 134));
 }
 .config-form-heading h2 {
   font-size: 23px;
   margin-top: 8px;
 }
 .config-form-heading p {
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 7px;
 }
 .config-form-body {
@@ -182,8 +182,8 @@
   margin-top: 20px;
 }
 .config-field-hint {
-  font-size: 10px;
-  color: light-dark(#8b9584, oklch(0.639 0.029 132));
+  font-size: 13px;
+  color: light-dark(#3c3f38, oklch(0.86 0.029 132));
   font-weight: 400;
   line-height: 1.6;
   display: block;
@@ -192,13 +192,13 @@
   gap: 21px 17px;
 }
 .config-form .form-label {
-  font-size: 11px;
+  font-size: 13px;
   margin-bottom: 0;
 }
 .config-form .input,
 .config-form .select,
 .config-form .textarea {
-  font-size: 12px;
+  font-size: 13px;
   min-width: 0;
   width: 100%;
 }
@@ -222,7 +222,7 @@
   gap: 9px;
 }
 .config-form-footer .btn {
-  font-size: 11px;
+  font-size: 13px;
   padding: 10px 13px;
 }
 .config-preview {
@@ -230,7 +230,7 @@
   min-width: 0;
 }
 .config-preview > .eyebrow {
-  font-size: 8px;
+  font-size: 13px;
   letter-spacing: 1.1px;
   margin-bottom: 15px;
 }
@@ -249,11 +249,11 @@
   height: 55px;
   border-radius: 15px;
   background: light-dark(#dfebcb, oklch(0.228 0.031 124));
-  color: light-dark(#62824e, oklch(0.687 0.089 134));
+  color: light-dark(#344429, oklch(0.86 0.089 134));
   margin-bottom: 17px;
 }
 .config-preview-card > .badge {
-  font-size: 8px;
+  font-size: 13px;
 }
 .config-preview-card h2 {
   font-size: 22px;
@@ -261,7 +261,7 @@
   line-height: 1.3;
 }
 .config-preview-card > p {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.7;
 }
 .config-preview-amount {
@@ -271,9 +271,9 @@
 }
 .config-preview-amount small {
   display: block;
-  font-size: 8px;
+  font-size: 13px;
   letter-spacing: 0.8px;
-  color: light-dark(#7c9068, oklch(0.655 0.065 130));
+  color: light-dark(#384230, oklch(0.86 0.065 130));
 }
 .config-preview-amount strong {
   font-size: 24px;
@@ -290,9 +290,9 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 10px;
+  font-size: 13px;
   margin: 11px 0;
-  color: light-dark(#657d51, oklch(0.693 0.074 132));
+  color: light-dark(#37442c, oklch(0.86 0.074 132));
 }
 .config-preview-price {
   border-top: 1px solid light-dark(#e5ebdf, oklch(0.324 0.01 129));
@@ -304,13 +304,13 @@
 }
 .config-preview-price small {
   display: block;
-  font-size: 9px;
-  color: light-dark(#8b987e, oklch(0.636 0.042 129));
+  font-size: 13px;
+  color: light-dark(#3b4136, oklch(0.86 0.042 129));
   margin-top: 4px;
 }
 .config-preview-note {
-  font-size: 9px;
-  color: light-dark(#929d89, oklch(0.625 0.033 131));
+  font-size: 13px;
+  color: light-dark(#3c4139, oklch(0.86 0.033 131));
   display: flex;
   gap: 7px;
   align-items: center;
@@ -343,15 +343,15 @@
   border-color: light-dark(#a8be8a, oklch(0.771 0.075 127));
 }
 .config-benefit strong {
-  font-size: 11px;
+  font-size: 13px;
   display: block;
 }
 .config-benefit small {
-  font-size: 9px;
+  font-size: 13px;
   display: block;
   margin-top: 5px;
   font-weight: 400;
-  color: light-dark(#8a9580, oklch(0.64 0.035 130));
+  color: light-dark(#3d4137, oklch(0.86 0.035 130));
   line-height: 1.6;
 }
 .config-benefit input {
@@ -369,12 +369,12 @@
   background: light-dark(#f3f0f9, oklch(0.207 0.009 301));
   border-radius: 9px;
   padding: 14px;
-  color: light-dark(#9988b7, oklch(0.638 0.075 301));
+  color: light-dark(#433c50, oklch(0.86 0.075 301));
   margin-bottom: 22px;
 }
 .config-inline-note p {
-  font-size: 11px;
-  color: light-dark(#837993, oklch(0.673 0.043 303));
+  font-size: 13px;
+  color: light-dark(#413c49, oklch(0.86 0.043 303));
 }
 .config-channel-list {
   display: grid;
@@ -389,7 +389,7 @@
   border: 1px solid light-dark(#e3e8dc, oklch(0.331 0.01 125));
   padding: 12px 9px;
   border-radius: 8px;
-  font-size: 10px;
+  font-size: 13px;
   cursor: pointer;
 }
 .config-channel input {
@@ -412,12 +412,12 @@
 }
 .config-review-grid small {
   display: block;
-  font-size: 10px;
-  color: light-dark(#829071, oklch(0.652 0.05 127));
+  font-size: 13px;
+  color: light-dark(#3b4133, oklch(0.86 0.05 127));
 }
 .config-review-grid strong {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 550;
   margin-top: 5px;
   overflow-wrap: anywhere;
@@ -426,12 +426,12 @@
   margin-top: 22px;
 }
 .config-review-section > small {
-  font-size: 9px;
+  font-size: 13px;
   letter-spacing: 1px;
-  color: light-dark(#869578, oklch(0.643 0.048 130));
+  color: light-dark(#3b4234, oklch(0.86 0.048 130));
 }
 .config-review-section p {
-  font-size: 12px;
+  font-size: 13px;
   margin-top: 7px;
 }
 .config-tags {
@@ -447,12 +447,12 @@
   border-radius: 5px;
   padding: 6px 8px;
   background: light-dark(#edf3e4, oklch(0.209 0.015 125));
-  color: light-dark(#658148, oklch(0.688 0.093 130));
-  font-size: 10px;
+  color: light-dark(#354426, oklch(0.86 0.093 130));
+  font-size: 13px;
 }
 .config-ack {
   align-items: flex-start;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.7;
   border-top: 1px solid var(--line);
   margin-top: 24px;
@@ -468,9 +468,9 @@
   border: 1px solid light-dark(#eed4c7, oklch(0.36 0.02 48));
   border-radius: 8px;
   background: light-dark(#fff7f0, oklch(0.196 0.009 64));
-  color: light-dark(#945e41, oklch(0.706 0.087 49));
+  color: light-dark(#583827, oklch(0.86 0.087 49));
   padding: 14px;
-  font-size: 11px;
+  font-size: 13px;
 }
 .config-errors ul {
   padding-left: 17px;
@@ -493,7 +493,7 @@
   margin-right: auto;
 }
 .config-confirm p {
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 4px;
 }
 @media (min-width: 1600px) {
@@ -562,7 +562,7 @@
     font-size: 17px;
   }
   .config-banner p {
-    font-size: 11px;
+    font-size: 13px;
   }
   .config-banner-icon {
     width: 47px;
@@ -594,7 +594,7 @@
     margin: 0;
   }
   .config-step strong {
-    font-size: 9px;
+    font-size: 13px;
   }
   .config-step-number {
     width: 24px;
@@ -652,11 +652,11 @@
     margin-top: 17px;
   }
   .config-form-footer .btn {
-    font-size: 10px;
+    font-size: 13px;
     padding: 9px;
   }
   .config-step strong {
-    font-size: 8px;
+    font-size: 13px;
   }
   .config-review-grid {
     grid-template-columns: 1fr 1fr;
@@ -666,7 +666,7 @@
     height: 32px;
   }
   .config-stat small {
-    font-size: 10px;
+    font-size: 13px;
   }
   .config-stat strong {
     font-size: 23px;
