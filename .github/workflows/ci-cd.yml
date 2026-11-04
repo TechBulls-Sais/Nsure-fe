@@ -66,6 +66,24 @@ jobs:
         with:
           name: nsure-fe-dist
 
+      # Logs only whether each secret is set; values are never printed (GitHub masks them as *** anyway).
+      - name: Check deploy secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          missing=0
+          for name in DEPLOY_HOST DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [ -n "${!name}" ]; then
+              echo "$name: set"
+            else
+              echo "::error::$name is not set (Settings > Secrets and variables > Actions)"
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ]
+
       - name: Configure SSH
         run: |
           install -d -m 700 ~/.ssh
@@ -82,3 +100,6 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@${{ secrets.DEPLOY_HOST }}" sudo -n /usr/local/bin/nsure-deploy-fe
+
+      - name: Check the live site
+        run: curl -fsS -o /dev/null -w "frontend HTTP %{http_code}\n" "http://${{ secrets.DEPLOY_HOST }}/"
