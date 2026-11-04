@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: http://129.151.189.55/
+      url: https://129.151.189.55/
     concurrency:
       group: deploy-nsure-fe
       cancel-in-progress: false
@@ -118,4 +118,4 @@ jobs:
             "$DEPLOY_USER@$DEPLOY_HOST" sudo -n /usr/local/bin/nsure-deploy-fe
 
       - name: Check the live site
-        run: curl -fsS -o /dev/null -w "frontend HTTP %{http_code}\n" "http://$DEPLOY_HOST/"
+        run: curl -fsS -o /dev/null -w "frontend HTTP %{http_code}\n" "https://$DEPLOY_HOST/"
