@@ -1,0 +1,84 @@
+# Pull requests into main: install and build.
+# Merge (push) to main: the same build, then deploy dist/ to the Nsure server (nginx).
+# Server side: Server/deploy in the Nsure workspace (deploy user, /usr/local/bin/nsure-deploy-fe).
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package build
+        if: github.event_name != 'pull_request'
+        run: tar -C dist -czf nsure-fe.tgz .
+
+      - name: Keep the build for deployment
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsure-fe-dist
+          path: nsure-fe.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Deploy to server
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: http://129.151.189.55/
+    concurrency:
+      group: deploy-nsure-fe
+      cancel-in-progress: false
+    env:
+      DEPLOY_USER: deploy
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nsure-fe-dist
+
+      - name: Configure SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Upload build
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes nsure-fe.tgz \
+            "$DEPLOY_USER@${{ secrets.DEPLOY_HOST }}:incoming/nsure-fe.tgz"
+
+      - name: Publish frontend
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@${{ secrets.DEPLOY_HOST }}" sudo -n /usr/local/bin/nsure-deploy-fe
