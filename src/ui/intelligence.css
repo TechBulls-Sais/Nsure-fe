@@ -12,18 +12,6 @@
   -webkit-background-clip: text;
   color: transparent;
 }
-.motion-toggle {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  background: light-dark(#f2f3ef, oklch(0.206 0.004 118));
-  border: 1px solid light-dark(#e8ebe4, oklch(0.321 0.006 126));
-  border-radius: 7px;
-  padding: 6px 9px;
-  font-size: 13px;
-  color: light-dark(#3a413c, oklch(0.86 0.024 152));
-  white-space: nowrap;
-}
 .command-launcher {
   display: flex;
   align-items: center;
@@ -888,9 +876,6 @@
   .command-launcher > span {
     font-size: 13px;
   }
-  .motion-toggle span {
-    display: none;
-  }
   .topbar-actions {
     gap: 10px;
   }
@@ -1081,9 +1066,6 @@
   }
   .command-help {
     font-size: 13px;
-  }
-  .motion-toggle {
-    padding: 7px;
   }
   .topbar-actions {
     gap: 7px;

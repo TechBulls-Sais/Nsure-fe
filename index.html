@@ -16,7 +16,8 @@
     />
     <link rel="icon" type="image/svg+xml" href="/brand/nsure-life-mark.svg" />
     <script>
-      // Same rule as src/ui/theme.js, run before first paint so a dark choice never flashes light.
+      // Same rule as src/ui/theme.js, run before first paint so a dark choice never flashes light. ("system" is an
+      // old saved choice; theme.js turns it into light or dark the same way this line does.)
       try {
         var t = localStorage.getItem("nsure-theme");
         var dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);

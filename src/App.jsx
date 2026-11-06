@@ -146,6 +146,7 @@ import { useToast } from "./ui/toast";
 import CustomerPortal from "./CustomerPortal";
 import {
   CLAIM_STATES,
+  NEEDS_AUDIT,
   ClaimLodgeForm,
   ClaimWorkflowPanel,
   POLICY_STATES,
@@ -163,7 +164,6 @@ import {
   IntelligenceOrb,
   BorderBeam,
   ActionSearch,
-  MotionToggle,
 } from "./ui/animated";
 
 
@@ -744,7 +744,7 @@ export default function App() {
   const visible = (rows) =>
     rows.filter(
       (r) =>
-        (filter === "All" || r.status === filter) &&
+        (filter === "All" || r.status === filter || (filter === NEEDS_AUDIT && r.auditFlag)) &&
         Object.values(r).join(" ").toLowerCase().includes(search.toLowerCase()),
     );
   const detail = (type, record) =>
@@ -1321,7 +1321,7 @@ export default function App() {
         rows: claims,
         type: "claim",
         action: "Register claim",
-        statuses: ["All", ...CLAIM_STATES],
+        statuses: ["All", ...CLAIM_STATES, NEEDS_AUDIT],
       },
       collections: {
         title: "A clearer view of your collections.",
@@ -1806,7 +1806,6 @@ export default function App() {
               <kbd>⌘ K</kbd>
             </button>
             <ThemeSwitch compact />
-            <MotionToggle />
             <button
               className="icon-btn notification"
               aria-label="View notifications"

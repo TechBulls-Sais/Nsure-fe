@@ -6,7 +6,6 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
-  Monitor,
   Moon,
   Search,
   SearchX,
@@ -476,7 +475,6 @@ export function FormGrid({ children, onSubmit, submitLabel = "Save", busy, error
 const THEMES = [
   ["light", "Light", Sun],
   ["dark", "Dark", Moon],
-  ["system", "System", Monitor],
 ];
 
 /** Light / Dark / System segmented switch; `compact` shows icons only. */

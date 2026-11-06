@@ -2309,10 +2309,11 @@ p {
   font-style: normal;
   color: light-dark(#d7eb9e, oklch(0.907 0.101 120));
 }
+/* The story panel is dark green in both themes, so its text is light in both (well over 4.5:1 on the green). */
 .login-story-content > p {
   font-size: 13px;
   line-height: 1.9;
-  color: light-dark(#39413a, oklch(0.86 0.038 152));
+  color: light-dark(#d3e2d6, oklch(0.9 0.03 152));
   max-width: 360px;
 }
 .login-photo {
@@ -2379,16 +2380,16 @@ p {
 .login-feature > div {
   margin-left: 19px;
   font-size: 13px;
-  color: light-dark(#38423b, oklch(0.86 0.041 155));
+  color: light-dark(#d3e2d6, oklch(0.9 0.03 155));
   line-height: 1.7;
 }
 .login-feature strong {
-  font-weight: 400;
-  color: light-dark(#c7d6ba, oklch(0.857 0.041 130));
+  font-weight: 600;
+  color: light-dark(#f1f6ea, oklch(0.96 0.03 130));
 }
 .login-note {
   font-size: 13px;
-  color: light-dark(#354238, oklch(0.86 0.05 152));
+  color: light-dark(#c3d5c8, oklch(0.88 0.04 152));
   letter-spacing: 0.2px;
 }
 .login-card {
@@ -2467,7 +2468,8 @@ p {
 }
 .login-form > .login-note {
   margin-top: 35px;
-  color: light-dark(#afbaa3, oklch(0.86 0.034 128));
+  /* Under the form, on the page background (light in light mode): dark text there. */
+  color: light-dark(#4f5b52, oklch(0.86 0.034 128));
   text-align: center;
   font-size: 13px;
 }

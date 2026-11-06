@@ -225,7 +225,7 @@ function Treaties({ session, notify, profile, resource }) {
       )}
       <Panel
         title="Treaties"
-        subtitle="Only an approved treaty in force cedes. The user who drafts a treaty cannot approve it, except Super user and Super admin. Approved treaties may not overlap for a product."
+        subtitle="Only an approved treaty in force cedes. The user who drafts a treaty cannot approve it, except a Super Admin. Approved treaties may not overlap for a product."
         action={
           can(profile, "MANAGE_REINSURANCE") && (
             <Button icon={Plus} onClick={() => setForm(blankTreaty())}>

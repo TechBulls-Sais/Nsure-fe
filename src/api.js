@@ -10,6 +10,23 @@ function basic(session) {
   return `Basic ${token}`;
 }
 
+// The backend is down or restarting: no response at all, a gateway error (502/503/504 from a proxy), or the
+// dev server's own empty 500 (Vite answers that way when nothing listens on the API port). A real backend error
+// always carries a JSON body with its own message, so it never lands here.
+const UNREACHABLE =
+  "The Nsure server is not responding. Please try again in a moment." +
+  (import.meta.env.DEV ? " (Start the Nsure backend on port 8091.)" : "");
+
+function unreachable(response, data) {
+  return [502, 503, 504].includes(response.status) || (response.status >= 500 && data == null);
+}
+
+/** The error to throw for a failed response: the server's own message, or why the server could not answer. */
+function failure(response, data, fallback) {
+  if (unreachable(response, data)) return new ApiError(response.status, UNREACHABLE);
+  return new ApiError(response.status, data?.message || fallback);
+}
+
 async function readBody(response) {
   const text = await response.text();
   if (!text) return null;
@@ -34,12 +51,12 @@ export async function request(session, path, options = {}) {
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
     });
   } catch {
-    throw new ApiError(0, "The API is not reachable. Start the Nsure backend on port 8091.");
+    throw new ApiError(0, UNREACHABLE);
   }
 
   const data = await readBody(response);
   if (!response.ok) {
-    throw new ApiError(response.status, data?.message || "Request failed");
+    throw failure(response, data, "Request failed");
   }
   return { status: response.status, data };
 }
@@ -51,7 +68,7 @@ async function send(session, path, init) {
       headers: { ...(session ? { Authorization: basic(session) } : {}), ...init.headers },
     });
   } catch {
-    throw new ApiError(0, "The API is not reachable. Start the Nsure backend on port 8091.");
+    throw new ApiError(0, UNREACHABLE);
   }
 }
 
@@ -67,7 +84,7 @@ export async function uploadFile(session, path, file, fields = {}) {
   });
   const data = await readBody(response);
   if (!response.ok) {
-    throw new ApiError(response.status, data?.message || "Upload failed");
+    throw failure(response, data, "Upload failed");
   }
   return { status: response.status, data };
 }
@@ -77,7 +94,7 @@ export async function fetchFile(session, path) {
   const response = await send(session, path, { method: "GET", headers: {} });
   if (!response.ok) {
     const data = await readBody(response);
-    throw new ApiError(response.status, data?.message || "Could not open the file");
+    throw failure(response, data, "Could not open the file");
   }
   return response.blob();
 }

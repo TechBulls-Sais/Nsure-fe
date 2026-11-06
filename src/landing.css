@@ -845,11 +845,6 @@
 .lp-footer-bottom p {
   font-size: 13px;
 }
-.lp .motion-toggle {
-  font-size: 13px;
-  background: transparent;
-  border-color: #233d3020;
-}
 .login-home-link {
   display: inline-flex;
   gap: 8px;

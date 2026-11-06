@@ -127,7 +127,7 @@ export default function AccessAdmin({ session, notify }) {
               </>
             )}
             editable={() => true}
-            removable={(role) => role.name !== "Super user"}
+            removable={(role) => role.name !== "Super Admin"}
             onEdit={(role) => setEditor({ kind: "role", record: role })}
             onDelete={async (role) => {
               if (!(await confirmDelete("role", role.name))) return;

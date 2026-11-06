@@ -1,15 +1,20 @@
 import { useSyncExternalStore } from "react";
 
-// The chosen theme is "light", "dark" or "system". It is applied as data-theme on <html>, which switches
-// color-scheme and so every light-dark() colour in the stylesheets.
+// The chosen theme is "light" or "dark". It is applied as data-theme on <html>, which switches color-scheme and
+// so every light-dark() colour in the stylesheets.
 const KEY = "nsure-theme";
-const CHOICES = ["light", "dark", "system"];
-const media = () => window.matchMedia("(prefers-color-scheme: dark)");
+const CHOICES = ["light", "dark"];
 const listeners = new Set();
 
 function read() {
   try {
     const value = localStorage.getItem(KEY);
+    if (value === "system") {
+      // There used to be a "follow the computer" choice: keep the look it gave, as a fixed choice from now on.
+      const kept = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      localStorage.setItem(KEY, kept);
+      return kept;
+    }
     return CHOICES.includes(value) ? value : "light";
   } catch {
     return "light";
@@ -19,8 +24,7 @@ function read() {
 let choice = typeof window === "undefined" ? "light" : read();
 
 export function applyTheme(next = choice) {
-  const dark = next === "dark" || (next === "system" && media().matches);
-  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  document.documentElement.dataset.theme = next === "dark" ? "dark" : "light";
 }
 
 export function setTheme(next) {
@@ -41,13 +45,7 @@ export function setTheme(next) {
 
 function subscribe(fn) {
   listeners.add(fn);
-  const onSystem = () => choice === "system" && (applyTheme(), fn());
-  const mq = media();
-  mq.addEventListener("change", onSystem);
-  return () => {
-    listeners.delete(fn);
-    mq.removeEventListener("change", onSystem);
-  };
+  return () => listeners.delete(fn);
 }
 
 /** [choice, resolved, setTheme]: resolved is what is on screen ("light" or "dark"). */

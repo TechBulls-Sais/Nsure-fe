@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { createScope, createTimeline, stagger } from "animejs";
 import { request } from "./api";
-import { MotionToggle, useCalmMotion } from "./ui/animated";
+import { useCalmMotion } from "./ui/animated";
 import "./landing.css";
 
 // Products name their "need" icon (need_icon in the database); this maps the name to a component.
@@ -621,7 +621,6 @@ export default function LandingPage({ section = "home" }) {
             <a href="#/cover">Our cover</a>
             <a href="#/login/customer">Customer login</a>
             <a href="#/login/admin">Admin login</a>
-            <MotionToggle />
           </div>
         </div>
         <div className="lp-footer-bottom">

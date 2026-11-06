@@ -29,16 +29,14 @@ import {
   Search,
   FileText,
   Check,
-  Waves,
-  Pause,
   Layers3,
   ShieldCheck,
   WandSparkles,
 } from "lucide-react";
 import "./intelligence.css";
-const MotionPreference = createContext({ off: false, toggle: () => {} });
+// Animations follow the operating system's "reduce motion" setting; there is no in-app switch.
+const MotionPreference = createContext({ off: false });
 export function MotionProvider({ children }) {
-  const [off, setOff] = useState(false);
   const [reduced, setReduced] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
@@ -49,50 +47,16 @@ export function MotionProvider({ children }) {
     return () => media.removeEventListener("change", onChange);
   }, []);
   useEffect(() => {
-    document.documentElement.dataset.motion = off || reduced ? "off" : "on";
+    document.documentElement.dataset.motion = reduced ? "off" : "on";
     return () => delete document.documentElement.dataset.motion;
-  }, [off, reduced]);
+  }, [reduced]);
   return (
-    <MotionPreference.Provider
-      value={{
-        off: off || reduced,
-        system: reduced,
-        toggle: () => setOff((x) => !x),
-      }}
-    >
-      <MotionConfig reducedMotion={off || reduced ? "always" : "never"}>
-        {children}
-      </MotionConfig>
+    <MotionPreference.Provider value={{ off: reduced }}>
+      <MotionConfig reducedMotion={reduced ? "always" : "never"}>{children}</MotionConfig>
     </MotionPreference.Provider>
   );
 }
 export const useCalmMotion = () => useContext(MotionPreference).off;
-export function MotionToggle() {
-  const { off, toggle, system } = useContext(MotionPreference);
-  return (
-    <button
-      className="motion-toggle"
-      onClick={toggle}
-      disabled={system}
-      title={
-        system
-          ? "Reduced motion is enabled in your system preferences."
-          : undefined
-      }
-      aria-label={
-        system
-          ? "System reduced motion enabled"
-          : off
-            ? "Enable interface animations"
-            : "Pause interface animations"
-      }
-      aria-pressed={!off}
-    >
-      {off ? <Pause size={14} /> : <Waves size={14} />}
-      <span>Motion {off ? "off" : "on"}</span>
-    </button>
-  );
-}
 export function AnimatedWorkspace({ page, children }) {
   const root = useRef(null);
   const off = useCalmMotion();

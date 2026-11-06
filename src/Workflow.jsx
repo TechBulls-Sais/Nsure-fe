@@ -31,6 +31,14 @@ export const CLAIM_STATES = ["Initiated", "Under Review", "Recommended", "Approv
 
 const OPEN_CLAIM = ["Initiated", "Under Review", "Recommended"];
 
+// Same split as ClaimWorkflow on the server. A failed hard check means there was no valid cover, so the claim can
+// only be rejected; a failed soft check can be approved with a written reason.
+const HARD_CHECKS = ["Policy Active", "Waiting Period", "Premiums Paid"];
+const SOFT_CHECKS = ["Beneficiary Match", "No Duplicate"];
+
+/** The claims list's audit filter: approved or paid despite failed checks, or without checks. */
+export const NEEDS_AUDIT = "Needs audit";
+
 function Btn({ icon: I, variant = "primary", children, ...props }) {
   return (
     <button type="button" className={"btn " + variant} {...props}>
@@ -110,12 +118,12 @@ export function WorkflowTimeline({ session, type, refId, version = 0 }) {
   );
 }
 
-/** Pass / Fail of the five straight-through checks. */
+/** Pass / Fail / Pending (open claim) / Not run (decided claim recorded before the checks) of the five checks. */
 export function ClaimChecks({ checks = [] }) {
   return (
     <div className="wf-checks">
       {checks.map((check) => (
-        <div className={"wf-check " + check.result.toLowerCase()} key={check.name}>
+        <div className={"wf-check " + (check.result === "Not run" ? "pending" : check.result.toLowerCase())} key={check.name}>
           {check.result === "Pass" ? (
             <CircleCheck size={16} aria-hidden="true" />
           ) : check.result === "Fail" ? (
@@ -154,23 +162,35 @@ function fileSize(bytes) {
  * (/portfolio/shop/claims/{ref}/documents); `onUploaded` receives whatever that endpoint answers.
  */
 export function ClaimDocuments({ claim, ...props }) {
+  const closed = ["Paid", "Rejected"].includes(claim.status);
+  const issued = (claim.documents || []).some((d) => d.type === "Claim summary");
   return (
     <DocumentsPanel
       record={claim}
-      open={!["Paid", "Rejected"].includes(claim.status)}
+      open={!closed}
       generate={{
         slug: "summary",
-        label: "Generate claim summary",
-        hint: "A PDF of the claim, checks, payee, decision and history as they stand now.",
-        done: "Claim summary generated.",
+        label: "Issue claim summary",
+        hint: "A one-time PDF recording the claim as decided: checks, decision, payment, documents and timeline.",
+        done: "Claim summary issued.",
+        blocked: issued
+          ? "This claim's summary has been issued. A summary is issued once per claim."
+          : !closed
+            ? "The claim summary can be issued once the claim is paid or rejected."
+            : null,
+        hideWhenBlocked: issued,
       }}
       {...props}
     />
   );
 }
 
-/** Documents filed on one policy: the generated policy schedule, viewed and downloaded like claim documents. */
+/**
+ * Documents filed on one policy: its policy schedule, viewed and downloaded like claim documents. The schedule is
+ * issued once per policy, after the first premium starts cover; a new or renewed policy gets its own.
+ */
 export function PolicyDocuments({ policy, ...props }) {
+  const issued = (policy.documents || []).some((d) => d.type === "Policy schedule");
   return (
     <DocumentsPanel
       record={policy}
@@ -178,9 +198,15 @@ export function PolicyDocuments({ policy, ...props }) {
       canUpload={false}
       generate={{
         slug: "schedule",
-        label: "Generate policy schedule",
-        hint: "A PDF of the policy, cover, covered lives, beneficiaries and history as they stand now.",
-        done: "Policy schedule generated.",
+        label: "Issue policy schedule",
+        hint: "A one-time PDF setting out this policy's cover, premium, covered lives, beneficiaries and terms.",
+        done: "Policy schedule issued.",
+        blocked: issued
+          ? "This policy's schedule has been issued. A schedule is issued once per policy; a new or renewed policy gets its own."
+          : !policy.coverStartDate
+            ? "The policy schedule can be issued once the first premium is paid and cover starts."
+            : null,
+        hideWhenBlocked: issued,
       }}
       {...props}
     />
@@ -264,14 +290,15 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
 
   return (
     <div className="wf-docs">
-      {canGenerate && (
+      {canGenerate && !(generate.blocked && generate.hideWhenBlocked) && (
         <div className="wf-doc-generate">
-          <Btn variant="secondary" icon={FileText} disabled={busy} onClick={runGenerate}>
+          <Btn variant="secondary" icon={FileText} disabled={busy || !!generate.blocked} onClick={runGenerate}>
             {generate.label}
           </Btn>
-          <small className="muted">{generate.hint}</small>
+          <small className="muted">{generate.blocked || generate.hint}</small>
         </div>
       )}
+      {generate.blocked && generate.hideWhenBlocked && <p className="muted small">{generate.blocked}</p>}
       {documents.length === 0 ? (
         <p className="muted small">No documents on file yet.</p>
       ) : (
@@ -604,8 +631,19 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const confirm = useConfirm();
   const [editPayee, setEditPayee] = useState(false);
   const [payout, setPayout] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
   const open = OPEN_CLAIM.includes(c.status);
   const can = (action) => c.actions?.includes(action);
+  const result = (name) => c.checks?.find((check) => check.name === name)?.result;
+  const hardFailed = HARD_CHECKS.filter((name) => result(name) === "Fail");
+  const notChecked = HARD_CHECKS.some((name) => result(name) === "Pending");
+  const softFailed = SOFT_CHECKS.filter((name) => result(name) === "Fail");
+  // Why the claim cannot move towards payout; the server refuses the same cases.
+  const blocked = hardFailed.length
+    ? hardFailed.join(", ") + " failed, so there was no valid cover for this event. This claim can only be rejected."
+    : notChecked
+      ? "The checks have not run on this claim. Re-run the checks before it can be assessed or approved."
+      : null;
   const call = (path, options, done) =>
     run(async () => {
       const result = await request(session, "/portfolio/claims/" + c.id + path, options);
@@ -631,9 +669,38 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           <p>{c.description}</p>
         </div>
       )}
-      <h3 className="section-title">Straight-through checks</h3>
+      {c.auditFlag && (
+        <div className="notice wf-alert">
+          <CircleX size={18} aria-hidden="true" />
+          <p>
+            <strong>Needs audit.</strong> {c.auditFlag}. This claim went through before these checks blocked
+            approval; review whether the payout was due.
+          </p>
+        </div>
+      )}
+      <h3 className="section-title">Checks</h3>
       <ClaimChecks checks={c.checks} />
+      <p className="muted small">
+        All five passing pays the claim straight through. If Policy Active, Waiting Period or Premiums Paid fails,
+        the claim can only be rejected; if Beneficiary Match or No Duplicate fails, it can be approved with a reason.
+      </p>
       {c.stpIneligibleReason && <p className="muted small">Not straight-through: {c.stpIneligibleReason}.</p>}
+      {c.checks?.every((check) => check.result === "Not run") && (
+        <p className="muted small">
+          The checks never ran on this claim: it was recorded before the claim checks existed
+          {[!c.eventDate && "no date of the event", !c.policy && "no linked policy"].filter(Boolean).length
+            ? ", with " +
+              [!c.eventDate && "no date of the event", !c.policy && "no linked policy"].filter(Boolean).join(" and ")
+            : ""}
+          , so there is nothing to check it against.
+        </p>
+      )}
+      {open && blocked && (
+        <div className="notice wf-alert">
+          <CircleX size={18} aria-hidden="true" />
+          <p>{blocked} If the policy or claim details were wrong, correct them and re-run the checks.</p>
+        </div>
+      )}
 
       <h3 className="section-title">Payee</h3>
       {editPayee ? (
@@ -726,6 +793,11 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               : ""}
         </p>
       )}
+      {c.checkOverrideReason && (
+        <p className="muted small">
+          Approved although {softFailed.join(" and ") || "a check"} failed: {c.checkOverrideReason}
+        </p>
+      )}
       {c.status === "Rejected" && (
         <div className="notice">
           <X size={18} aria-hidden="true" />
@@ -752,12 +824,25 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         {can("assess") && profile?.canAssessClaims && (
           <Btn
             icon={BadgeCheck}
-            disabled={busy || !payeeComplete}
-            title={payeeComplete ? undefined : "Add the payee first"}
+            disabled={busy || !payeeComplete || !!blocked}
+            title={blocked || (payeeComplete ? undefined : "Add the payee first")}
             onClick={() => call("/assess", { method: "POST", body: {} }, c.id + " is recommended for approval.")}
           >
             Assess &amp; recommend
           </Btn>
+        )}
+        {can("approve") && profile?.canApproveClaims && !blocked && softFailed.length > 0 && (
+          <label className="form-label wf-override">
+            <span>Reason for approving although {softFailed.join(" and ")} failed</span>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              placeholder="e.g. Payee verified against the death certificate"
+            />
+          </label>
         )}
         {can("approve") && profile?.canApproveClaims && (
           <span className="wf-pay">
@@ -773,7 +858,11 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             />
             <Btn
               icon={Check}
-              disabled={busy}
+              disabled={busy || !!blocked || (softFailed.length > 0 && !overrideReason.trim())}
+              title={
+                blocked ||
+                (softFailed.length > 0 && !overrideReason.trim() ? "Enter the reason for approving first" : undefined)
+              }
               onClick={async () => {
                 const amount = payout ? Number(payout) : c.amount;
                 const ok = await confirm({
@@ -793,7 +882,13 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
                 if (!ok) return;
                 call(
                   "/approve",
-                  { method: "POST", body: payout ? { payoutAmount: Number(payout) } : {} },
+                  {
+                    method: "POST",
+                    body: {
+                      ...(payout ? { payoutAmount: Number(payout) } : {}),
+                      ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
+                    },
+                  },
                   c.id + " is approved.",
                 );
               }}
