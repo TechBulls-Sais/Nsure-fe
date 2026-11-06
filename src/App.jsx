@@ -562,6 +562,11 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
               {busy ? "Signing in…" : customerLogin ? "Sign in" : "Enter workspace"}
             </Button>
           </form>
+          {customerLogin && (
+            <p className="signup-link">
+              New to Nsure? <a href="#/signup">Create an account</a>
+            </p>
+          )}
           <div className="notice">
             <Icon name="ShieldCheck" />
             <p>
@@ -833,6 +838,9 @@ export default function App() {
   if (!loggedIn) {
     const publicPages = ["overview", "home", "cover", "how-it-works", "questions"];
     if (publicPages.includes(page)) return <LandingPage section={page} />;
+    if (page === "signup") {
+      return <CustomerSignup onLogin={(next) => { setSession(next); go("overview"); }} />;
+    }
     return <Login
       key={page}
       initialAudience={page === "login/customer" ? "customer" : "staff"}
@@ -2813,6 +2821,301 @@ function CustomerDirectory({
     </div>
   );
 }
+/** Botswana's flag drawn inline: Windows shows flag emoji as plain letters. */
+function BotswanaFlag() {
+  return (
+    <svg className="flag" viewBox="0 0 36 24" aria-hidden="true">
+      <rect width="36" height="24" fill="#75AADB" />
+      <rect y="9" width="36" height="6" fill="#fff" />
+      <rect y="10" width="36" height="4" fill="#000" />
+    </svg>
+  );
+}
+
+const BW_DIAL_CODE = "+267";
+
+/**
+ * Phone number with the Botswana country code fixed in front. The customer types only the local number; the form
+ * posts "+267 <number>" as phone, the same shape staff records already use.
+ */
+function BotswanaPhoneInput({ defaultValue = "", autoComplete }) {
+  const [local, setLocal] = useState(() =>
+    String(defaultValue || "").replace(/^\s*\+?267/, "").replace(/\D/g, ""),
+  );
+  return (
+    <div className="phone-field">
+      <span className="phone-prefix" title="Botswana">
+        <BotswanaFlag />
+        {BW_DIAL_CODE}
+      </span>
+      <input
+        className="input"
+        type="tel"
+        inputMode="numeric"
+        placeholder="71 234 567"
+        required
+        pattern="\d{7,8}"
+        title="7 or 8 digits, without the +267 country code"
+        aria-label="Phone number without country code"
+        value={local}
+        onChange={(e) => setLocal(e.target.value.replace(/\D/g, "").slice(0, 8))}
+        autoComplete={autoComplete}
+      />
+      <input type="hidden" name="phone" value={local ? `${BW_DIAL_CODE} ${local}` : ""} />
+    </div>
+  );
+}
+
+/** The customer details staff enter on Add customer; customer self sign-up asks for exactly the same. */
+function CustomerFields({ values = {}, self = false }) {
+  return (
+    <div className="field-grid">
+      <Field label="Full name" full>
+        <input
+          name="name"
+          className="input"
+          placeholder="e.g. Dineo Motsumi"
+          required
+          minLength={2}
+          defaultValue={values.name}
+          autoComplete={self ? "name" : "off"}
+        />
+      </Field>
+      <Field label="Email address">
+        <input
+          name="email"
+          className="input"
+          type="email"
+          placeholder="dineo@example.com"
+          required
+          defaultValue={values.email}
+          autoComplete={self ? "email" : "off"}
+        />
+      </Field>
+      <Field label="Phone number">
+        <BotswanaPhoneInput defaultValue={values.phone} autoComplete={self ? "tel-national" : "off"} />
+      </Field>
+      <Field label="Proof of identity type">
+        <select name="poiType" className="input" defaultValue={values.poiType || "Omang"} required>
+          <option value="Omang">Omang</option>
+          <option value="Passport">Passport</option>
+        </select>
+      </Field>
+      <Field label="Proof of identity number">
+        <input
+          name="poiNumber"
+          className="input"
+          placeholder="e.g. 880618404"
+          required
+          minLength={5}
+          maxLength={40}
+          defaultValue={values.poiNumber}
+        />
+      </Field>
+      <Field label="Date of birth">
+        <input
+          name="dateOfBirth"
+          className="input"
+          type="date"
+          max={new Date().toISOString().slice(0, 10)}
+          required
+          defaultValue={values.dateOfBirth}
+        />
+      </Field>
+      <Field label={self ? "Choose a username" : "Sign-in username"}>
+        <input
+          name="username"
+          className="input"
+          placeholder="e.g. dineo"
+          required
+          minLength={3}
+          pattern="[A-Za-z0-9._\-]{3,100}"
+          title="3–100 letters, numbers, dots, or hyphens"
+          defaultValue={values.username}
+          autoComplete={self ? "username" : "off"}
+        />
+      </Field>
+      <Field label={self ? "Choose a password" : "Sign-in password"}>
+        <input
+          name="password"
+          className="input"
+          type="password"
+          placeholder="At least 8 characters"
+          required
+          minLength={8}
+          defaultValue={values.password}
+          autoComplete="new-password"
+        />
+      </Field>
+      <label className="form-label full">
+        <span>
+          <input type="checkbox" name="pep" defaultChecked={Boolean(values.pep)} />{" "}
+          {self
+            ? "I am a politically exposed person (PEP): my account needs an enhanced due diligence review before I choose cover"
+            : "Politically exposed person (PEP): needs an enhanced due diligence review before choosing cover"}
+        </span>
+      </label>
+    </div>
+  );
+}
+
+/** Demo build: no SMS or email gateway, so the server accepts this fixed code for every sign-up. */
+const SIGNUP_OTP_HINT = "123456";
+
+function CustomerSignup({ onLogin }) {
+  const [step, setStep] = useState("details");
+  const [details, setDetails] = useState({});
+  const [sentTo, setSentTo] = useState(null);
+  const [otp, setOtp] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const sendCode = async (next) => {
+    setError("");
+    setBusy(true);
+    try {
+      const sent = await request(null, "/public/signup/otp", { method: "POST", body: next });
+      setSentTo(sent.data);
+      setOtp("");
+      setStep("otp");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async () => {
+    setError("");
+    setBusy(true);
+    try {
+      const created = await request(null, "/public/signup", {
+        method: "POST",
+        body: { ...details, otp },
+      });
+      const session = { username: created.data.loginUsername, password: details.password };
+      await request(session, "/me");
+      sessionStorage.setItem("nsure-session", JSON.stringify(session));
+      onLogin(session);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="login-page">
+      <section className="login-story">
+        <div className="brand">
+          <img className="brand-logo" src="/brand/nsure-life-logo-light.svg" alt="Nsure Life" />
+        </div>
+        <div className="login-story-content">
+          <span className="demo-pill">Customer sign-up</span>
+          <h1>
+            Create your account,
+            <br />
+            and <em>request your cover.</em>
+          </h1>
+          <p>Tell us who you are, confirm your phone with a one-time code, and you are in.</p>
+          <img className="login-photo" src="/products/term-life.jpg" alt="A family together at home" />
+        </div>
+        <p className="login-note">Nsure © 2026 · Frontend showcase</p>
+      </section>
+      <section className="login-card">
+        <div className="login-form signup-form">
+          <a className="login-home-link" href="#/login/customer">← Back to sign-in</a>
+          <ol className="signup-steps" aria-label="Sign-up steps">
+            <li className={step === "details" ? "active" : "done"}>Your details</li>
+            <li className={step === "otp" ? "active" : ""}>Verify</li>
+          </ol>
+          {step === "details" ? (
+            <>
+              <h2>Create your account</h2>
+              <p className="subtitle">
+                The same details our team takes when they add a customer. You sign in later with the username
+                and password you choose here.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const f = Object.fromEntries(new FormData(e.currentTarget));
+                  const next = { ...f, username: f.username.trim().toLowerCase(), pep: f.pep === "on" };
+                  setDetails(next);
+                  sendCode(next);
+                }}
+              >
+                <CustomerFields values={details} self />
+                {error && <p className="form-error">{error}</p>}
+                <div className="login-hint">
+                  <Icon name="Info" small /> New accounts start with pending verification (KYC).
+                </div>
+                <Button type="submit" icon="ArrowRight" disabled={busy}>
+                  {busy ? "Sending code…" : "Send verification code"}
+                </Button>
+              </form>
+            </>
+          ) : (
+            <>
+              <h2>Enter your code</h2>
+              <p className="subtitle">
+                We sent a 6-digit code to your phone {sentTo?.sentTo} and to {sentTo?.email}.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  verify();
+                }}
+              >
+                <Field label="Verification code">
+                  <input
+                    className="input otp-input"
+                    required
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="\d{6}"
+                    maxLength={6}
+                    title="6 digits"
+                    placeholder="••••••"
+                    value={otp}
+                    autoFocus
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  />
+                </Field>
+                {error && <p className="form-error">{error}</p>}
+                <div className="login-hint">
+                  <Icon name="Info" small /> Demo build: the code is always {SIGNUP_OTP_HINT}.
+                </div>
+                <Button type="submit" icon="ArrowRight" disabled={busy || otp.length !== 6}>
+                  {busy ? "Creating account…" : "Verify and create account"}
+                </Button>
+              </form>
+              <div className="signup-otp-actions">
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => {
+                    setError("");
+                    setStep("details");
+                  }}
+                >
+                  ← Change details
+                </button>
+                <button type="button" className="link-button" disabled={busy} onClick={() => sendCode(details)}>
+                  Resend code
+                </button>
+              </div>
+            </>
+          )}
+          <p className="login-note">
+            Already have an account? <a href="#/login/customer">Sign in</a>
+          </p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function CustomerForm({ onSave, onCancel }) {
   return (
     <form
@@ -2825,87 +3128,7 @@ function CustomerForm({ onSave, onCancel }) {
       <p className="subtitle">
         The username and password are what this customer uses on the Customer sign-in.
       </p>
-      <div className="field-grid">
-        <Field label="Full name" full>
-          <input
-            name="name"
-            className="input"
-            placeholder="e.g. Dineo Motsumi"
-            required
-            minLength={2}
-          />
-        </Field>
-        <Field label="Email address">
-          <input
-            name="email"
-            className="input"
-            type="email"
-            placeholder="dineo@example.com"
-            required
-          />
-        </Field>
-        <Field label="Phone number">
-          <input
-            name="phone"
-            className="input"
-            type="tel"
-            placeholder="+267 71 234 567"
-            required
-          />
-        </Field>
-        <Field label="Proof of identity type">
-          <select name="poiType" className="input" defaultValue="Omang" required>
-            <option value="Omang">Omang</option>
-            <option value="Passport">Passport</option>
-          </select>
-        </Field>
-        <Field label="Proof of identity number">
-          <input
-            name="poiNumber"
-            className="input"
-            placeholder="e.g. 880618404"
-            required
-            minLength={5}
-            maxLength={40}
-          />
-        </Field>
-        <Field label="Date of birth">
-          <input
-            name="dateOfBirth"
-            className="input"
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
-            required
-          />
-        </Field>
-        <Field label="Sign-in username">
-          <input
-            name="username"
-            className="input"
-            placeholder="e.g. dineo"
-            required
-            minLength={3}
-            autoComplete="off"
-          />
-        </Field>
-        <Field label="Sign-in password">
-          <input
-            name="password"
-            className="input"
-            type="password"
-            placeholder="At least 8 characters"
-            required
-            minLength={8}
-            autoComplete="new-password"
-          />
-        </Field>
-        <label className="form-label full">
-          <span>
-            <input type="checkbox" name="pep" /> Politically exposed person (PEP): needs an enhanced due diligence
-            review before choosing cover
-          </span>
-        </label>
-      </div>
+      <CustomerFields />
       <div className="notice">
         <Icon name="Info" />
         <p>

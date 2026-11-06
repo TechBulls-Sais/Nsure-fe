@@ -2473,6 +2473,128 @@ p {
   text-align: center;
   font-size: 13px;
 }
+.login-form > .login-note a,
+.signup-link a {
+  color: var(--green);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.signup-link {
+  margin: 18px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: light-dark(#3c4236, oklch(0.86 0.047 127));
+}
+/* Phone number with the fixed +267 Botswana country code in front. */
+.phone-field {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+.phone-field .phone-prefix {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: light-dark(#2d452a, oklch(0.86 0.066 142));
+  background: light-dark(#f2f5ec, oklch(0.26 0.008 110));
+  border: 1px solid light-dark(#e2e8dc, oklch(0.332 0.01 129));
+  border-right: 0;
+  border-radius: 7px 0 0 7px;
+}
+.phone-field .flag {
+  width: 21px;
+  height: 14px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.12);
+}
+.phone-field .input {
+  flex: 1;
+  min-width: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+/* Sign-up holds the whole Add customer form: two columns need more room than sign-in. */
+.login-form.signup-form {
+  max-width: 560px;
+}
+.signup-form .form-label input[type="checkbox"] {
+  accent-color: var(--green);
+  margin-right: 6px;
+}
+.signup-steps {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 18px;
+  counter-reset: signup-step;
+  font-size: 12px;
+}
+.signup-steps li {
+  counter-increment: signup-step;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px 5px 6px;
+  border-radius: 999px;
+  border: 1px solid light-dark(#dfe5d4, oklch(0.327 0.012 122));
+  color: light-dark(#5a6355, oklch(0.78 0.03 128));
+}
+.signup-steps li::before {
+  content: counter(signup-step);
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  background: light-dark(#e5eadb, oklch(0.327 0.012 122));
+}
+.signup-steps li.active {
+  border-color: var(--green);
+  color: var(--green);
+  font-weight: 600;
+}
+.signup-steps li.active::before,
+.signup-steps li.done::before {
+  background: var(--green);
+  color: light-dark(#fff, oklch(0.191 0.004 118));
+}
+.signup-steps li.done::before {
+  content: "✓";
+}
+.login-form .input.otp-input {
+  height: 54px;
+  font-size: 24px;
+  letter-spacing: 0.6em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.signup-otp-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+.signup-otp-actions .link-button {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--green);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.signup-otp-actions .link-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .compact .data-table td {
   padding-top: 9px;
   padding-bottom: 9px;
