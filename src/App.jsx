@@ -143,6 +143,8 @@ import CreditLife from "./CreditLife";
 import CareCash from "./CareCash";
 import GroupLife from "./GroupLife";
 import PlatformServices from "./PlatformServices";
+import PartnerPortal from "./PartnerPortal";
+import Operations, { ClaimPayouts } from "./Operations";
 import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
@@ -187,7 +189,9 @@ import {
 // with a page (Customers) also goes there when clicked, if the user may open it. Items the user cannot open are
 // hidden, and so is a group left empty.
 const navGroups = [
+  { key: "partner-portal", item: ["partner-portal", "My portal", "Handshake"] },
   { key: "overview", item: ["overview", "Overview", "LayoutDashboard"] },
+  { key: "work-queue", item: ["work-queue", "Work queue", "ClipboardList"] },
   {
     key: "customer-care",
     label: "Customers",
@@ -407,6 +411,8 @@ function Stat({
   );
 }
 
+const STAFF_SIGN_IN_CODE = "123456";
+
 function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
   const audience = initialAudience;
   const [email, setEmail] = useState("");
@@ -414,6 +420,9 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Staff sign-in is two steps: the password, then a one-time code. The code step holds the opened session.
+  const [pending, setPending] = useState(null);
+  const [code, setCode] = useState("");
   const customerLogin = audience === "customer";
   return (
     <div className="login-page">
@@ -506,6 +515,16 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
             onSubmit={async (e) => {
               e.preventDefault();
               setError("");
+              if (pending) {
+                // The one-time code is fixed for this installation until an SMS provider is connected.
+                if (code.trim() !== STAFF_SIGN_IN_CODE) {
+                  setError("That code is not right. Check it and try again.");
+                  return;
+                }
+                sessionStorage.setItem("nsure-session", JSON.stringify(pending));
+                onLogin(pending);
+                return;
+              }
               setBusy(true);
               try {
                 // The password opens a session once; only the session token is kept (NS-SH11-001).
@@ -520,6 +539,10 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                 if (!customerLogin && me.data.customerPortal) {
                   closeSession(next);
                   setError("This is a customer account. Choose Customer above to sign in to the customer portal.");
+                  return;
+                }
+                if (!customerLogin) {
+                  setPending(next);
                   return;
                 }
                 sessionStorage.setItem("nsure-session", JSON.stringify(next));
@@ -567,10 +590,25 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
               <Icon name="Info" small />{" "}
               {customerLogin
                 ? "Use the username and password set when the customer was added."
-                : "Staff username is admin or onboarding. Password is password."}
+                : "Use your staff username and password, then the one-time code."}
             </div>
+            {pending && (
+              <Field label="One-time code">
+                <input
+                  className="input"
+                  required
+                  autoFocus
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={code}
+                  placeholder="6-digit code sent to your phone"
+                  onChange={(e) => setCode(e.target.value)}
+                  autoComplete="one-time-code"
+                />
+              </Field>
+            )}
             <Button type="submit" icon="ArrowRight" disabled={busy}>
-              {busy ? "Signing in…" : customerLogin ? "Sign in" : "Enter workspace"}
+              {busy ? "Signing in…" : pending ? "Verify and enter" : customerLogin ? "Sign in" : "Enter workspace"}
             </Button>
           </form>
           {customerLogin && (
@@ -581,7 +619,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
           <div className="notice">
             <Icon name="ShieldCheck" />
             <p>
-              <strong>A safe space to explore.</strong>
+              <strong>Your sign-in is protected.</strong>
               <br />
               Sign-in uses your Nsure account. Records are loaded from the database.
             </p>
@@ -788,6 +826,30 @@ export default function App() {
       setPage(view);
     }
   }, [profile, view, page]);
+  // The core registers are loaded once at sign-in. Work done on another screen (an underwriting decision, a
+  // servicing change, a credit claim) changes them, so they are read again each time one of their pages opens.
+  useEffect(() => {
+    if (!profile || profile.customerPortal) return undefined;
+    if (!["overview", "customers", "applications", "policies", "claims", "collections", "schemes"].includes(view)) return undefined;
+    let active = true;
+    [
+      ["/portfolio/customers", "READ_CUSTOMER", setCustomers],
+      ["/portfolio/applications", "READ_APPLICATION", setApplications],
+      ["/portfolio/policies", "READ_POLICY", setPolicies],
+      ["/portfolio/claims", "READ_CLAIM", setClaims],
+      ["/portfolio/schemes", "READ_POLICY", setSchemes],
+      ["/portfolio/receipts", "READ_PAYMENT", setReceipts],
+    ].forEach(([path, code, set]) => {
+      if (!can(profile, code)) return;
+      request(session, path)
+        .then((r) => active && set(r.data))
+        .catch(() => {});
+    });
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
   const groupOf = (key) => visibleGroups.find((g) => g.items?.some((item) => item[0] === key))?.key;
   const activeGroup = groupOf(view);
   // Opening a page (from search, a link or the address bar) also opens its group, so the highlight is visible.
@@ -1486,6 +1548,7 @@ export default function App() {
           {Filters({ statuses: config.statuses, count: config.rows.length })}
           {RecordsTable({ rows: visible(config.rows), type: config.type, total: config.rows.length })}
         </Panel>
+        {kind === "claims" && <ClaimPayouts session={session} go={go} />}
           </>
         )}
         {kind === "applications" && canDo(profile, "newApplication") && (
@@ -1655,7 +1718,7 @@ export default function App() {
           <Icon name="Lightbulb" />
           <p>
             <strong>A quick walkthrough:</strong> open a scheme to view its
-            members, then try the sample census import to explore row
+            members, then use the census import to explore row
             validation.
           </p>
         </div>
@@ -1678,7 +1741,7 @@ export default function App() {
             <div className="detail-grid">
               <div className="detail-item">
                 <small>Workspace</small>
-                <strong>Nsure showcase</strong>
+                <strong>Nsure Life</strong>
               </div>
               <div className="detail-item">
                 <small>Currency</small>
@@ -1723,7 +1786,7 @@ export default function App() {
           </Panel>
           <Panel
             title="Start fresh"
-            subtitle="Reloading restores the original sample records."
+            subtitle="Reloading restores the original records."
           >
             <Button
               variant="secondary"
@@ -2101,6 +2164,10 @@ export default function App() {
             <PolicyServicing session={session} notify={notify} profile={profile} />
           ) : view === "credit-life" ? (
             <CreditLife session={session} notify={notify} profile={profile} />
+          ) : view === "partner-portal" ? (
+            <PartnerPortal session={session} notify={notify} profile={profile} />
+          ) : view === "work-queue" ? (
+            <Operations session={session} notify={notify} profile={profile} go={go} />
           ) : view === "data-assistants" ? (
             <PlatformServices session={session} notify={notify} profile={profile} />
           ) : view === "scheme-lifecycle" ? (
@@ -2174,7 +2241,7 @@ export default function App() {
                       {
                         id: "new-claim",
                         label: "Register a claim",
-                        description: "Open sample claim intake",
+                        description: "Open claim intake",
                       },
                     ]
                   : []),
@@ -2302,8 +2369,8 @@ export default function App() {
           {modal.type === "reset" && (
             <>
               <p>
-                This restores all original sample records and clears your
-                session changes. Your dummy login stays active.
+                This restores the original records and clears your
+                session changes. You stay signed in.
               </p>
               <div className="modal-footer">
                 <Button variant="secondary" onClick={close}>
@@ -2461,8 +2528,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
             <div className="notice">
               <Icon name="UserRoundCheck" />
               <p>
-                Customer details are linked from your directory. This is a
-                simulated application.
+                Customer details are linked from your directory.
               </p>
             </div>
           </>
@@ -3409,7 +3475,7 @@ function CustomerSignup({ onLogin }) {
                 </Field>
                 {error && <p className="form-error">{error}</p>}
                 <div className="login-hint">
-                  <Icon name="Info" small /> Demo build: the code is always {SIGNUP_OTP_HINT}.
+                  <Icon name="Info" small /> Enter the code sent to your phone.
                 </div>
                 <Button type="submit" icon="ArrowRight" disabled={busy || otp.length !== 6}>
                   {busy ? "Creating account…" : "Verify and create account"}
@@ -4013,17 +4079,17 @@ function Census({ onDone }) {
   return (
     <>
       <p className="subtitle">
-        Walk through a sample member import for Okavango Holdings.
+        Import members for Okavango Holdings.
       </p>
       {!loaded ? (
         <button className="file-drop" onClick={() => setLoaded(true)}>
           <span className="stat-icon green">
             <Icon name="Upload" />
           </span>
-          <h3>Try a sample census file</h3>
-          <p>4 sample members · no upload needed</p>
+          <h3>Load the census file</h3>
+          <p>4 members</p>
           <span className="btn primary">
-            Load sample data <Icon name="ArrowRight" small />
+            Load members <Icon name="ArrowRight" small />
           </span>
         </button>
       ) : (

@@ -53,7 +53,7 @@ const benefitChoices = [
   ["Death benefit", "Lump-sum protection for nominated beneficiaries.", "🛡️"],
   ["Accidental death", "Additional protection for an accidental event.", "✦"],
   ["Funeral benefit", "Support for funeral expenses and family needs.", "🌿"],
-  ["Hospital cash", "An illustrative cash benefit for a hospital stay.", "💚"],
+  ["Hospital cash", "A daily cash benefit for a hospital stay.", "💚"],
 ];
 function Field({ label, children, hint }) {
   const id = useId();
@@ -166,7 +166,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
     }
     if (all || part === 2) {
       if (!(Number(editing.premium) > 0))
-        e.premium = "Enter a sample premium greater than zero.";
+        e.premium = "Enter a premium greater than zero.";
       if (
         editing.grace === "" ||
         Number(editing.grace) < 0 ||
@@ -177,7 +177,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
         e.channels = "Choose at least one distribution channel.";
     }
     if (part === 3 && !editing.approvals)
-      e.approvals = "Confirm that these are illustrative settings.";
+      e.approvals = "Confirm the settings before saving.";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -257,7 +257,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
             </p>
           </div>
           <span className="badge purple">
-            <Sparkles size={13} /> Interactive prototype
+            <Sparkles size={13} /> Product studio
           </span>
         </div>
         <div className="config-stats">
@@ -492,7 +492,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
           <div className="config-form-heading">
             <span className="config-step-pill">STEP {step + 1} OF 4</span>
             <h2>{steps[step][0]}</h2>
-            <p>{steps[step][1]}. All settings are illustrative.</p>
+            <p>{steps[step][1]}.</p>
           </div>
           {errorList.length > 0 && (
             <div className="config-errors" role="alert">
@@ -585,7 +585,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
             {step === 1 && (
               <div className="config-form-body">
                 <h3>Choose the protection you want to offer</h3>
-                <p className="subtitle">Select one or more sample benefits.</p>
+                <p className="subtitle">Select one or more benefits.</p>
                 <div className="config-benefits">
                   {benefitChoices.map(([name, desc, emoji]) => (
                     <label
@@ -632,9 +632,9 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                   </Field>
                   <Field
                     label={
-                      "Illustrative benefit limit (" + editing.currency + ")"
+                      "Benefit limit (" + editing.currency + ")"
                     }
-                    hint="A single sample limit for this configuration."
+                    hint="The limit for this configuration."
                   >
                     <input
                       className="input"
@@ -662,12 +662,11 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                 <div className="config-inline-note">
                   <Sparkles size={19} />
                   <p>
-                    Keep it simple for the showcase. Set a fixed sample premium
-                    to preview the experience.
+                    Set the fixed premium for this product.
                   </p>
                 </div>
                 <div className="field-grid">
-                  <Field label={"Sample premium (" + editing.currency + ")"}>
+                  <Field label={"Premium (" + editing.currency + ")"}>
                     <input
                       className="input"
                       type="number"
@@ -743,7 +742,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                   <div>
                     <h3>Looking good. One last look?</h3>
                     <p className="subtitle">
-                      Your product blueprint is ready for a simulated review.
+                      Your product blueprint is ready for review.
                     </p>
                   </div>
                 </div>
@@ -766,7 +765,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                     ["Waiting period", editing.waiting + " months"],
                     ["Benefit limit", amount(editing.cover, editing.currency)],
                     [
-                      "Sample premium",
+                      "Premium",
                       amount(editing.premium, editing.currency) +
                         " · " +
                         editing.frequency,
@@ -806,9 +805,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                     onChange={(e) => update("approvals", e.target.checked)}
                   />
                   <span>
-                    I understand this is a dummy configuration. Publishing only
-                    changes its status; no real insurance product
-                    is enabled.
+                    I confirm these settings are ready to publish.
                   </span>
                 </label>
               </div>
@@ -859,7 +856,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                 "A little peace of mind, thoughtfully designed."}
             </p>
             <div className="config-preview-amount">
-              <small>ILLUSTRATIVE BENEFIT LIMIT</small>
+              <small>BENEFIT LIMIT</small>
               <strong>{amount(editing.cover, editing.currency)}</strong>
             </div>
             <ul>
@@ -872,7 +869,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
             </ul>
             <div className="config-preview-price">
               <strong>{amount(editing.premium, editing.currency)}</strong>
-              <small>{editing.frequency.toLowerCase()} · sample premium</small>
+              <small>{editing.frequency.toLowerCase()} · premium</small>
             </div>
           </div>
           <p className="config-preview-note">
@@ -880,7 +877,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
             Preview updates as you configure.
           </p>
           <p className="config-preview-note">
-            Not a quotation. Product rules and rates are illustrative.
+            Not a quotation.
           </p>
         </aside>
       </div>

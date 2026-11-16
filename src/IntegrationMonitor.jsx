@@ -251,7 +251,7 @@ function Inbound({ session, notify, profile, onChange }) {
     <>
       {form && (
         <Drawer
-          title="Simulate a payment confirmation"
+          title="Record a payment confirmation"
           description="What a bank or wallet callback does. Premium is collected only when the provider confirms it holds the money; repeating a provider reference returns the first result."
           onClose={() => setForm(null)}
         >
@@ -284,7 +284,7 @@ function Inbound({ session, notify, profile, onChange }) {
                 checked={form.providerHolds}
                 onChange={(e) => setForm({ ...form, providerHolds: e.target.checked })}
               />
-              The provider has received this money (simulated provider record)
+              The provider has received this money
             </label>
           </FormGrid>
         </Drawer>
@@ -294,7 +294,7 @@ function Inbound({ session, notify, profile, onChange }) {
         action={
           can(profile, "MANAGE_INTEGRATION") && (
             <Button icon={Plus} onClick={() => setForm(blankConfirmation())}>
-              Simulate confirmation
+              Record confirmation
             </Button>
           )
         }
@@ -304,7 +304,7 @@ function Inbound({ session, notify, profile, onChange }) {
           rows={inbound.data}
           loading={inbound.loading}
           empty="No confirmations received"
-          emptyDetail="Confirmations arrive from bank and wallet callbacks; simulate one to see how it is applied."
+          emptyDetail="Confirmations arrive from bank and wallet callbacks; record one to see how it is applied."
           searchPlaceholder="Search provider, reference, policy, outcome…"
           columns={[
             { key: "receivedAt", label: "Received", render: (r) => when(r.receivedAt) },

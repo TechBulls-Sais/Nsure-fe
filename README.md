@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5180. Dev login is username `admin` and password `password`.
+Open http://127.0.0.1:5180. Dev login is username `admin` and password `password`. Staff sign-in then asks for a one-time code; no SMS or email gateway is connected, so the code is fixed at `123456` (`STAFF_SIGN_IN_CODE` in `src/App.jsx`). Partner logins `agent`, `employer` and `lender` (same password and code) open the partner portal only.
 
 ```sh
 npm run build

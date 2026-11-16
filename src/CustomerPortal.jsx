@@ -1038,8 +1038,7 @@ export default function CustomerPortal({
             })}
           </div>
           <p className="customer-pricing-note">
-            All amounts are in Botswana Pula (BWP). Premiums shown are
-            illustrative.
+            All amounts are in Botswana Pula (BWP).
           </p>
           {!visibleProducts.length && (
             <p className="subtitle">No products match that need right now.</p>

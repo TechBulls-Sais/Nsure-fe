@@ -6,7 +6,9 @@ import { can } from "./ui/workspace";
 // renders a page the user cannot use. Holding any one listed code opens the page; an empty list means any staff user.
 // The order is the sidebar's, and the landing page is the first one the user may open.
 export const PAGE_ACCESS = {
+  "partner-portal": ["USE_PARTNER_PORTAL"],
   overview: ["READ_DASHBOARD"],
+  "work-queue": [],
   customers: ["READ_CUSTOMER"],
   applications: ["READ_APPLICATION"],
   underwriting: ["READ_UNDERWRITING"],
@@ -62,9 +64,15 @@ export const canAny = (profile, codes) => codes.some((code) => can(profile, code
 
 export const isWorkspacePage = (page) => Object.prototype.hasOwnProperty.call(PAGE_ACCESS, page);
 
+/** A partner login (agent, employer or lender): it holds the portal permission and no dashboard. */
+export const isPartner = (profile) => can(profile, "USE_PARTNER_PORTAL") && !can(profile, "READ_DASHBOARD");
+
 /** Whether the user may open a workspace page; false for a page the map does not know. */
 export function canOpen(profile, page) {
   if (!isStaff(profile) || !isWorkspacePage(page)) return false;
+  // A partner sees their portal and their own settings; staff never see the partner portal.
+  if (isPartner(profile)) return page === "partner-portal" || page === "settings";
+  if (page === "partner-portal") return false;
   const codes = PAGE_ACCESS[page];
   return codes.length === 0 || canAny(profile, codes);
 }

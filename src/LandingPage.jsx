@@ -626,7 +626,7 @@ export default function LandingPage({ section = "home" }) {
         <div className="lp-footer-bottom">
           <span>© {new Date().getFullYear()} Nsure. Insurance, connected.</span>
           <p>
-            Product information is illustrative. Cover is subject to eligibility
+            Cover is subject to eligibility
             and policy terms.
           </p>
           <a href="#/home">Back to top ↑</a>
