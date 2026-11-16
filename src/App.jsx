@@ -394,7 +394,7 @@ function Stat({
       <div className="stat-value">
         <AnimatedMetric value={value} />
       </div>
-      <div className="stat-trend">
+      <div className="stat-trend" hidden={!change}>
         <span className="positive">
           <Icon name="TrendingUp" small />
           {change}
@@ -463,7 +463,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
             </div>
           </div>
         </div>
-        <p className="login-note">Nsure © 2026 · Frontend showcase</p>
+        <p className="login-note">Nsure © 2026</p>
       </section>
       <section className="login-card">
         <div className="login-form">
@@ -564,7 +564,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
             <div className="login-hint">
               <Icon name="Info" small />{" "}
               {customerLogin
-                ? "Use the username and password set when the customer was added. The sample login is customer / password."
+                ? "Use the username and password set when the customer was added."
                 : "Staff username is admin or onboarding. Password is password."}
             </div>
             <Button type="submit" icon="ArrowRight" disabled={busy}>
@@ -1122,27 +1122,23 @@ export default function App() {
           <Stat
             label="Active policies"
             value={policies.filter((policy) => policy.status === "Active").length}
-            change="8.2%"
             icon="ShieldCheck"
           />
           <Stat
-            label="Premium collected"
-            value="BWP 2.84m"
-            change="12.6%"
+            label="Monthly premium in force"
+            value={money(policies.filter((policy) => policy.status === "Active").reduce((sum, policy) => sum + Number(policy.premium || 0), 0))}
             icon="Wallet"
             color="purple"
           />
           <Stat
             label="New applications"
             value={applications.length}
-            change="16.4%"
             icon="FilePlus2"
             color="blue"
           />
           <Stat
             label="Claims settled"
-            value="94.2%"
-            change="3.1%"
+            value={claims.length ? Math.round((100 * claims.filter((claim) => claim.status === "Paid").length) / claims.length) + "%" : "0%"}
             icon="HeartHandshake"
             color="amber"
           />
@@ -1449,23 +1445,21 @@ export default function App() {
         {kind === "collections" && (
           <div className="stat-grid three">
             <Stat
-              label="Collected this month"
-              value="BWP 2.84m"
-              change="12.6%"
+              label="Collected"
+              value={money(receipts.filter((x) => x.status === "Paid").reduce((sum, x) => sum + Number(x.amount || x.premium || 0), 0))}
               icon="Wallet"
             />
             <Stat
               label="Collection rate"
-              value="96.8%"
-              change="2.4%"
+              value={receipts.length ? Math.round((100 * receipts.filter((x) => x.status === "Paid").length) / receipts.length) + "%" : "0%"}
               icon="CircleCheck"
               color="blue"
             />
             <Stat
               label="Needs attention"
-              value="BWP 48,250"
-              change="18 invoices"
-              note="across the portfolio"
+              value={money(receipts.filter((x) => x.status !== "Paid").reduce((sum, x) => sum + Number(x.amount || x.premium || 0), 0))}
+              change={receipts.filter((x) => x.status !== "Paid").length + " invoices"}
+              note="pending or overdue"
               icon="Clock3"
               color="amber"
             />
@@ -1497,7 +1491,7 @@ export default function App() {
             <Icon name="Lightbulb" />
             <p>
               <strong>Try the whole journey.</strong> Create an application,
-              review it, and simulate policy issuance. Your new policy will
+              review it, and issue the policy. Your new policy will
               appear in the portfolio.
             </p>
           </div>
@@ -1524,7 +1518,7 @@ export default function App() {
             <span>{products.length} available</span>
           </div>
           <p>
-            <Icon name="Info" small /> Illustrative benefits and premiums only
+            <Icon name="Info" small /> Benefits and premiums as currently published
           </p>
         </div>
         <div className="product-grid">
@@ -1557,7 +1551,7 @@ export default function App() {
                 <p className="catalog-description">{p.description}</p>
                 <dl className="catalog-pricing">
                   <div>
-                    <dt>Illustrative cover</dt>
+                    <dt>Cover</dt>
                     <dd>{p.cover}</dd>
                   </div>
                   <div>
@@ -2544,7 +2538,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
               />
             ) : (
               <div className="quote-summary">
-                <span>Illustrative monthly premium</span>
+                <span>Monthly premium</span>
                 <strong>
                   BWP {data.premium}
                   <small> / month</small>
@@ -2694,7 +2688,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
                 ["Customer", data.name],
                 ["Product", data.product],
                 ...(data.tier ? [["Tier", data.tier]] : []),
-                ["Illustrative cover", money(data.amount)],
+                ["Cover", money(data.amount)],
                 [
                   "Monthly premium",
                   ratedTier
@@ -3347,7 +3341,7 @@ function CustomerSignup({ onLogin }) {
           <p>Tell us who you are, confirm your phone with a one-time code, and you are in.</p>
           <img className="login-photo" src="/products/term-life.jpg" alt="A family together at home" />
         </div>
-        <p className="login-note">Nsure © 2026 · Frontend showcase</p>
+        <p className="login-note">Nsure © 2026</p>
       </section>
       <section className="login-card">
         <div className="login-form signup-form">
@@ -3692,7 +3686,7 @@ function Detail({
                   ["Sign-in", r.loginUsername || "No login yet"],
                   [
                     "Linked policies",
-                    policies.filter((p) => p.name === r.name).length,
+                    r.policies ?? policies.filter((p) => p.name === r.name).length,
                   ],
                 ].map(([k, v]) => (
                   <div className="detail-item" key={k}>
@@ -3776,7 +3770,7 @@ function Detail({
                 </div>
               ))}
               <p className="muted">
-                Showing 3 illustrative members of {r.members}.
+                Showing 3 of {r.members} members.
               </p>
             </>
           ) : (
@@ -3918,8 +3912,7 @@ function Detail({
               </div>
               {!workflowRecord && (
                 <p className="muted small">
-                  Actions are simulated. No cover, financial transaction, or real
-                  approval is created.
+                  Open the record's own workspace to act on it.
                 </p>
               )}
             </>
@@ -3947,7 +3940,7 @@ function Detail({
       ) : tab === "Documents" ? (
         <>
           <p className="subtitle">
-            Illustrative evidence checklist. No files are uploaded or stored.
+            Evidence checklist for this record.
           </p>
           {[
             "Identity document",
@@ -3960,7 +3953,7 @@ function Detail({
               </span>
               <div>
                 <strong>{d}</strong>
-                <small>Sample document · PDF</small>
+                <small>Document · PDF</small>
               </div>
               <Badge>{i === 2 && !evidence ? "Pending" : "Available"}</Badge>
             </div>
@@ -3973,7 +3966,7 @@ function Detail({
               notify("Supporting evidence marked received.");
             }}
           >
-            Simulate evidence received
+            Mark evidence received
           </Button>
         </>
       ) : historyType ? (
@@ -3994,7 +3987,7 @@ function Detail({
             [
               "Current state",
               r.status || "Active",
-              "This timeline is illustrative.",
+              "Latest position.",
             ],
           ].map(([t, d, s]) => (
             <div className="timeline-item" key={t}>

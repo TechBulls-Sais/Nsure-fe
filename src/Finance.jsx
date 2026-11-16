@@ -1072,7 +1072,7 @@ function Reconciliation({ session, notify, profile }) {
   const resolve = async () => {
     const done = await action.run(
       () =>
-        request(session, `/collections/reconciliation//resolve`, {
+        request(session, `/collections/reconciliation/${resolving.id}/resolve`, {
           method: "POST",
           body: { resolution: resolving.resolution },
         }),
@@ -1086,7 +1086,7 @@ function Reconciliation({ session, notify, profile }) {
   };
   const assign = async (item, owner) => {
     const done = await action.run(
-      () => request(session, `/collections/reconciliation//assign`, { method: "POST", body: { owner } }),
+      () => request(session, `/collections/reconciliation/${item.id}/assign`, { method: "POST", body: { owner } }),
       "Owner set",
     );
     if (done) open.reload();
