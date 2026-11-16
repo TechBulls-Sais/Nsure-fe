@@ -138,6 +138,7 @@ import Finance from "./Finance";
 import Distribution from "./Distribution";
 import Reinsurance from "./Reinsurance";
 import Underwriting from "./Underwriting";
+import PolicyServicing from "./PolicyServicing";
 import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
@@ -193,6 +194,7 @@ const navGroups = [
       ["applications", "Applications", "FilePlus2"],
       ["underwriting", "Underwriting", "FileSearch"],
       ["policies", "Policies", "ShieldCheck"],
+      ["servicing", "Policy servicing", "ClipboardList"],
       ["claims", "Claims", "HeartHandshake"],
       ["collections", "Collections", "Wallet"],
       ["service-desk", "Service desk", "Headset"],
@@ -2094,6 +2096,8 @@ export default function App() {
             <Reinsurance session={session} notify={notify} profile={profile} />
           ) : view === "underwriting" ? (
             <Underwriting session={session} notify={notify} profile={profile} />
+          ) : view === "servicing" ? (
+            <PolicyServicing session={session} notify={notify} profile={profile} />
           ) : view === "service-desk" ? (
             <ServiceDesk session={session} notify={notify} profile={profile} />
           ) : view === "communications" ? (
