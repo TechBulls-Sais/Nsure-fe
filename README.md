@@ -32,6 +32,15 @@ npm run preview
 
 Tables support search/status filters and CSV export where shown. Details include overview, sample documents, and an illustrative activity timeline. The navigation is responsive and supports browser history via hash routes.
 
+## Access and permissions
+
+What a staff user sees follows the permission codes in `GET /me` (`permissions`; a super admin holds every code), never their role names. `src/access.js` is the one access map: each workspace page and the read code its API checks (for example Claims → `READ_CLAIM`, Controls → `READ_CONTROL`, Access → any of `READ_ROLE`, `READ_USER`, `READ_PERMISSION`). The sidebar, the router, the ⌘K palette and the landing page all read it, so a typed address the user cannot open shows "You don't have access to this page" instead of the page, and a user without `READ_DASHBOARD` lands on the first page they can open. Buttons that write (new application, register a claim, add customer or policy, record receipt, rate grid save, product create/edit/activate, claim assess/approve/reject/pay) show only with the code their endpoint needs. A 401 on any call after sign-in signs the user out.
+
+- **Administration → Access**: opens for anyone holding `READ_ROLE`, `READ_USER` or `READ_PERMISSION`; each tab and action needs its own code. Roles have a desk-access switch (makes holders staff); protected roles such as Policyholder / End User can never get permissions or desk access and cannot be renamed or deleted. Permission codes are fixed in the application: only their label, group and maker-checker flag can be edited. **Approval limits** sets the largest claim payout each role may approve (none = unlimited). A write that needs maker-checker approval shows "Submitted for approval by a second person".
+- **Administration → Controls** (`READ_CONTROL`): operational controls with their state, value, fail mode and change history, the straight-through-processing monitor (rate overall and over 7 days, ineligibility reasons, four-eyes-not-applied register) and per-product STP policies. Changing anything needs `UPDATE_CONTROL`, which no role holds by default, and a written reason.
+- The header bell lists the alerts from `GET /me/alerts` (for example a control switched off).
+- Claims: an assessor cannot approve a claim they assessed (four-eyes) unless they hold `OVERRIDE_CLAIM_FOUR_EYES` and give a break-glass reason, which is recorded on the claim. A payout above the approver's limit is refused with the server's message.
+
 ## Demo boundaries
 
 - All people, records, premiums, cover amounts, metrics, and activity are fictional or illustrative. They are not approved tariffs or contractual promises.

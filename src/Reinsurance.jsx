@@ -65,7 +65,12 @@ export default function Reinsurance({ session, notify, profile }) {
       </div>
       <Tabs
         value={tab}
-        onChange={setTab}
+        onChange={(next) => {
+          // A treaty is approved by someone else and cessions arrive from premium events, so re-read on every tab change.
+          setTab(next);
+          treaties.reload();
+          recoveries.reload();
+        }}
         tabs={[
           ["treaties", "Treaties"],
           ["cessions", "Cessions"],
@@ -225,7 +230,7 @@ function Treaties({ session, notify, profile, resource }) {
       )}
       <Panel
         title="Treaties"
-        subtitle="Only an approved treaty in force cedes. The user who drafts a treaty cannot approve it, except a Super Admin. Approved treaties may not overlap for a product."
+        subtitle="Only an approved treaty in force cedes. The user who drafts a treaty cannot approve it, whatever their role. Approved treaties may not overlap for a product."
         action={
           can(profile, "MANAGE_REINSURANCE") && (
             <Button icon={Plus} onClick={() => setForm(blankTreaty())}>
@@ -283,7 +288,7 @@ function Treaties({ session, notify, profile, resource }) {
               render: (r) =>
                 r.status === "DRAFT" &&
                 can(profile, "APPROVE_TREATY") &&
-                (r.createdBy === me && !profile?.superAdmin ? (
+                (r.createdBy === me ? (
                   <small className="ws-hint">Needs another approver</small>
                 ) : (
                   <Button variant="secondary" icon={CheckCircle2} busy={approve.busy} onClick={() => approveTreaty(r)}>

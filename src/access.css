@@ -1,0 +1,226 @@
+/* Access control UI: the header alerts, the no-access page, Access admin additions and the Controls page. */
+
+/* ── header alerts (bell) ─────────────────────────────────────────────────────────────────────────── */
+.alerts-menu {
+  position: relative;
+  display: inline-flex;
+}
+.alerts-count {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: light-dark(#b42318, oklch(0.7 0.17 27));
+  color: light-dark(#fff, oklch(0.18 0.02 27));
+  border: 2px solid light-dark(#fff, oklch(0.225 0.006 90));
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+}
+.alerts-dropdown {
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+}
+.alerts-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.alerts-head strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+.alerts-head small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.alerts-item {
+  align-items: flex-start;
+}
+div.alerts-item {
+  cursor: default;
+}
+.alerts-item > .icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+.alerts-item.warn > .icon {
+  color: light-dark(#b42318, oklch(0.78 0.15 27));
+}
+.alerts-item .cd-menu-text > span {
+  font-weight: 600;
+}
+.alerts-item .cd-menu-hint {
+  font-weight: 400;
+}
+.alerts-item .cd-menu-hint::before {
+  content: none;
+}
+.alerts-time {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ── Access admin ─────────────────────────────────────────────────────────────────────────────────── */
+.access-capability {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: light-dark(#efe9f9, oklch(0.216 0.016 303));
+  color: light-dark(#48336f, oklch(0.86 0.132 297));
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+.perm-option.locked {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.access-note {
+  margin: 10px 0 0;
+}
+.access-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.access-check input {
+  margin-top: 2px;
+  accent-color: var(--green);
+}
+.access-check small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.access-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Controls page ────────────────────────────────────────────────────────────────────────────────── */
+.ctl-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid light-dark(#f3b8b2, oklch(0.45 0.09 27));
+  background: light-dark(#fdeceb, oklch(0.24 0.04 27));
+  color: light-dark(#7a1b12, oklch(0.88 0.1 27));
+  font-size: 14px;
+}
+.ctl-alert strong {
+  display: block;
+  margin-bottom: 2px;
+}
+.ctl-alert .icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.ctl-name strong {
+  display: block;
+  font-weight: 600;
+}
+.ctl-name small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.ctl-reasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.ctl-reasons li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.ctl-reasons small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+.ctl-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  border-radius: 999px;
+  background: light-dark(#eef0ee, oklch(0.28 0.004 146));
+  overflow: hidden;
+}
+.ctl-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: light-dark(#c2410c, oklch(0.75 0.14 50));
+}
+.ctl-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.ctl-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.ctl-history li {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.ctl-history li strong {
+  display: block;
+}
+.ctl-history li small {
+  color: var(--muted);
+}
+.ctl-history li p {
+  margin: 4px 0 0;
+}
+
+/* ── claim four-eyes break-glass ──────────────────────────────────────────────────────────────────── */
+.wf-break-glass {
+  border-left: 3px solid light-dark(#b42318, oklch(0.7 0.17 27));
+  padding-left: 10px;
+}
+
+/* ── emergency access banner (Nsure Life NS-SH11-003) ─────────────────────────────────────────────── */
+.notice.emergency-banner {
+  margin: 12px 24px 0;
+  border-color: light-dark(#e9c46a, oklch(0.5 0.09 82));
+  background: light-dark(#fdf3cf, oklch(0.205 0.034 94));
+}
+@media (max-width: 720px) {
+  .notice.emergency-banner {
+    margin: 12px 16px 0;
+  }
+}
+.emergency-grant {
+  margin-top: 12px;
+}

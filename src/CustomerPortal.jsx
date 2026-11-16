@@ -25,12 +25,31 @@ import {
   ClaimChecks,
   ClaimDocuments,
   ClaimLodgeForm,
-  PayForm,
+  IN_FORCE_STATES,
+  NO_COVER,
   PolicyDocuments,
   formatDate,
+  noCoverLapsesOn,
 } from "./Workflow";
+import { PaymentResult, PolicyPayment, useDeclarationLock, useDeclaredPolicies } from "./Checkout";
 import { CustomerCases } from "./ServiceDesk";
 import { ThemeSwitch } from "./ui/workspace";
+
+// Beneficiaries can be changed while the purchase is pending and while the policy is in force (with or without cover).
+const BENEFICIARY_STATES = ["Pending Payment", ...IN_FORCE_STATES];
+
+/** The status chip's look: in force, paused (no cover, still payable), or closed. */
+function statusClass(status) {
+  const s = String(status || "").toLowerCase();
+  if (["active", "in force", "in_force"].includes(s)) return " is-active";
+  if (s === NO_COVER.toLowerCase()) return " is-warning";
+  if (s === "claimed") return " is-ended";
+  return "";
+}
+
+const defaultNavigate = (route) => {
+  window.location.hash = "/" + route;
+};
 
 // Products name their "need" icon (need_icon in the database); this maps the name to a component.
 const needIcons = { Users, Infinity, Heart, HeartPulse, Landmark, ShieldCheck };
@@ -57,7 +76,11 @@ export default function CustomerPortal({
   notify,
   onLogout,
   onShop,
+  route = "",
+  onNavigate = defaultNavigate,
 }) {
+  // Back from the card provider: one of the /buy/ result screens instead of the portal's sections.
+  const paymentRoute = route.startsWith("buy/");
   const [scrolled, setScrolled] = useState(false);
   const [activeSection, setActiveSection] = useState("policies");
   const [need, setNeed] = useState("all");
@@ -71,7 +94,10 @@ export default function CustomerPortal({
   const products = shop?.products || [];
   const policies = shop?.policies || [];
   const requests = shop?.requests || [];
-  const monthlyTotal = policies.reduce((sum, policy) => sum + Number(policy.premium || 0), 0);
+  // What the customer pays each month: policies in force (a lapsed or claimed one no longer collects).
+  const monthlyTotal = policies
+    .filter((policy) => IN_FORCE_STATES.includes(policy.status))
+    .reduce((sum, policy) => sum + Number(policy.premium || 0), 0);
   // Spec 01 BR-25: plan selection waits for an open or failed EDD review to clear.
   const eddBlocked = ["PENDING", "FAILED"].includes(customer?.eddStatus);
   const canRequest = verified && !eddBlocked;
@@ -82,6 +108,15 @@ export default function CustomerPortal({
   const [claiming, setClaiming] = useState(false);
   const claims = shop?.claims || [];
   const awaitingPayment = requests.filter((item) => item.status === "Pending Payment");
+  const noCoverPolicies = policies.filter((policy) => policy.status === NO_COVER);
+  // Spec 01 BR-5 / BR-6: the declaration before a first premium, and the payment lock after wrong codes (which also
+  // holds back renewals, so it is loaded whenever there is anything to pay).
+  const [lock, reloadLock] = useDeclarationLock(
+    session,
+    Boolean(shop && !shop.error && (awaitingPayment.length || policies.some((p) => IN_FORCE_STATES.includes(p.status)))),
+  );
+  const [declared, markDeclared] = useDeclaredPolicies(customer?.id);
+  const payProps = { session, lock, reloadLock, onShop, notify, onNavigate, onDeclared: markDeclared };
   const chosenTier = (products.find((product) => product.name === choice)?.tiers || []).find(
     (tier) => tier.name === tierChoice,
   );
@@ -156,10 +191,18 @@ export default function CustomerPortal({
   function scrollToSection(event) {
     event.preventDefault();
     const target = event.currentTarget.getAttribute("href").slice(1);
-    document.getElementById(target)?.scrollIntoView({
-      behavior: scrollBehavior(),
-      block: "start",
-    });
+    const scroll = () =>
+      document.getElementById(target)?.scrollIntoView({
+        behavior: scrollBehavior(),
+        block: "start",
+      });
+    if (paymentRoute) {
+      // On a payment result screen the sections are not shown: go back to the portal, then to the section.
+      onNavigate("overview");
+      window.setTimeout(scroll, 80);
+      return;
+    }
+    scroll();
   }
 
   async function buy(event) {
@@ -215,10 +258,10 @@ export default function CustomerPortal({
   }
 
   function beneficiaries(policy) {
-    const editable = ["Pending Payment", "Active"].includes(policy.status);
+    const editable = BENEFICIARY_STATES.includes(policy.status);
     return (
       <div className="customer-workflow">
-        <h4>Beneficiaries · {policy.beneficiaries?.length || 0} of 5</h4>
+        <h4>Beneficiaries · {policy.beneficiaries?.length || 0} of {policy.maxBeneficiaries || 5}</h4>
         <BeneficiaryList
           beneficiaries={policy.beneficiaries}
           busy={acting}
@@ -234,7 +277,7 @@ export default function CustomerPortal({
               : null
           }
         />
-        {editable && (policy.beneficiaries?.length || 0) < 5 && (
+        {editable && (policy.beneficiaries?.length || 0) < (policy.maxBeneficiaries || 5) && (
           <BeneficiaryForm
             busy={acting}
             onSave={(body) =>
@@ -323,6 +366,18 @@ export default function CustomerPortal({
         </div>
       </header>
 
+      {paymentRoute ? (
+        <main className="customer-main">
+          <PaymentResult
+            session={session}
+            route={route}
+            shop={shop}
+            onShop={onShop}
+            onNavigate={onNavigate}
+            notify={notify}
+          />
+        </main>
+      ) : (
       <main className="customer-main">
         <section className="customer-hero" aria-labelledby="customer-welcome">
           <div className="customer-hero-copy">
@@ -363,6 +418,34 @@ export default function CustomerPortal({
         {message && (
           <div className="customer-flash" role="status">
             {message}
+          </div>
+        )}
+
+        {noCoverPolicies.length > 0 && (
+          <div className="customer-no-cover customer-no-cover-banner" role="status">
+            <strong>
+              Your cover is paused on {noCoverPolicies.map((policy) => policy.product + " (" + policy.id + ")").join(", ")}
+            </strong>
+            <p>
+              A premium was not paid in time, so you are not covered right now. Your policy is still in force: pay now to
+              restore cover straight away, with no new waiting period.
+            </p>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => {
+                setShowPolicies(true);
+                window.setTimeout(
+                  () =>
+                    document
+                      .getElementById("your-cover")
+                      ?.scrollIntoView({ behavior: scrollBehavior(), block: "start" }),
+                  60,
+                );
+              }}
+            >
+              Pay now to restore cover <ArrowRight size={16} aria-hidden="true" />
+            </button>
           </div>
         )}
 
@@ -436,9 +519,10 @@ export default function CustomerPortal({
               {showPolicies && (
                 <ul className="customer-policy-list" id="customer-policy-list">
                   {policies.map((policy) => {
-                    const isActive = ["active", "in force", "in_force"].includes(
-                      String(policy.status).toLowerCase(),
-                    );
+                    const chip = statusClass(policy.status);
+                    const isActive = chip === " is-active";
+                    const noCover = policy.status === NO_COVER;
+                    const lapsesOn = noCover ? noCoverLapsesOn(policy) : "";
                     return (
                       <li key={policy.id}>
                         <div className="customer-policy-card-head">
@@ -452,9 +536,9 @@ export default function CustomerPortal({
                             </h3>
                             <p className="customer-policy-reference">{policy.id}</p>
                           </div>
-                          <span className={"customer-policy-status" + (isActive ? " is-active" : "")}>
-                            {isActive && <span aria-hidden="true" />}
-                            {policy.status || "Status unavailable"}
+                          <span className={"customer-policy-status" + chip}>
+                            {(isActive || noCover) && <span aria-hidden="true" />}
+                            {noCover ? "In force · no cover" : policy.status || "Status unavailable"}
                           </span>
                         </div>
                         <dl className="customer-policy-values">
@@ -490,6 +574,18 @@ export default function CustomerPortal({
                                 <dd>{formatDate(policy.nextPremiumDue)}</dd>
                               </div>
                             )}
+                            {noCover && policy.nextPremiumDue && (
+                              <div>
+                                <dt>Unpaid premium due</dt>
+                                <dd>{formatDate(policy.nextPremiumDue)}</dd>
+                              </div>
+                            )}
+                            {policy.status === "Claimed" && (
+                              <div>
+                                <dt>Ended</dt>
+                                <dd>When its claim was paid</dd>
+                              </div>
+                            )}
                             {policy.status === "Lapsed" && policy.lapseDate && (
                               <div>
                                 <dt>Lapsed on</dt>
@@ -522,16 +618,27 @@ export default function CustomerPortal({
                             Your premium is overdue. Pay by {formatDate(policy.gracePeriodEnd)} to keep your cover.
                           </p>
                         )}
-                        {policy.status === "Active" && (
-                          <PayForm
-                            busy={acting}
-                            label={"Pay premium " + money(policy.premium)}
-                            onPay={(method) =>
-                              act(
-                                "/portfolio/shop/policies/" + policy.id + "/pay",
-                                { method },
-                                "Premium paid for " + policy.id + ".",
-                              )
+                        {noCover && (
+                          <div className="customer-no-cover" role="status">
+                            <strong>Pay now to restore cover</strong>
+                            <p>
+                              Your cover is paused because the premium
+                              {policy.nextPremiumDue ? " due " + formatDate(policy.nextPremiumDue) : ""} was not paid.
+                              Your policy is still in force: pay now and cover starts again straight away, with no new
+                              waiting period.
+                              {lapsesOn ? " If it stays unpaid, the policy lapses after " + formatDate(lapsesOn) + "." : ""}
+                            </p>
+                          </div>
+                        )}
+                        {IN_FORCE_STATES.includes(policy.status) && (
+                          <PolicyPayment
+                            {...payProps}
+                            policy={policy}
+                            label={(noCover ? "Pay now " : "Pay premium ") + money(policy.premium)}
+                            done={
+                              noCover
+                                ? "Premium paid. Your cover on " + policy.id + " is back."
+                                : "Premium paid for " + policy.id + "."
                             }
                           />
                         )}
@@ -550,7 +657,10 @@ export default function CustomerPortal({
               <h2 id="customer-requests-heading">
                 Awaiting payment <span>{awaitingPayment.length}</span>
               </h2>
-              <p>Cover you chose is reserved until the time shown. It starts when you pay the first premium.</p>
+              <p>
+                Cover you chose is reserved until the time shown. Confirm your declaration with a code we send you, then
+                pay the first premium: your cover starts as soon as it is paid.
+              </p>
             </div>
             <ul>
               {requests.map((item) => {
@@ -581,16 +691,13 @@ export default function CustomerPortal({
                       )}
                       {pending && (
                         <>
-                          <PayForm
-                            busy={acting}
+                          <PolicyPayment
+                            {...payProps}
+                            policy={item}
+                            firstPremium
+                            declared={declared.includes(item.id)}
                             label={"Pay " + money(item.premium)}
-                            onPay={(method) =>
-                              act(
-                                "/portfolio/shop/policies/" + item.id + "/pay",
-                                { method },
-                                item.id + " is paid. Your cover has started.",
-                              )
-                            }
+                            done={item.id + " is paid. Your cover has started."}
                           />
                           {beneficiaries(item)}
                         </>
@@ -927,6 +1034,7 @@ export default function CustomerPortal({
           )}
         </section>
       </main>
+      )}
       <footer className="customer-footer">
         <span>Nsure · Insurance, connected.</span>
         <span>Made for life. Built around you.</span>

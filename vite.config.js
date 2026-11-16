@@ -41,6 +41,8 @@ export default defineConfig({
           )
             return "animation";
           if (/\/(react|react-dom|scheduler)\//.test(id)) return "react-vendor";
+          // Icons are shared by every page, so they cache apart from the app's own code.
+          if (/\/lucide-react\//.test(id)) return "icons";
         },
       },
     },

@@ -28,10 +28,16 @@ const EVENT_FIELDS = {
   PolicyIssued: ["policyRef", "customerName", "product", "sumAssured", "premium"],
   PremiumReceived: ["policyRef", "customerName", "product", "amount", "method", "receiptRef"],
   ClaimPaid: ["claimRef", "policyRef", "customerName", "product", "amount", "payoutRef"],
+  // Kept in step with nsure-be MergeFields: every event a template can be written for.
+  ClaimReceived: ["claimRef", "policyRef", "customerName", "product", "amount"],
+  ClaimApproved: ["claimRef", "policyRef", "customerName", "product", "amount"],
+  ClaimRejected: ["claimRef", "policyRef", "customerName", "product", "amount", "reason"],
   ServiceCaseOpened: ["caseRef", "caseType", "customerName", "category"],
+  PremiumDueReminder: ["policyRef", "customerName", "product", "amount", "dueDate"],
+  OperationalNotice: ["customerName"],
 };
 const COMMON_FIELDS = ["customerRef", "portalLink"];
-const STATUSES = ["QUEUED", "DELIVERED", "FAILED", "SUPPRESSED"];
+const STATUSES = ["QUEUED", "SUBMITTED", "DELIVERED", "READ", "FAILED", "SUPPRESSED"];
 
 const label = (value) => String(value || "").replaceAll("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
 const channelName = (c) => (c === "WHATSAPP" ? "WhatsApp" : "Email");
@@ -56,6 +62,14 @@ export default function Communications({ session, notify, profile }) {
     all.reload();
     setRefresh((n) => n + 1);
   };
+  // Blueprint §5: scheduled reminders run every morning; this runs the sweep now. One per policy and due date.
+  const runReminders = async () => {
+    const r = await action.run(() => request(session, "/communications/reminders/run", { method: "POST" }));
+    if (r) {
+      notify(r.data.published + " premium reminder(s) raised. Dispatch to send them.");
+      changed();
+    }
+  };
   return (
     <>
       <Heading
@@ -64,14 +78,25 @@ export default function Communications({ session, notify, profile }) {
         subtitle="Email and WhatsApp messages raised by business events, the templates behind them, and each customer's channel choices."
       >
         {can(profile, "MANAGE_COMMUNICATION") && (
-          <Button icon={Send} busy={action.busy} onClick={dispatch}>
-            Dispatch now
-          </Button>
+          <>
+            <Button variant="secondary" icon={RefreshCw} busy={action.busy} onClick={runReminders}>
+              Run premium reminders
+            </Button>
+            <Button icon={Send} busy={action.busy} onClick={dispatch}>
+              Dispatch now
+            </Button>
+          </>
         )}
       </Heading>
       <div className="stat-grid">
         <Stat label="Queued" value={counts.QUEUED || 0} tone="amber" note="Waiting for the provider" loading={loading} />
-        <Stat label="Delivered" value={counts.DELIVERED || 0} tone="green" loading={loading} />
+        <Stat
+          label="Delivered"
+          value={(counts.DELIVERED || 0) + (counts.READ || 0)}
+          tone="green"
+          note={(counts.READ || 0) + " read, as reported by the provider"}
+          loading={loading}
+        />
         <Stat
           label="Failed"
           value={counts.FAILED || 0}
@@ -89,6 +114,8 @@ export default function Communications({ session, notify, profile }) {
           ["messages", "Messages"],
           ["templates", "Templates"],
           ["preferences", "Preferences"],
+          ["inbound", "Inbound"],
+          ["bulk", "Bulk notices"],
         ]}
       />
       {tab === "messages" && (
@@ -96,6 +123,8 @@ export default function Communications({ session, notify, profile }) {
       )}
       {tab === "templates" && <Templates session={session} notify={notify} profile={profile} />}
       {tab === "preferences" && <Preferences session={session} notify={notify} profile={profile} onChange={changed} />}
+      {tab === "inbound" && <Inbound session={session} notify={notify} profile={profile} />}
+      {tab === "bulk" && <BulkNotices session={session} notify={notify} profile={profile} onChange={changed} />}
     </>
   );
 }
@@ -423,7 +452,7 @@ function Templates({ session, notify, profile }) {
               label: "",
               render: (t) => (
                 <div className="ws-row-actions" onClick={(e) => e.stopPropagation()}>
-                  {t.status === "DRAFT" && canApprove && (t.createdBy !== profile?.username || profile?.superAdmin) && (
+                  {t.status === "DRAFT" && canApprove && t.createdBy !== profile?.username && (
                     <Button icon={CheckCheck} busy={action.busy} onClick={() => approve(t)}>
                       Approve
                     </Button>
@@ -456,9 +485,7 @@ function Templates({ session, notify, profile }) {
             <p className="com-sub">
               Merge fields used: {open.placeholders.length ? open.placeholders.map((f) => `{{${f}}}`).join(", ") : "none"}
               {open.status === "DRAFT" && open.createdBy === profile?.username &&
-                (profile?.superAdmin
-                  ? " · You drafted this. As super admin you can still approve it."
-                  : " · You drafted this, so another user approves it.")}
+                " · You drafted this, so another user approves it."}
             </p>
             <div className={"com-message " + (open.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
               {open.subject && <strong>{open.subject}</strong>}
@@ -675,6 +702,236 @@ function Preferences({ session, notify, profile, onChange }) {
             </Field>
           </FormGrid>
         </Panel>
+      )}
+    </>
+  );
+}
+
+/**
+ * Inbound correspondence (Solution Blueprint §5): replies matched to one customer are linked to a service case; an
+ * unknown or ambiguous sender waits in triage until someone says who it is.
+ */
+function Inbound({ session, notify, profile }) {
+  const [status, setStatus] = useState("TRIAGE");
+  const list = useResource(session, "/communications/inbound" + (status ? "?status=" + status : ""), []);
+  const action = useAction(notify);
+  const [assigning, setAssigning] = useState(null);
+  const assign = async () => {
+    const done = await action.run(
+      () =>
+        request(session, `/communications/inbound/${assigning.id}/assign`, {
+          method: "POST",
+          body: { customerRef: assigning.customerRef },
+        }),
+      "Linked to the customer's service case",
+    );
+    if (done) {
+      setAssigning(null);
+      list.reload();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Inbound messages"
+        subtitle="Replies by Email and WhatsApp. A known sender joins their service case; others wait here for a person."
+        action={
+          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter">
+            <option value="TRIAGE">Needs triage</option>
+            <option value="LINKED">Linked to a case</option>
+            <option value="">All</option>
+          </select>
+        }
+      >
+        <ErrorNote error={list.error || (!assigning && action.error)} />
+        <DataTable
+          rows={list.data}
+          loading={list.loading}
+          empty={status === "TRIAGE" ? "Nothing to triage" : "No inbound messages"}
+          emptyDetail="Replies from customers arrive here from the Email and WhatsApp provider."
+          searchPlaceholder="Search sender, text, case…"
+          columns={[
+            { key: "receivedAt", label: "Received", render: (r) => when(r.receivedAt) },
+            { key: "channel", label: "Channel", render: (r) => channelName(r.channel) },
+            { key: "sender", label: "From" },
+            { key: "body", label: "Message" },
+            { key: "status", label: "Status", render: (r) => <Badge>{label(r.status)}</Badge> },
+            { key: "caseRef", label: "Case", render: (r) => r.caseRef || r.note || "—" },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.status === "TRIAGE" &&
+                can(profile, "MANAGE_COMMUNICATION") && (
+                  <Button variant="secondary" onClick={() => setAssigning({ id: r.id, customerRef: "" })}>
+                    Assign customer
+                  </Button>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {assigning && (
+        <Drawer
+          title="Who sent this?"
+          description="Check the sender against the customer record before linking it; never guess."
+          onClose={() => setAssigning(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={assign} submitLabel="Link to customer">
+            <Field label="Customer reference" full>
+              <input
+                required
+                placeholder="CUS-1001"
+                value={assigning.customerRef}
+                onChange={(e) => setAssigning({ ...assigning, customerRef: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+/**
+ * Controlled bulk operational notices (Solution Blueprint §5): an approved OperationalNotice template sent to the
+ * customers holding policies of a status (and product). Requested by one person, released by another.
+ */
+function BulkNotices({ session, notify, profile, onChange }) {
+  const list = useResource(session, "/communications/bulk-notices", []);
+  const templates = useResource(session, "/communications/templates", []);
+  const action = useAction(notify);
+  const confirm = useConfirm();
+  const [draft, setDraft] = useState(null);
+  const me = profile?.username;
+  const usable = (templates.data || []).filter(
+    (t) => t.eventType === "OperationalNotice" && t.status === "APPROVED" && t.audience === "CUSTOMER",
+  );
+  const requestNotice = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/communications/bulk-notices", {
+          method: "POST",
+          body: { ...draft, templateId: Number(draft.templateId), product: draft.product || null },
+        }),
+      "Notice sent for approval",
+    );
+    if (done) {
+      setDraft(null);
+      list.reload();
+    }
+  };
+  const decide = async (n, verdict) => {
+    const ok = await confirm({
+      title: (verdict === "approve" ? "Send" : "Reject") + " notice " + n.ref + "?",
+      message:
+        verdict === "approve"
+          ? `${n.templateCode} goes to ${n.recipients} customer(s), each through their own consent and opt-out.`
+          : "The notice is not sent.",
+      confirmLabel: verdict === "approve" ? "Approve and send" : "Reject",
+      tone: verdict === "approve" ? undefined : "danger",
+    });
+    if (!ok) return;
+    const done = await action.run(
+      () => request(session, `/communications/bulk-notices/${n.ref}/${verdict}`, { method: "POST" }),
+      verdict === "approve" ? "Notice " + n.ref + " queued" : "Notice " + n.ref + " rejected",
+    );
+    if (done) {
+      list.reload();
+      onChange();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Bulk operational notices"
+        subtitle="Service notices to many customers at once. Not a marketing tool: approved templates only, and a second person releases each one."
+        action={
+          can(profile, "MANAGE_COMMUNICATION") && (
+            <Button
+              icon={MessageSquarePlus}
+              onClick={() => setDraft({ templateId: usable[0]?.id || "", policyStatus: "Active", product: "", reason: "" })}
+            >
+              New notice
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={list.error || (!draft && action.error)} />
+        <DataTable
+          rowKey={(r) => r.ref}
+          rows={list.data}
+          loading={list.loading}
+          empty="No bulk notices"
+          emptyDetail="A notice is drafted from an approved OperationalNotice template."
+          searchPlaceholder="Search notice, template, reason…"
+          columns={[
+            { key: "ref", label: "Notice" },
+            { key: "templateCode", label: "Template" },
+            {
+              key: "audience",
+              label: "Audience",
+              render: (r) => (r.product ? r.product + " · " : "All products · ") + r.policyStatus + " policies",
+            },
+            { key: "recipients", label: "Customers", align: "right" },
+            { key: "reason", label: "Reason" },
+            { key: "status", label: "Status", render: (r) => <Badge>{label(r.status)}</Badge> },
+            { key: "requestedBy", label: "Requested by" },
+            {
+              key: "result",
+              label: "Result",
+              render: (r) =>
+                r.status === "SENT" ? `${r.queued} queued · ${r.suppressed} suppressed · by ${r.decidedBy}` : r.decidedBy || "—",
+            },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.status !== "PENDING" || !can(profile, "APPROVE_TEMPLATE") ? null : r.requestedBy === me ? (
+                  <small className="ws-hint">Needs another approver</small>
+                ) : (
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" icon={CheckCheck} busy={action.busy} onClick={() => decide(r, "approve")}>
+                      Approve
+                    </Button>
+                    <Button variant="secondary" onClick={() => decide(r, "reject")}>
+                      Reject
+                    </Button>
+                  </span>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {draft && (
+        <Drawer title="New bulk notice" description="Counted now; sent only once someone else approves it." onClose={() => setDraft(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={requestNotice} submitLabel="Send for approval">
+            <Field label="Approved template">
+              <select required value={draft.templateId} onChange={(e) => setDraft({ ...draft, templateId: e.target.value })}>
+                {usable.length === 0 && <option value="">No approved OperationalNotice template</option>}
+                {usable.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.code} v{t.version} · {channelName(t.channel)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Policies that are">
+              <select value={draft.policyStatus} onChange={(e) => setDraft({ ...draft, policyStatus: e.target.value })}>
+                <option>Active</option>
+                <option>Active - No Cover</option>
+                <option>Lapsed</option>
+                <option>Pending Payment</option>
+              </select>
+            </Field>
+            <Field label="Product (optional)">
+              <input value={draft.product} placeholder="All products" onChange={(e) => setDraft({ ...draft, product: e.target.value })} />
+            </Field>
+            <Field label="Reason" full>
+              <input required minLength={10} value={draft.reason} onChange={(e) => setDraft({ ...draft, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
       )}
     </>
   );

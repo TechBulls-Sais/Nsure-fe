@@ -192,3 +192,34 @@
   align-items: center;
   gap: 8px 12px;
 }
+
+/* In force without cover (Active - No Cover): a warning, not an error. */
+.notice.wf-warn {
+  color: light-dark(#5a3d06, oklch(0.86 0.109 82));
+  background: light-dark(rgba(217, 160, 20, 0.1), oklch(0.6 0.12 85 / 0.1));
+  border-color: light-dark(rgba(180, 130, 10, 0.3), oklch(0.6 0.12 85 / 0.3));
+}
+
+.wf-pay-hint {
+  flex-basis: 100%;
+}
+
+/* Blueprint §8: superseded documents stay on file, visibly replaced; staff reissue with a reason. */
+.wf-doc-list li.wf-doc-superseded {
+  opacity: 0.72;
+}
+.wf-doc-reason {
+  display: block;
+  color: var(--muted, #667085);
+}
+.wf-doc-reissue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+.wf-doc-reissue .input {
+  flex: 1 1 240px;
+  min-width: 0;
+}

@@ -5,6 +5,23 @@ export class ApiError extends Error {
   }
 }
 
+// The session layer registers this while someone is signed in. A 401 on any call made with their credentials means
+// the sign-in no longer holds (password changed, user disabled or deleted), so the app signs them out in one place
+// instead of every page showing its own "Unauthorized".
+let unauthorizedHandler = null;
+
+/** Registers the sign-out to run on a 401; returns the function that unregisters it. */
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler;
+  return () => {
+    if (unauthorizedHandler === handler) unauthorizedHandler = null;
+  };
+}
+
+function signedOut(session, response) {
+  if (response.status === 401 && session && unauthorizedHandler) unauthorizedHandler(response);
+}
+
 function basic(session) {
   const token = btoa(`${session.username}:${session.password}`);
   return `Basic ${token}`;
@@ -54,6 +71,7 @@ export async function request(session, path, options = {}) {
     throw new ApiError(0, UNREACHABLE);
   }
 
+  signedOut(session, response);
   const data = await readBody(response);
   if (!response.ok) {
     throw failure(response, data, "Request failed");
@@ -82,6 +100,7 @@ export async function uploadFile(session, path, file, fields = {}) {
     headers: { Accept: "application/json" },
     body: form,
   });
+  signedOut(session, response);
   const data = await readBody(response);
   if (!response.ok) {
     throw failure(response, data, "Upload failed");
@@ -92,6 +111,7 @@ export async function uploadFile(session, path, file, fields = {}) {
 /** Fetches a protected file as a Blob, since a plain link cannot send the Authorization header. */
 export async function fetchFile(session, path) {
   const response = await send(session, path, { method: "GET", headers: {} });
+  signedOut(session, response);
   if (!response.ok) {
     const data = await readBody(response);
     throw failure(response, data, "Could not open the file");
@@ -99,9 +119,13 @@ export async function fetchFile(session, path) {
   return response.blob();
 }
 
+/** A maker-checker write (202, status AWAITING_APPROVAL): accepted, but it only takes effect once a second person approves it. */
+export function awaitingApproval(result) {
+  return Boolean(result && (result.status === 202 || result.data?.status === "AWAITING_APPROVAL"));
+}
+
+export const AWAITING_APPROVAL_MESSAGE = "Submitted for approval by a second person.";
+
 export function commandMessage(result, saved = "Saved.") {
-  if (result.status === 202 || result.data?.status === "AWAITING_APPROVAL") {
-    return "Submitted for approval. A different user must approve it in the audit log.";
-  }
-  return saved;
+  return awaitingApproval(result) ? AWAITING_APPROVAL_MESSAGE : saved;
 }

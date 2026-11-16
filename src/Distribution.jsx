@@ -70,7 +70,12 @@ export default function Distribution({ session, notify, profile }) {
       </div>
       <Tabs
         value={tab}
-        onChange={setTab}
+        onChange={(next) => {
+          // Commission accrues from premium events outside this page, so balances are re-read on every tab change.
+          setTab(next);
+          intermediaries.reload();
+          statements.reload();
+        }}
         tabs={[
           ["intermediaries", "Intermediaries"],
           ["rules", "Commission rules"],

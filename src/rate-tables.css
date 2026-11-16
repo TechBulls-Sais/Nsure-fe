@@ -228,3 +228,255 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ── spec 11 workflow: version states, banner, actions, impact, dialogs ───────────────────────────── */
+.rt-status.draft {
+  background: light-dark(#eef0ee, oklch(0.211 0.002 146));
+  color: light-dark(#35423b, oklch(0.86 0.03 162));
+  border: 1px dashed light-dark(#b9c2b4, oklch(0.4 0.01 140));
+}
+.rt-status.pending {
+  background: light-dark(#fdf3cf, oklch(0.205 0.034 94));
+  color: light-dark(#523c0b, oklch(0.86 0.109 82));
+}
+.rt-status.scheduled {
+  background: light-dark(#e4eef8, oklch(0.216 0.012 248));
+  color: light-dark(#1d4260, oklch(0.86 0.094 246));
+}
+.rt-status.rejected {
+  background: light-dark(#fde4e4, oklch(0.218 0.019 18));
+  color: light-dark(#7d1818, oklch(0.86 0.16 27));
+}
+.rt-readonly {
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: light-dark(#39403c, oklch(0.86 0.022 161));
+}
+.rt-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 12px;
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  border: 1px solid light-dark(#dfe5ef, oklch(0.33 0.01 248));
+  border-radius: 10px;
+  background: light-dark(#f3f7fb, oklch(0.2 0.008 248));
+  color: light-dark(#1d3a52, oklch(0.86 0.06 246));
+  font-size: 13px;
+}
+.rt-banner > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.rt-banner > div:first-of-type {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.rt-banner strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 14px;
+}
+.rt-banner p {
+  margin: 0;
+  line-height: 1.5;
+}
+.rt-banner.live {
+  border-color: light-dark(#cfe3c4, oklch(0.36 0.03 140));
+  background: light-dark(#f1f8ec, oklch(0.205 0.015 140));
+  color: light-dark(#25452c, oklch(0.86 0.081 149));
+}
+.rt-banner.draft,
+.rt-banner.pending {
+  border-color: light-dark(#ead6a9, oklch(0.365 0.038 87));
+  background: light-dark(#fff8e4, oklch(0.2 0.022 86));
+  color: light-dark(#503b0f, oklch(0.86 0.095 81));
+}
+.rt-banner.rejected {
+  border-color: light-dark(#f0cfcf, oklch(0.355 0.03 18));
+  background: light-dark(#fdf3f2, oklch(0.201 0.008 24));
+  color: light-dark(#692d1c, oklch(0.86 0.119 36));
+}
+.rt-banner.off {
+  border-color: light-dark(#e3e8df, oklch(0.33 0.008 131));
+  background: light-dark(#f6f7f4, oklch(0.2 0.004 120));
+  color: light-dark(#35423b, oklch(0.86 0.03 162));
+}
+.rt-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rt-workflow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.rt-workflow:empty {
+  display: none;
+}
+.rt-workflow-note {
+  font-size: 13px;
+  color: light-dark(#39403c, oklch(0.86 0.022 161));
+}
+.rt-main {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.rt-issue-block {
+  display: grid;
+  gap: 6px;
+}
+.rt-issue-block ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rt-warnings {
+  background: light-dark(#fff7e8, oklch(0.197 0.015 83));
+  color: light-dark(#553a0d, oklch(0.86 0.096 74));
+}
+.rt-trail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.rt-trail span + span::before {
+  content: "·";
+  margin-right: 8px;
+}
+.rt-reason {
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: light-dark(#fdf3f2, oklch(0.201 0.008 24));
+  color: light-dark(#692d1c, oklch(0.86 0.119 36));
+}
+.rt-reason.override {
+  background: light-dark(#fff7e8, oklch(0.197 0.015 83));
+  color: light-dark(#553a0d, oklch(0.86 0.096 74));
+}
+.rt-impact .panel-header .btn {
+  flex-shrink: 0;
+}
+.rt-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  padding: 16px 23px 4px;
+}
+.rt-impact-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid light-dark(#e3e8df, oklch(0.33 0.008 131));
+  border-radius: 10px;
+}
+.rt-impact-grid small {
+  font-size: 13px;
+  color: light-dark(#39403c, oklch(0.86 0.022 161));
+}
+.rt-impact-grid strong {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.rt-impact-grid .up strong {
+  color: light-dark(#29451d, oklch(0.86 0.108 138));
+}
+.rt-impact-grid .down strong,
+.rt-impact-grid .bad strong {
+  color: light-dark(#7d1818, oklch(0.86 0.16 27));
+}
+.rt-impact-grid .warn strong {
+  color: light-dark(#653118, oklch(0.86 0.14 44));
+}
+.rt-impact .rt-issues {
+  margin-top: 12px;
+}
+.rt-asof {
+  margin: 8px 23px 16px;
+  font-size: 13px;
+  color: light-dark(#39403c, oklch(0.86 0.022 161));
+}
+.rt-dialog-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+.rt-dialog-error {
+  margin: 12px 0 0;
+}
+.rt-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: light-dark(#39403c, oklch(0.86 0.022 161));
+}
+.rt-attention {
+  border-color: light-dark(#d9a441, oklch(0.7 0.12 80)) !important;
+  box-shadow: 0 0 0 3px light-dark(rgba(217, 164, 65, 0.2), oklch(0.7 0.12 80 / 0.2));
+}
+.nk-dialog .rt-issues {
+  margin: 12px 0;
+}
+.nk-dialog .rt-empty {
+  padding: 12px 0;
+}
+.rt-diff-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.rt-diff-stats span {
+  padding: 4px 10px;
+  border: 1px solid light-dark(#e3e8df, oklch(0.33 0.008 131));
+  border-radius: 999px;
+  font-size: 13px;
+}
+.rt-diff-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid light-dark(#e3e8df, oklch(0.33 0.008 131));
+  border-radius: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.rt-diff-lines li {
+  padding: 6px 10px 6px 12px;
+  border-left: 3px solid transparent;
+}
+.rt-diff-lines li + li {
+  border-top: 1px solid light-dark(#eef1ea, oklch(0.28 0.005 131));
+}
+.rt-diff-lines li.added {
+  border-left-color: light-dark(#6aa05a, oklch(0.7 0.12 140));
+}
+.rt-diff-lines li.removed {
+  border-left-color: light-dark(#c4544a, oklch(0.65 0.15 27));
+}
+.rt-diff-lines li.changed {
+  border-left-color: light-dark(#d9a441, oklch(0.7 0.12 80));
+}
+.rt-import-result {
+  margin-top: 14px;
+}
+.rt-import-result h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+@media (max-width: 640px) {
+  .rt-dialog-grid {
+    grid-template-columns: 1fr;
+  }
+}

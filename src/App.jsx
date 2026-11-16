@@ -55,6 +55,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldPlus,
+  SlidersHorizontal,
   Sparkles,
   Table2,
   TrendingUp,
@@ -73,6 +74,7 @@ const Icons = {
   Mail,
   PieChart,
   ShieldPlus,
+  SlidersHorizontal,
   ArrowRight,
   ArrowUp,
   ArrowUpRight,
@@ -126,8 +128,11 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { request } from "./api";
+import { request, setUnauthorizedHandler } from "./api";
 import AccessAdmin from "./AccessAdmin";
+import Controls from "./Controls";
+import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
+import "./access.css";
 import GroupAdmin from "./GroupAdmin";
 import Finance from "./Finance";
 import Distribution from "./Distribution";
@@ -136,7 +141,8 @@ import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
 import ManagementReports from "./ManagementReports";
-import { can, DataTable, ThemeSwitch } from "./ui/workspace";
+import { can, DataTable, Tabs, ThemeSwitch, when } from "./ui/workspace";
+import PaymentTransactions from "./PaymentTransactions";
 import { CustomFieldInputs, PolicyAttributesPanel, cleanValues, usePolicyForm } from "./configuration/PolicyFields";
 import ConfigReleases from "./ConfigReleases";
 import { environmentLabel, useInsurer } from "./insurer";
@@ -148,8 +154,10 @@ import {
   NEEDS_AUDIT,
   ClaimLodgeForm,
   ClaimWorkflowPanel,
+  NO_COVER,
   POLICY_STATES,
   PolicyWorkflowPanel,
+  policyTone,
   ReasonAction,
   WorkflowTimeline,
   ClaimDocuments,
@@ -166,32 +174,10 @@ import {
 } from "./ui/animated";
 
 
-const navItems = [
-  ["overview", "Overview", "LayoutDashboard"],
-  ["customers", "Customers", "Users"],
-  ["applications", "Applications", "FilePlus2"],
-  ["policies", "Policies", "ShieldCheck"],
-  ["claims", "Claims", "HeartHandshake"],
-  ["schemes", "Group schemes", "Building2"],
-  ["products", "Products", "Layers3"],
-  ["product-config", "Product studio", "Settings2"],
-  ["rate-tables", "Rate tables", "Table2"],
-  ["collections", "Collections", "Wallet"],
-];
-// Nsure Life operational workspaces, each shown only to users holding its read permission.
-const lifeNavItems = [
-  ["reports", "Management", "PieChart", "READ_REPORT"],
-  ["finance", "Finance", "Landmark", "READ_FINANCE"],
-  ["distribution", "Distribution", "Handshake", "READ_DISTRIBUTION"],
-  ["reinsurance", "Reinsurance", "ShieldPlus", "READ_REINSURANCE"],
-  ["service-desk", "Service desk", "Headset", "READ_SERVICE_CASE"],
-  ["communications", "Communications", "Mail", "READ_COMMUNICATION"],
-  ["integration", "Integration", "Cable", "READ_INTEGRATION"],
-  ["configuration", "Configuration", "Settings2", "READ_CONFIG"],
-];
-// The sidebar, grouped by area. An item is [page, label, icon, permission?]; a group opens to show its items, and a
-// group with a page (Customers) also goes there when clicked. Items the user cannot open are hidden, and so is a
-// group left empty.
+// The sidebar, grouped by area. An item is [page, label, icon]; which pages a user sees comes from the access map
+// (src/access.js), the same one the router and the ⌘K palette use. A group opens to show its items, and a group
+// with a page (Customers) also goes there when clicked, if the user may open it. Items the user cannot open are
+// hidden, and so is a group left empty.
 const navGroups = [
   { key: "overview", item: ["overview", "Overview", "LayoutDashboard"] },
   {
@@ -205,8 +191,8 @@ const navGroups = [
       ["policies", "Policies", "ShieldCheck"],
       ["claims", "Claims", "HeartHandshake"],
       ["collections", "Collections", "Wallet"],
-      ["service-desk", "Service desk", "Headset", "READ_SERVICE_CASE"],
-      ["communications", "Communications", "Mail", "READ_COMMUNICATION"],
+      ["service-desk", "Service desk", "Headset"],
+      ["communications", "Communications", "Mail"],
     ],
   },
   { key: "group-business", label: "Group business", icon: "Building2", items: [["schemes", "Group schemes", "Building2"]] },
@@ -218,7 +204,7 @@ const navGroups = [
       ["products", "Products", "Layers3"],
       ["product-config", "Product studio", "Settings2"],
       ["rate-tables", "Rate tables", "Table2"],
-      ["configuration", "Configuration", "Settings2", "READ_CONFIG"],
+      ["configuration", "Configuration", "Settings2"],
     ],
   },
   {
@@ -226,9 +212,9 @@ const navGroups = [
     label: "Finance & partners",
     icon: "Landmark",
     items: [
-      ["finance", "Finance", "Landmark", "READ_FINANCE"],
-      ["distribution", "Distribution", "Handshake", "READ_DISTRIBUTION"],
-      ["reinsurance", "Reinsurance", "ShieldPlus", "READ_REINSURANCE"],
+      ["finance", "Finance", "Landmark"],
+      ["distribution", "Distribution", "Handshake"],
+      ["reinsurance", "Reinsurance", "ShieldPlus"],
     ],
   },
   {
@@ -236,11 +222,19 @@ const navGroups = [
     label: "Insights & operations",
     icon: "PieChart",
     items: [
-      ["reports", "Management", "PieChart", "READ_REPORT"],
-      ["integration", "Integration", "Cable", "READ_INTEGRATION"],
+      ["reports", "Management", "PieChart"],
+      ["integration", "Integration", "Cable"],
     ],
   },
-  { key: "administration", label: "Administration", icon: "ShieldCheck", superAdmin: true, items: [["access", "Access", "ShieldCheck"]] },
+  {
+    key: "administration",
+    label: "Administration",
+    icon: "ShieldCheck",
+    items: [
+      ["access", "Access", "ShieldCheck"],
+      ["controls", "Controls", "SlidersHorizontal"],
+    ],
+  },
 ];
 const NAV_OPEN_KEY = "nsure-nav-open";
 function Icon({ name, small = false, ...props }) {
@@ -256,7 +250,11 @@ function Icon({ name, small = false, ...props }) {
 }
 function Badge({ children }) {
   const s = String(children).toLowerCase();
-  const color = /force|verified|ready|settled|approved|active|paid|issued/.test(
+  // Policy states first (spec 10 §1.3): "Active - No Cover" is a warning although it says active; "Claimed" ended
+  // the policy by paying out, so it is neither good news nor a failure.
+  const color = policyTone(children)
+    ? policyTone(children)
+    : /force|verified|ready|settled|approved|active|paid|issued/.test(
     s,
   )
     ? "green"
@@ -618,10 +616,16 @@ export default function App() {
   const [schemes, setSchemes] = useState([]);
   const [productConfigs, setProductConfigs] = useState([]);
   const [receipts, setReceipts] = useState([]);
+  // Collections page: premium receipts, or the payment transactions behind them (spec 13, READ_PAYMENT).
+  const [collectionsTab, setCollectionsTab] = useState("receipts");
   const [shop, setShop] = useState(null);
   const [notifications, setNotifications] = useState(true);
   const [compact, setCompact] = useState(false);
   const [period, setPeriod] = useState("Last 6 months");
+  // Staff alerts from GET /me/alerts (only those whose permission the user holds), shown under the header bell.
+  const [alerts, setAlerts] = useState([]);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const alertsRef = useRef(null);
   const notify = useToast();
   const go = (next) => {
     location.hash = "/" + next;
@@ -661,8 +665,20 @@ export default function App() {
     setProfile(null);
     setShop(null);
     setModal(null);
+    setAlerts([]);
+    setAlertsOpen(false);
     go("home");
   };
+  // A 401 on any call after sign-in (password changed, user disabled) signs out here, staff and customers alike.
+  // The handler acts once: logout() clears the stored session, so later 401s from calls still in flight do nothing.
+  useEffect(() => {
+    if (!session) return undefined;
+    return setUnauthorizedHandler(() => {
+      if (!sessionStorage.getItem("nsure-session")) return;
+      notify("Your sign-in is no longer valid. Please sign in again.", "info");
+      logout();
+    });
+  }, [session]);
   useEffect(() => {
     if (!session) return undefined;
     let active = true;
@@ -682,6 +698,7 @@ export default function App() {
           }
           return;
         }
+        const me = meR.data;
         const [
           customersR,
           applicationsR,
@@ -693,20 +710,23 @@ export default function App() {
           configsR,
         ] = await Promise.all(
           [
-            "/portfolio/customers",
-            "/portfolio/applications",
-            "/portfolio/policies",
-            "/portfolio/claims",
-            "/portfolio/products",
-            "/portfolio/schemes",
-            "/portfolio/receipts",
-            "/portfolio/product-configs",
-          ].map((path) =>
-            // Each list needs its own read permission; a role without it sees an empty list.
-            request(session, path).catch((error) => {
-              if (error.status === 403) return { data: [] };
-              throw error;
-            }),
+            ["/portfolio/customers", "READ_CUSTOMER"],
+            ["/portfolio/applications", "READ_APPLICATION"],
+            ["/portfolio/policies", "READ_POLICY"],
+            ["/portfolio/claims", "READ_CLAIM"],
+            ["/portfolio/products", null],
+            ["/portfolio/schemes", "READ_POLICY"],
+            ["/portfolio/receipts", "READ_PAYMENT"],
+            ["/portfolio/product-configs", "READ_PRODUCT"],
+          ].map(([path, code]) =>
+            // Each list needs its own read permission (the code its endpoint checks); a role without it gets an
+            // empty list and is not sent to ask.
+            code && !can(me, code)
+              ? Promise.resolve({ data: [] })
+              : request(session, path).catch((error) => {
+                  if (error.status === 403) return { data: [] };
+                  throw error;
+                }),
           ),
         );
         if (!active) return;
@@ -728,21 +748,58 @@ export default function App() {
       active = false;
     };
   }, [session]);
-  const allowed = (item) => !item[3] || can(profile, item[3]);
+  // The sidebar shows the pages the access map lets this user open.
+  const allowed = (item) => canOpen(profile, item[0]);
   const visibleGroups = navGroups
-    .filter((g) => !g.superAdmin || profile?.superAdmin)
     .map((g) => (g.items ? { ...g, items: g.items.filter(allowed) } : g))
-    .filter((g) => g.item || g.items.length > 0);
+    .filter((g) => (g.item ? allowed(g.item) : g.items.length > 0));
   const menuItems = visibleGroups.flatMap((g) => (g.item ? [g.item] : g.items));
+  // The page to show. Overview is the home page: a user without READ_DASHBOARD, or on an address that is no
+  // workspace page, lands on the first page they can open. Any other page they cannot open shows "no access".
+  const landing = landingPage(profile);
+  const view =
+    profile && (!isWorkspacePage(page) || (page === "overview" && !canOpen(profile, "overview"))) ? landing : page;
+  useEffect(() => {
+    if (profile && !profile.customerPortal && view !== page) {
+      history.replaceState(null, "", "#/" + view);
+      setPage(view);
+    }
+  }, [profile, view, page]);
   const groupOf = (key) => visibleGroups.find((g) => g.items?.some((item) => item[0] === key))?.key;
-  const activeGroup = groupOf(page);
+  const activeGroup = groupOf(view);
   // Opening a page (from search, a link or the address bar) also opens its group, so the highlight is visible.
   useEffect(() => {
     if (activeGroup) setNavOpen((open) => (open[activeGroup] ? open : { [activeGroup]: true }));
   }, [activeGroup]);
   const activeName =
-    menuItems.find((n) => n[0] === page)?.[1] ||
-    (page === "settings" ? "Settings" : "Overview");
+    menuItems.find((n) => n[0] === view)?.[1] ||
+    (view === "settings" ? "Settings" : view === "overview" ? "Overview" : "No access");
+  // Staff alerts: loaded with the profile and every minute after, and again when the bell opens.
+  const loadAlerts = React.useCallback(() => {
+    if (!session) return;
+    request(session, "/me/alerts")
+      .then((r) => setAlerts(Array.isArray(r.data) ? r.data : []))
+      .catch(() => {});
+  }, [session]);
+  useEffect(() => {
+    if (!profile || profile.customerPortal) return undefined;
+    loadAlerts();
+    const timer = setInterval(loadAlerts, 60000);
+    return () => clearInterval(timer);
+  }, [profile, loadAlerts]);
+  useEffect(() => {
+    if (!alertsOpen) return undefined;
+    const onDown = (e) => {
+      if (alertsRef.current && !alertsRef.current.contains(e.target)) setAlertsOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setAlertsOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [alertsOpen]);
   const visible = (rows) =>
     rows.filter(
       (r) =>
@@ -786,8 +843,12 @@ export default function App() {
     setPolicies((rows) => rows.map((row) => (row.id === record.id ? record : row)));
     setModal({ type: "detail", entity: "policy", record });
     if (record.status === "Active") {
-      request(session, "/portfolio/customers").then((r) => setCustomers(r.data)).catch(() => {});
-      request(session, "/portfolio/receipts").then((r) => setReceipts(r.data)).catch(() => {});
+      if (can(profile, "READ_CUSTOMER")) {
+        request(session, "/portfolio/customers").then((r) => setCustomers(r.data)).catch(() => {});
+      }
+      if (can(profile, "READ_PAYMENT")) {
+        request(session, "/portfolio/receipts").then((r) => setReceipts(r.data)).catch(() => {});
+      }
     }
   };
   const claimUpdated = (record) => {
@@ -838,11 +899,14 @@ export default function App() {
     if (page === "signup") {
       return <CustomerSignup onLogin={(next) => { setSession(next); go("overview"); }} />;
     }
+    // A customer back from the payment provider whose sign-in did not survive lands on a /buy/ result route: sign
+    // in as a customer, then show that result.
+    const paymentReturn = page.startsWith("buy/");
     return <Login
       key={page}
-      initialAudience={page === "login/customer" ? "customer" : "staff"}
+      initialAudience={page === "login/customer" || paymentReturn ? "customer" : "staff"}
       onAudienceChange={(audience) => go("login/" + audience)}
-      onLogin={(next) => { setSession(next); go("overview"); }}
+      onLogin={(next) => { setSession(next); go(paymentReturn ? page : "overview"); }}
     />;
   }
   if (!profile) {
@@ -860,6 +924,8 @@ export default function App() {
         notify={notify}
         onLogout={logout}
         onShop={setShop}
+        route={page}
+        onNavigate={go}
       />
     );
   }
@@ -958,6 +1024,12 @@ export default function App() {
         ? [43, 59, 51, 76, 67, 89]
         : [32, 49, 61, 56, 81, 94];
     const productMix = portfolioMix(policies);
+    // Each shortcut opens a form whose save needs its own write permission; one the user lacks is not offered.
+    const shortcuts = [
+      ["New application", "Start a new chapter", "FilePlus2", "application", "green", "newApplication"],
+      ["Register a claim", "Be there when it matters", "HeartHandshake", "claim", "purple", "newClaim"],
+      ["Add a customer", "Welcome someone new", "UserPlus", "customer", "blue", "newCustomer"],
+    ].filter((shortcut) => canDo(profile, shortcut[5]));
     return (
       <>
         <Heading
@@ -967,9 +1039,11 @@ export default function App() {
           <span className="date-chip">
             <Icon name="CalendarDays" small /> 29 September 2026
           </span>
-          <Button icon="Plus" onClick={() => setModal({ type: "application" })}>
-            New application
-          </Button>
+          {canDo(profile, "newApplication") && (
+            <Button icon="Plus" onClick={() => setModal({ type: "application" })}>
+              New application
+            </Button>
+          )}
         </Heading>
         <section className="hero">
           <div className="hero-copy">
@@ -987,13 +1061,15 @@ export default function App() {
               <br />
               Let’s keep the good work going.
             </p>
-            <Button
-              variant="secondary"
-              icon="ArrowRight"
-              onClick={() => go("policies")}
-            >
-              Explore your portfolio
-            </Button>
+            {canOpen(profile, "policies") && (
+              <Button
+                variant="secondary"
+                icon="ArrowRight"
+                onClick={() => go("policies")}
+              >
+                Explore your portfolio
+              </Button>
+            )}
           </div>
           <div className="hero-art ai-art">
             <IntelligenceOrb />
@@ -1014,12 +1090,16 @@ export default function App() {
             <p>Explore intelligent workflows across your workspace.</p>
           </div>
           <div className="smart-brief-actions">
-            <button onClick={() => go("applications")}>
-              Review applications <Icon name="ArrowUpRight" small />
-            </button>
-            <button onClick={() => go("product-config")}>
-              Design a product <Icon name="ArrowUpRight" small />
-            </button>
+            {canOpen(profile, "applications") && (
+              <button onClick={() => go("applications")}>
+                Review applications <Icon name="ArrowUpRight" small />
+              </button>
+            )}
+            {canOpen(profile, "product-config") && (
+              <button onClick={() => go("product-config")}>
+                Design a product <Icon name="ArrowUpRight" small />
+              </button>
+            )}
           </div>
         </section>
         <div className="stat-grid">
@@ -1149,30 +1229,9 @@ export default function App() {
             </div>
           </Panel>
         </div>
+        {shortcuts.length > 0 && (
         <section className="quick-actions">
-          {[
-            [
-              "New application",
-              "Start a new chapter",
-              "FilePlus2",
-              "application",
-              "green",
-            ],
-            [
-              "Register a claim",
-              "Be there when it matters",
-              "HeartHandshake",
-              "claim",
-              "purple",
-            ],
-            [
-              "Add a customer",
-              "Welcome someone new",
-              "UserPlus",
-              "customer",
-              "blue",
-            ],
-          ].map(([title, sub, icon, action, color]) => (
+          {shortcuts.map(([title, sub, icon, action, color]) => (
             <button
               key={title}
               className="quick-action"
@@ -1189,14 +1248,17 @@ export default function App() {
             </button>
           ))}
         </section>
+        )}
         <div className="bottom-grid">
           <Panel
             title="On your radar"
             subtitle="Recent applications that need a little attention"
             action={
-              <button className="text-link" onClick={() => go("applications")}>
-                View all <Icon name="ArrowRight" small />
-              </button>
+              canOpen(profile, "applications") && (
+                <button className="text-link" onClick={() => go("applications")}>
+                  View all <Icon name="ArrowRight" small />
+                </button>
+              )
             }
           >
             {RecordsTable({ rows: applications.slice(0, 4), short: true })}
@@ -1260,11 +1322,11 @@ export default function App() {
         customers={customers}
         search={search}
         setSearch={setSearch}
-        canReviewKyc={Boolean(profile?.canReviewKyc)}
-        canReviewEdd={Boolean(profile?.canReviewEdd)}
+        canReviewKyc={can(profile, "KYC_CUSTOMER")}
+        canReviewEdd={can(profile, "EDD_CUSTOMER")}
         onEdd={reviewEdd}
-        onAddCustomer={() => setModal({ type: "customer" })}
-        onAddPolicy={(c) => setModal({ type: "policy", customer: c.name })}
+        onAddCustomer={canDo(profile, "newCustomer") ? () => setModal({ type: "customer" }) : null}
+        onAddPolicy={canDo(profile, "newPolicy") ? (c) => setModal({ type: "policy", customer: c.name }) : null}
         onView={(c) => detail("customer", c)}
         onKyc={reviewKyc}
         onExport={(rows) => {
@@ -1288,7 +1350,7 @@ export default function App() {
         sub: "From first hello to confidently covered.",
         rows: applications,
         type: "application",
-        action: "New application",
+        action: canDo(profile, "newApplication") ? "New application" : null,
         statuses: [
           "All",
           "Draft",
@@ -1303,7 +1365,7 @@ export default function App() {
         sub: "Every policy, every person, all in one place.",
         rows: policies,
         type: "policy",
-        action: "Add policy",
+        action: canDo(profile, "newPolicy") ? "Add policy" : null,
         statuses: ["All", ...POLICY_STATES],
       },
       claims: {
@@ -1311,7 +1373,7 @@ export default function App() {
         sub: "Thoughtful claims handling, from notification to resolution.",
         rows: claims,
         type: "claim",
-        action: "Register claim",
+        action: canDo(profile, "newClaim") ? "Register claim" : null,
         statuses: ["All", ...CLAIM_STATES, NEEDS_AUDIT],
       },
       collections: {
@@ -1323,16 +1385,19 @@ export default function App() {
         statuses: ["All", "Paid", "Pending", "Overdue"],
       },
     }[kind];
+    const paymentsTab = kind === "collections" && collectionsTab === "payments" && can(profile, "READ_PAYMENT");
     return (
       <>
         <Heading title={config.title} subtitle={config.sub}>
-          <Button
-            variant="secondary"
-            icon="Download"
-            onClick={() => exportRows(kind, visible(config.rows))}
-          >
-            Export CSV
-          </Button>
+          {!paymentsTab && (
+            <Button
+              variant="secondary"
+              icon="Download"
+              onClick={() => exportRows(kind, visible(config.rows))}
+            >
+              Export CSV
+            </Button>
+          )}
           {config.action && (
             <Button
               icon="Plus"
@@ -1351,6 +1416,20 @@ export default function App() {
             </Button>
           )}
         </Heading>
+        {kind === "collections" && can(profile, "READ_PAYMENT") && (
+          <Tabs
+            tabs={[
+              ["receipts", "Premium receipts"],
+              ["payments", "Payments"],
+            ]}
+            value={collectionsTab}
+            onChange={setCollectionsTab}
+          />
+        )}
+        {paymentsTab ? (
+          <PaymentTransactions session={session} notify={notify} />
+        ) : (
+          <>
         {kind === "collections" && (
           <div className="stat-grid three">
             <Stat
@@ -1395,7 +1474,9 @@ export default function App() {
           {Filters({ statuses: config.statuses, count: config.rows.length })}
           {RecordsTable({ rows: visible(config.rows), type: config.type, total: config.rows.length })}
         </Panel>
-        {kind === "applications" && (
+          </>
+        )}
+        {kind === "applications" && canDo(profile, "newApplication") && (
           <div className="notice">
             <Icon name="Lightbulb" />
             <p>
@@ -1415,9 +1496,11 @@ export default function App() {
           title="Your protection lineup"
           subtitle="Thoughtful cover for every chapter. Find the right fit for your customers."
         >
-          <Button icon="Settings2" onClick={() => go("product-config")}>
-            Configure products
-          </Button>
+          {canOpen(profile, "product-config") && (
+            <Button icon="Settings2" onClick={() => go("product-config")}>
+              Configure products
+            </Button>
+          )}
         </Heading>
         <div className="catalog-toolbar">
           <div className="catalog-label">
@@ -1466,17 +1549,19 @@ export default function App() {
                     <dd>{p.premium}</dd>
                   </div>
                 </dl>
-                <button
-                  type="button"
-                  className="catalog-action"
-                  aria-label={"Start application for " + p.name}
-                  onClick={() =>
-                    setModal({ type: "application", product: p.name })
-                  }
-                >
-                  <span>Start application</span>
-                  <Icon name="ArrowUpRight" />
-                </button>
+                {canDo(profile, "newApplication") && (
+                  <button
+                    type="button"
+                    className="catalog-action"
+                    aria-label={"Start application for " + p.name}
+                    onClick={() =>
+                      setModal({ type: "application", product: p.name })
+                    }
+                  >
+                    <span>Start application</span>
+                    <Icon name="ArrowUpRight" />
+                  </button>
+                )}
               </div>
             </article>
           ))}
@@ -1600,7 +1685,7 @@ export default function App() {
             <div className="setting-row">
               <div>
                 <strong>Notifications</strong>
-                <p>Show the activity notification indicator.</p>
+                <p>Show the alert count on the bell.</p>
               </div>
               <button
                 role="switch"
@@ -1641,13 +1726,84 @@ export default function App() {
     );
   }
 
+  function NoAccess() {
+    const codes = PAGE_ACCESS[view] || [];
+    const landingName = menuItems.find((n) => n[0] === landing)?.[1] || "Settings";
+    return (
+      <>
+        <Heading
+          title="You don’t have access to this page."
+          subtitle="Your roles do not include the permission this page needs, so it is not shown."
+        />
+        <Panel
+          title="Access is limited"
+          subtitle={
+            codes.length
+              ? "This page needs " + (codes.length > 1 ? "one of " : "") + codes.join(", ") + "."
+              : "This address is not a page in the workspace."
+          }
+        >
+          <div className="notice">
+            <Icon name="ShieldAlert" />
+            <p>
+              Ask an administrator to grant {codes.length > 1 ? "one of these permissions" : "this permission"} to one
+              of your roles. The sidebar only lists the pages you can open.
+            </p>
+          </div>
+          <div className="detail-actions">
+            <Button icon="ArrowRight" onClick={() => go(landing)}>
+              Go to {landingName}
+            </Button>
+          </div>
+        </Panel>
+      </>
+    );
+  }
+
+  // The bell: the server's alerts for this user, plus customer purchases awaiting their first premium for those who
+  // can record it. An alert about a control opens the Controls page when the user may open it.
+  const ALERT_PAGES = { CONTROL_DISABLED: "controls", STP_RATE_ZERO: "controls" };
+  const alertItems = [
+    ...alerts.map((a) => ({
+      key: "alert-" + a.id,
+      icon: "ShieldAlert",
+      tone: "warn",
+      title: a.title,
+      body: a.body,
+      at: a.createdAt,
+      page: canOpen(profile, ALERT_PAGES[a.type]) ? ALERT_PAGES[a.type] : null,
+    })),
+    ...(can(profile, "UPDATE_POLICY") && canOpen(profile, "policies") && pendingPolicies.length
+      ? [
+          {
+            key: "pending-policies",
+            icon: "Wallet",
+            tone: "",
+            title:
+              pendingPolicies.length === 1
+                ? "A policy is awaiting its first premium"
+                : pendingPolicies.length + " policies are awaiting their first premium",
+            body: "Record the payment, or cancel a purchase the customer no longer wants.",
+            page: "policies",
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className={"app-shell " + (compact ? "compact" : "")}>
       {mobileOpen && (
         <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />
       )}
       <aside className={"sidebar " + (mobileOpen ? "open" : "")}>
-        <a href="#/overview" className="brand" onClick={() => go("overview")}>
+        <a
+          href={"#/" + landing}
+          className="brand"
+          onClick={(e) => {
+            e.preventDefault();
+            go(landing);
+          }}
+        >
           <img
             className="brand-logo"
             src="/brand/nsure-life-logo-light.svg"
@@ -1677,8 +1833,8 @@ export default function App() {
                   e.preventDefault();
                   go(key);
                 }}
-                className={"nav-item " + (sub ? "nav-sub-item " : "") + (page === key ? "active" : "")}
-                aria-current={page === key ? "page" : undefined}
+                className={"nav-item " + (sub ? "nav-sub-item " : "") + (view === key ? "active" : "")}
+                aria-current={view === key ? "page" : undefined}
               >
                 <Icon name={icon} />
                 <span>{label}</span>
@@ -1687,7 +1843,7 @@ export default function App() {
                     {applications.filter((a) => a.status !== "Issued").length}
                   </span>
                 )}
-                {key === "policies" && profile?.canManagePolicies && pendingPolicies.length > 0 && (
+                {key === "policies" && can(profile, "UPDATE_POLICY") && pendingPolicies.length > 0 && (
                   <span className="nav-count" title="Customer purchases awaiting payment">
                     {pendingPolicies.length}
                   </span>
@@ -1705,9 +1861,9 @@ export default function App() {
                   aria-expanded={open}
                   aria-controls={panelId}
                   onClick={() => {
-                    // Customers goes to its own page and opens; any other group just opens or closes.
-                    // One group open at a time, so the whole sidebar fits on one screen.
-                    if (group.page && page !== group.page) {
+                    // Customers goes to its own page (when the user may open it) and opens; any other group just
+                    // opens or closes. One group open at a time, so the whole sidebar fits on one screen.
+                    if (group.page && view !== group.page && canOpen(profile, group.page)) {
                       setNavOpen({ [group.key]: true });
                       go(group.page);
                     } else {
@@ -1741,7 +1897,7 @@ export default function App() {
           </div>
           <a
             href="#/settings"
-            className={"nav-item " + (page === "settings" ? "active" : "")}
+            className={"nav-item " + (view === "settings" ? "active" : "")}
             onClick={(e) => {
               e.preventDefault();
               go("settings");
@@ -1796,14 +1952,60 @@ export default function App() {
               <kbd>⌘ K</kbd>
             </button>
             <ThemeSwitch compact />
-            <button
-              className="icon-btn notification"
-              aria-label="View notifications"
-              onClick={() => setModal({ type: "notifications" })}
-            >
-              <Icon name="Bell" />
-              {notifications && <i />}
-            </button>
+            <div className="alerts-menu" ref={alertsRef}>
+              <button
+                type="button"
+                className="icon-btn notification"
+                aria-label={alertItems.length ? "Alerts, " + alertItems.length + " to look at" : "Alerts"}
+                aria-haspopup="true"
+                aria-expanded={alertsOpen}
+                onClick={() => {
+                  if (!alertsOpen) loadAlerts();
+                  setAlertsOpen((o) => !o);
+                }}
+              >
+                <Icon name="Bell" />
+                {notifications && alertItems.length > 0 && (
+                  <span className="alerts-count" aria-hidden="true">
+                    {alertItems.length > 9 ? "9+" : alertItems.length}
+                  </span>
+                )}
+              </button>
+              {alertsOpen && (
+                <div className="cd-menu alerts-dropdown" role="region" aria-label="Alerts">
+                  <div className="alerts-head">
+                    <strong>Alerts</strong>
+                    <small>{alertItems.length ? alertItems.length + " to look at" : "All clear"}</small>
+                  </div>
+                  {alertItems.length === 0 ? (
+                    <div className="cd-menu-note">Nothing needs your attention right now.</div>
+                  ) : (
+                    alertItems.map((item) => {
+                      const Tag = item.page ? "button" : "div";
+                      const link = item.page
+                        ? {
+                            type: "button",
+                            onClick: () => {
+                              setAlertsOpen(false);
+                              go(item.page);
+                            },
+                          }
+                        : {};
+                      return (
+                        <Tag key={item.key} {...link} className={"cd-menu-item alerts-item " + item.tone}>
+                          <Icon name={item.icon} small />
+                          <span className="cd-menu-text">
+                            <span>{item.title}</span>
+                            {item.body && <small className="cd-menu-hint">{item.body}</small>}
+                            {item.at && <small className="alerts-time">{when(item.at)}</small>}
+                          </span>
+                        </Tag>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+            </div>
             <button
               className="avatar profile-button"
               aria-label="Your profile"
@@ -1813,21 +2015,46 @@ export default function App() {
             </button>
           </div>
         </header>
-        <AnimatedWorkspace page={page} key={page}>
-          {page === "overview" ? (
+        {/* Emergency access (Nsure Life NS-SH11-003): the holder always sees what they hold and until when. */}
+        {profile?.emergencyAccess?.length > 0 && (
+          <div className="notice emergency-banner" role="status">
+            <Icon name="ShieldAlert" />
+            <p>
+              <strong>Emergency access active:</strong>{" "}
+              {profile.emergencyAccess
+                .map(
+                  (grant) =>
+                    grant.permission +
+                    " until " +
+                    new Date(grant.expiresAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) +
+                    " (granted by " +
+                    grant.grantedBy +
+                    ")",
+                )
+                .join("; ")}
+              . Everything you do with it is audited and reviewed afterwards.
+            </p>
+          </div>
+        )}
+        <AnimatedWorkspace page={view} key={view}>
+          {/* A typed address the user may not open shows why, never the page (spec 04 A-9). */}
+          {!canOpen(profile, view) ? (
+            NoAccess()
+          ) : view === "overview" ? (
             Overview()
-          ) : page === "customers" ? (
+          ) : view === "customers" ? (
             Customers()
           ) : ["applications", "policies", "claims", "collections"].includes(
-              page,
+              view,
             ) ? (
-            RecordsPage({ kind: page })
-          ) : page === "products" ? (
+            RecordsPage({ kind: view })
+          ) : view === "products" ? (
             Products()
-          ) : page === "rate-tables" ? (
-            <RateTables session={session} notify={notify} />
-          ) : page === "product-config" ? (
+          ) : view === "rate-tables" ? (
+            <RateTables session={session} notify={notify} profile={profile} />
+          ) : view === "product-config" ? (
             <ProductConfig
+              profile={profile}
               records={productConfigs}
               setRecords={setProductConfigs}
               notify={notify}
@@ -1841,40 +2068,37 @@ export default function App() {
                 return saved.data;
               }}
             />
-          ) : page === "schemes" ? (
+          ) : view === "schemes" ? (
+            // Group administration with READ_SCHEME; READ_POLICY alone keeps the older scheme overview.
             can(profile, "READ_SCHEME") ? (
               <GroupAdmin session={session} notify={notify} profile={profile} />
             ) : (
               Schemes()
             )
-          ) : page === "reports" ? (
+          ) : view === "reports" ? (
             <ManagementReports session={session} notify={notify} profile={profile} go={go} />
-          ) : page === "finance" ? (
+          ) : view === "finance" ? (
             <Finance session={session} notify={notify} profile={profile} />
-          ) : page === "distribution" ? (
+          ) : view === "distribution" ? (
             <Distribution session={session} notify={notify} profile={profile} />
-          ) : page === "reinsurance" ? (
+          ) : view === "reinsurance" ? (
             <Reinsurance session={session} notify={notify} profile={profile} />
-          ) : page === "service-desk" ? (
+          ) : view === "service-desk" ? (
             <ServiceDesk session={session} notify={notify} profile={profile} />
-          ) : page === "communications" ? (
+          ) : view === "communications" ? (
             <Communications session={session} notify={notify} profile={profile} />
-          ) : page === "integration" ? (
+          ) : view === "integration" ? (
             <IntegrationMonitor session={session} notify={notify} profile={profile} />
-          ) : page === "configuration" ? (
+          ) : view === "configuration" ? (
             <ConfigReleases session={session} notify={notify} profile={profile} products={products} />
-          ) : page === "access" ? (
-            profile?.superAdmin ? (
-              <AccessAdmin session={session} notify={notify} />
-            ) : (
-              <Panel title="Access is limited">
-                <p>Only a super admin can manage roles, permissions, and users.</p>
-              </Panel>
-            )
-          ) : page === "settings" ? (
+          ) : view === "access" ? (
+            <AccessAdmin session={session} notify={notify} profile={profile} />
+          ) : view === "controls" ? (
+            <Controls session={session} notify={notify} profile={profile} />
+          ) : view === "settings" ? (
             Settings()
           ) : (
-            Overview()
+            NoAccess()
           )}
           <footer className="page-footer">
             <span>
@@ -1898,9 +2122,7 @@ export default function App() {
                     ? modal.record.name
                     : modal.type === "census"
                       ? "Explore a census import"
-                      : modal.type === "notifications"
-                        ? "Your latest updates"
-                        : modal.type === "reset"
+                      : modal.type === "reset"
                           ? "Reset this workspace?"
                           : modal.type === "command"
                             ? "Your workspace, one shortcut away."
@@ -1912,17 +2134,27 @@ export default function App() {
           {modal.type === "command" && (
             <ActionSearch
               actions={[
-                {
-                  id: "new-application",
-                  label: "New application",
-                  description: "Start an application wizard",
-                },
-                {
-                  id: "new-claim",
-                  label: "Register a claim",
-                  description: "Open sample claim intake",
-                },
-                ...navItems.map(([id, label]) => ({
+                // Only what this user may do: the two shortcuts need their create permission, and the pages are the
+                // sidebar's, which the access map has already filtered.
+                ...(canDo(profile, "newApplication")
+                  ? [
+                      {
+                        id: "new-application",
+                        label: "New application",
+                        description: "Start an application wizard",
+                      },
+                    ]
+                  : []),
+                ...(canDo(profile, "newClaim")
+                  ? [
+                      {
+                        id: "new-claim",
+                        label: "Register a claim",
+                        description: "Open sample claim intake",
+                      },
+                    ]
+                  : []),
+                ...menuItems.map(([id, label]) => ({
                   id,
                   label,
                   description: "Open the " + label.toLowerCase() + " workspace",
@@ -2015,7 +2247,7 @@ export default function App() {
           )}
           {modal.type === "claim" && (
             <ClaimLodgeForm
-              policies={policies.filter((p) => ["Active", "Lapsed"].includes(p.status))}
+              policies={policies.filter((p) => ["Active", NO_COVER, "Lapsed"].includes(p.status))}
               onCancel={close}
               onSave={async (data) => {
                 try {
@@ -2047,53 +2279,6 @@ export default function App() {
               }}
             />
           )}
-          {modal.type === "notifications" && (
-            <div className="activity-list">
-              {[
-                ...(profile?.canManagePolicies && pendingPolicies.length
-                  ? [
-                      [
-                        pendingPolicies.length === 1
-                          ? "A policy is awaiting its first premium"
-                          : pendingPolicies.length + " policies are awaiting their first premium",
-                        "Record the payment, or cancel a purchase the customer no longer wants.",
-                        "policies",
-                      ],
-                    ]
-                  : []),
-                [
-                  "Underwriting needs a look",
-                  "Two applications are waiting for a review.",
-                  "applications",
-                ],
-                [
-                  "A claim needs evidence",
-                  "Naledi’s hospital claim is awaiting documents.",
-                  "claims",
-                ],
-                [
-                  "Your next team opportunity",
-                  "Explore the latest group scheme activity.",
-                  "schemes",
-                ],
-              ].map(([t, d, p]) => (
-                <button
-                  className="notification-item"
-                  key={t}
-                  onClick={() => go(p)}
-                >
-                  <span className="stat-icon green">
-                    <Icon name="Bell" />
-                  </span>
-                  <span>
-                    <strong>{t}</strong>
-                    <p>{d}</p>
-                  </span>
-                  <Icon name="ChevronRight" />
-                </button>
-              ))}
-            </div>
-          )}
           {modal.type === "reset" && (
             <>
               <p>
@@ -2118,26 +2303,34 @@ export default function App() {
               policies={policies}
               claims={claims}
               onGo={go}
-              onIssue={issue}
-              onApprove={async (record) => {
-                const updated = await request(session, "/portfolio/applications/" + record.id, {
-                  method: "PUT",
-                  body: { status: "Ready to issue" },
-                });
-                setApplications((a) => a.map((x) => (x.id === record.id ? updated.data : x)));
-                setModal({
-                  type: "detail",
-                  entity: "application",
-                  record: updated.data,
-                });
-                notify("Underwriting accepted and saved.");
-              }}
+              onIssue={canDo(profile, "issuePolicy") ? issue : null}
+              onApprove={
+                canDo(profile, "acceptUnderwriting")
+                  ? async (record) => {
+                      try {
+                        const updated = await request(session, "/portfolio/applications/" + record.id, {
+                          method: "PUT",
+                          body: { status: "Ready to issue" },
+                        });
+                        setApplications((a) => a.map((x) => (x.id === record.id ? updated.data : x)));
+                        setModal({
+                          type: "detail",
+                          entity: "application",
+                          record: updated.data,
+                        });
+                        notify("Underwriting accepted and saved.");
+                      } catch (error) {
+                        notify(error.message, "error");
+                      }
+                    }
+                  : null
+              }
               session={session}
               profile={profile}
               onPolicyUpdated={policyUpdated}
               onClaimUpdated={claimUpdated}
-              canReviewKyc={Boolean(profile?.canReviewKyc)}
-              canReviewEdd={Boolean(profile?.canReviewEdd)}
+              canReviewKyc={can(profile, "KYC_CUSTOMER")}
+              canReviewEdd={can(profile, "EDD_CUSTOMER")}
               onEdd={async (record, decision, reason) => {
                 const updated = await reviewEdd(record, decision, reason);
                 if (updated) setModal({ type: "detail", entity: "customer", record: updated });
@@ -2148,22 +2341,30 @@ export default function App() {
                 if (updated) setModal({ type: "detail", entity: "customer", record: updated });
                 return Boolean(updated);
               }}
-              onAddPolicy={(record) =>
-                setModal({ type: "policy", customer: record.name })
+              onAddPolicy={
+                canDo(profile, "newPolicy") ? (record) => setModal({ type: "policy", customer: record.name }) : null
               }
-              onReceipt={async (r) => {
-                const updated = await request(session, "/portfolio/receipts/" + r.id, {
-                  method: "PUT",
-                  body: { status: "Paid" },
-                });
-                setReceipts((a) => a.map((x) => (x.id === r.id ? updated.data : x)));
-                setModal({
-                  type: "detail",
-                  entity: "collection",
-                  record: updated.data,
-                });
-                notify("Receipt saved.");
-              }}
+              onReceipt={
+                canDo(profile, "recordReceipt")
+                  ? async (r) => {
+                      try {
+                        const updated = await request(session, "/portfolio/receipts/" + r.id, {
+                          method: "PUT",
+                          body: { status: "Paid" },
+                        });
+                        setReceipts((a) => a.map((x) => (x.id === r.id ? updated.data : x)));
+                        setModal({
+                          type: "detail",
+                          entity: "collection",
+                          record: updated.data,
+                        });
+                        notify("Receipt saved.");
+                      } catch (error) {
+                        notify(error.message, "error");
+                      }
+                    }
+                  : null
+              }
               notify={notify}
             />
           )}
@@ -2560,8 +2761,8 @@ function CustomerDirectory({
     fn();
   };
   const actions = [
-    { label: "Add customer", icon: "UserPlus", onClick: onAddCustomer },
-    {
+    onAddCustomer && { label: "Add customer", icon: "UserPlus", onClick: onAddCustomer },
+    onAddPolicy && {
       label: "Add policy",
       icon: "ShieldCheck",
       disabled: !single || single.kycStatus !== "VERIFIED",
@@ -3389,13 +3590,15 @@ function Detail({
                 {canReviewEdd && r.kycStatus === "VERIFIED" && r.eddStatus === "PENDING" && (
                   <ReasonAction label="Reject EDD" onConfirm={(reason) => onEdd(r, "FAILED", reason)} />
                 )}
-                <Button
-                  icon="ShieldCheck"
-                  disabled={r.kycStatus !== "VERIFIED"}
-                  onClick={() => onAddPolicy(r)}
-                >
-                  Add policy
-                </Button>
+                {onAddPolicy && (
+                  <Button
+                    icon="ShieldCheck"
+                    disabled={r.kycStatus !== "VERIFIED"}
+                    onClick={() => onAddPolicy(r)}
+                  >
+                    Add policy
+                  </Button>
+                )}
               </div>
             </>
           ) : entity === "scheme" ? (
@@ -3455,7 +3658,7 @@ function Detail({
                 <PolicyAttributesPanel
                   session={session}
                   policyRef={r.id}
-                  canEdit={Boolean(profile?.canManagePolicies)}
+                  canEdit={can(profile, "UPDATE_POLICY")}
                   notify={notify}
                 />
               )}
@@ -3463,7 +3666,7 @@ function Detail({
                 <PolicyWorkflowPanel
                   session={session}
                   policy={r}
-                  canManage={Boolean(profile?.canManagePolicies)}
+                  canManage={can(profile, "UPDATE_POLICY")}
                   onUpdated={onPolicyUpdated}
                   notify={notify}
                 />
@@ -3511,7 +3714,7 @@ function Detail({
                 </>
               )}
               <div className="detail-actions">
-                {issuing && (
+                {issuing && onIssue && (
                   <Button
                     icon="ShieldCheck"
                     disabled={identityStatus !== "Verified" || missingRequired.length > 0}
@@ -3528,6 +3731,7 @@ function Detail({
                   </Button>
                 )}
                 {entity === "application" &&
+                  onApprove &&
                   ["Under review", "Evidence needed", "Draft"].includes(
                     r.status,
                   ) && (
@@ -3539,7 +3743,7 @@ function Detail({
                       Simulate underwriting acceptance
                     </Button>
                   )}
-                {entity === "collection" && r.status !== "Paid" && (
+                {entity === "collection" && r.status !== "Paid" && onReceipt && (
                   <Button icon="Wallet" onClick={() => onReceipt(r)}>
                     Record receipt
                   </Button>
@@ -3574,8 +3778,8 @@ function Detail({
           session={session}
           claim={r}
           basePath={"/portfolio/claims/" + r.id + "/documents"}
-          canUpload={Boolean(profile?.canLodgeClaims || profile?.canUpdateClaims || profile?.canAssessClaims)}
-          canGenerate={Boolean(profile?.canLodgeClaims || profile?.canUpdateClaims || profile?.canAssessClaims)}
+          canUpload={["UPDATE_CLAIM", "CREATE_CLAIM", "ASSESS_CLAIM"].some((code) => can(profile, code))}
+          canGenerate={["UPDATE_CLAIM", "CREATE_CLAIM", "ASSESS_CLAIM"].some((code) => can(profile, code))}
           onUploaded={(documents) => onClaimUpdated({ ...r, documents })}
           notify={notify}
         />
@@ -3584,7 +3788,7 @@ function Detail({
           session={session}
           policy={r}
           basePath={"/portfolio/policies/" + r.id + "/documents"}
-          canGenerate={Boolean(profile?.canManagePolicies)}
+          canGenerate={can(profile, "CREATE_POLICY") || can(profile, "UPDATE_POLICY")}
           onUploaded={(documents) => onPolicyUpdated({ ...r, documents })}
           notify={notify}
         />

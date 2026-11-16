@@ -23,8 +23,26 @@ export { Dialog, Drawer, useConfirm } from "./overlay";
 // communications, service desk, integration, reports). They reuse the app's own classes (page-heading, panel,
 // data-table, badge, btn, filter-tab, form-label) so new pages look like the existing ones.
 
+// /me booleans that predate the permissions list. The list is the source of truth (explicit grants plus active
+// emergency access; a portal customer's is empty); these keep an older profile shape working.
+const LEGACY_FLAGS = {
+  KYC_CUSTOMER: "canReviewKyc",
+  EDD_CUSTOMER: "canReviewEdd",
+  UPDATE_POLICY: "canManagePolicies",
+  CREATE_CLAIM: "canLodgeClaims",
+  UPDATE_CLAIM: "canUpdateClaims",
+  ASSESS_CLAIM: "canAssessClaims",
+  APPROVE_CLAIM: "canApproveClaims",
+  REJECT_CLAIM: "canRejectClaims",
+  SETTLE_CLAIM: "canSettleClaims",
+};
+
+/**
+ * Whether the signed-in user holds a permission code: the same code the API checks (spec 04 A-9). Deny by default
+ * (Nsure Life NS-SH11-002): no role, the administrator included, passes by name.
+ */
 export const can = (profile, code) =>
-  Boolean(profile?.superAdmin || profile?.permissions?.includes(code));
+  Boolean(profile?.permissions?.includes(code) || (LEGACY_FLAGS[code] && profile?.[LEGACY_FLAGS[code]]));
 
 export const pula = (value) =>
   "BWP " +
@@ -81,9 +99,10 @@ const RED = /failed|rejected|declined|suspended|lapsed|cancelled|breach|suspense
 
 export function Badge({ children, tone }) {
   const s = String(children ?? "").toLowerCase();
+  // "Active - No Cover" (in force, cover paused) is a warning even though it says active.
   const color =
     tone ||
-    (RED.test(s) ? "red" : GREEN.test(s) ? "green" : AMBER.test(s) ? "amber" : "blue");
+    (RED.test(s) ? "red" : /no cover/.test(s) ? "amber" : GREEN.test(s) ? "green" : AMBER.test(s) ? "amber" : "blue");
   return (
     <span className={"badge " + color}>
       <span className="status-dot" />

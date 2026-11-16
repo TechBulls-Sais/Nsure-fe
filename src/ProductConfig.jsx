@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import "./product-config.css";
 import { StepReveal, BorderBeam } from "./ui/animated";
+import { can } from "./ui/workspace";
 
 const base = {
   name: "",
@@ -82,14 +83,23 @@ function Status({ value }) {
 }
 const amount = (v, c = "BWP") => c + " " + Number(v).toLocaleString("en-GB");
 
-export default function ProductConfig({ records, setRecords, notify, onSaveRecord }) {
+export default function ProductConfig({ profile, records, setRecords, notify, onSaveRecord }) {
+  // The product-config endpoints' codes: create (POST), edit (PUT), and making a configuration Active.
+  const canCreate = can(profile, "CREATE_PRODUCT");
+  const canUpdate = can(profile, "UPDATE_PRODUCT");
+  const canActivate = can(profile, "ACTIVATE_PRODUCT");
   const [editing, setEditing] = useState(null);
   const [step, setStep] = useState(0);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const [errors, setErrors] = useState({});
   const [cancelConfirm, setCancelConfirm] = useState(false);
+  const [readOnly, setReadOnly] = useState(false);
+  // Saving needs CREATE_PRODUCT for a new configuration and UPDATE_PRODUCT for a saved one.
+  const canSave = !readOnly && (editing?.id ? canUpdate : canCreate);
   const start = (record, copy = false) => {
+    // Opening a saved configuration without UPDATE_PRODUCT shows it read-only.
+    setReadOnly(Boolean(record) && !copy && !canUpdate);
     setEditing(
       record
         ? {
@@ -172,6 +182,7 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
     return Object.keys(e).length === 0;
   };
   const save = async (status) => {
+    if (!canSave || (status === "Active" && !canActivate)) return;
     if (status === "Draft") {
       if (!validate(0)) {
         setStep(0);
@@ -184,7 +195,13 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
       status,
       version: editing.id ? (editing.version || 1) + 1 : 1,
     };
-    const saved = onSaveRecord ? await onSaveRecord(draft) : { ...draft, id: editing.id || "CFG-NEW" };
+    let saved;
+    try {
+      saved = onSaveRecord ? await onSaveRecord(draft) : { ...draft, id: editing.id || "CFG-NEW" };
+    } catch (error) {
+      notify(error.message, "error");
+      return;
+    }
     setRecords((list) =>
       editing.id
         ? list.map((p) => (p.id === editing.id ? saved : p))
@@ -220,10 +237,12 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
               time.
             </p>
           </div>
-          <button className="btn primary" onClick={() => start()}>
-            <Plus className="icon icon-sm" />
-            Create product
-          </button>
+          {canCreate && (
+            <button className="btn primary" onClick={() => start()}>
+              <Plus className="icon icon-sm" />
+              Create product
+            </button>
+          )}
         </div>
         <div className="config-banner">
           <div className="config-banner-icon">
@@ -344,17 +363,19 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
                         <button
                           className="text-link"
                           onClick={() => start(p)}
-                          aria-label={"Configure " + p.name}
+                          aria-label={(canUpdate ? "Configure " : "View ") + p.name}
                         >
-                          Configure <ChevronRight size={14} />
+                          {canUpdate ? "Configure" : "View"} <ChevronRight size={14} />
                         </button>
-                        <button
-                          className="icon-btn"
-                          onClick={() => start(p, true)}
-                          aria-label={"Duplicate " + p.name}
-                        >
-                          <Copy size={15} />
-                        </button>
+                        {canCreate && (
+                          <button
+                            className="icon-btn"
+                            onClick={() => start(p, true)}
+                            aria-label={"Duplicate " + p.name}
+                          >
+                            <Copy size={15} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -382,7 +403,7 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
         <div>
           <button
             className="text-link config-back"
-            onClick={() => setCancelConfirm(true)}
+            onClick={() => (readOnly ? setEditing(null) : setCancelConfirm(true))}
           >
             <ArrowLeft size={15} /> All configurations
           </button>
@@ -393,14 +414,16 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
           </h1>
           <p className="subtitle">
             {editing.id
-              ? editing.code + " · Editing configuration"
+              ? editing.code + (canSave ? " · Editing configuration" : " · Read only: changing it needs UPDATE_PRODUCT")
               : "A guided setup, from the essentials to the finishing touches."}
           </p>
         </div>
-        <button className="btn secondary" onClick={() => save("Draft")}>
-          <Save size={16} />
-          Save draft
-        </button>
+        {canSave && (
+          <button className="btn secondary" onClick={() => save("Draft")}>
+            <Save size={16} />
+            Save draft
+          </button>
+        )}
       </div>
       {cancelConfirm && (
         <div className="config-confirm" role="alert">
@@ -463,7 +486,7 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
             if (step < 3 && validate(step)) {
               setStep(step + 1);
               window.scrollTo(0, 0);
-            } else if (step === 3) save("In review");
+            } else if (step === 3 && canSave) save("In review");
           }}
         >
           <div className="config-form-heading">
@@ -796,14 +819,14 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
               type="button"
               className="btn secondary"
               onClick={() =>
-                step > 0 ? setStep(step - 1) : setCancelConfirm(true)
+                step > 0 ? setStep(step - 1) : readOnly ? setEditing(null) : setCancelConfirm(true)
               }
             >
               <ArrowLeft size={15} />
               {step > 0 ? "Back" : "Cancel"}
             </button>
             <div>
-              {step === 3 && (
+              {step === 3 && canSave && canActivate && (
                 <button
                   type="button"
                   className="btn secondary"
@@ -813,10 +836,12 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
                   Activate
                 </button>
               )}
-              <button type="submit" className="btn primary">
-                {step === 3 ? "Submit for review" : "Continue"}
-                <ArrowRight size={15} />
-              </button>
+              {(step < 3 || canSave) && (
+                <button type="submit" className="btn primary">
+                  {step === 3 ? "Submit for review" : "Continue"}
+                  <ArrowRight size={15} />
+                </button>
+              )}
             </div>
           </div>
         </form>

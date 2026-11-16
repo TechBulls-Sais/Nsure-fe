@@ -9,6 +9,7 @@ import {
   Eye,
   FileText,
   RotateCcw,
+  ShieldAlert,
   ShieldCheck,
   Trash2,
   Upload,
@@ -19,14 +20,56 @@ import {
 import { fetchFile, request, uploadFile } from "./api";
 import { money } from "./data";
 import { useConfirm } from "./ui/overlay";
+import { can as holds } from "./ui/workspace";
 import "./workflow.css";
+import "./access.css";
 
 // The demo server's checkout methods, and the ways a claim or beneficiary can be paid out.
 export const PAYMENT_METHODS = ["Orange Money", "MyZaka", "Card", "Bank EFT"];
 export const PAYOUT_METHODS = ["Bank Account", "Mobile Wallet"];
 export const RELATIONSHIPS = ["Spouse", "Child", "Parent", "Sibling", "Other"];
 
-export const POLICY_STATES = ["Pending Payment", "Active", "Lapsed", "Expired", "Cancelled"];
+// Spec 10 §1.3, as PolicyWorkflow on the server names them. "Active - No Cover": the grace period ended unpaid, so the
+// policy stays in force for up to 3 months without cover; paying resumes cover with no new waiting period.
+// "Claimed": ended by a paid claim.
+export const NO_COVER = "Active - No Cover";
+export const POLICY_STATES = ["Pending Payment", "Active", NO_COVER, "Lapsed", "Expired", "Cancelled", "Claimed"];
+/** In force: cover running, or paused (no cover) but still revivable by paying. */
+export const IN_FORCE_STATES = ["Active", NO_COVER];
+/** A premium can be collected (first premium, renewal, or reinstatement from no cover). */
+export const PAYABLE_STATES = ["Pending Payment", "Active", NO_COVER];
+/** Staff can cancel these, with a reason. */
+export const CANCELLABLE_STATES = ["Pending Payment", "Active", NO_COVER];
+/** Beneficiaries can still be changed (the server refuses Cancelled, Expired and Lapsed). */
+const BENEFICIARY_STATES = ["Pending Payment", "Active", NO_COVER];
+/** TC-18 / TC-20: months a policy stays in force without cover before it lapses. */
+export const NO_COVER_MONTHS = 3;
+
+/** The date a no-cover policy lapses unless paid: cover end (its unpaid due date) plus three months. */
+export function noCoverLapsesOn(policy) {
+  const from = policy?.nextPremiumDue || policy?.gracePeriodEnd;
+  if (!from) return "";
+  const date = new Date(from.slice(0, 10) + "T00:00:00");
+  if (Number.isNaN(date.getTime())) return "";
+  const dayOfMonth = date.getDate();
+  date.setMonth(date.getMonth() + NO_COVER_MONTHS);
+  // Like the server's plusMonths: 30 Nov + 3 months is 28 Feb, not 2 March.
+  if (date.getDate() !== dayOfMonth) date.setDate(0);
+  // Local parts, not toISOString(): east of UTC that would give the day before.
+  const pad = (n) => String(n).padStart(2, "0");
+  return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
+}
+
+/** Badge colour for a policy state: in force green, waiting or paused amber, ended red, closed by a claim blue. */
+export function policyTone(status) {
+  const s = String(status || "").toLowerCase();
+  if (s === NO_COVER.toLowerCase() || s === "pending payment") return "amber";
+  if (s === "active") return "green";
+  if (s === "claimed") return "blue";
+  if (["lapsed", "expired", "cancelled"].includes(s)) return "red";
+  return null;
+}
+
 export const CLAIM_STATES = ["Initiated", "Under Review", "Recommended", "Approved", "Rejected", "Paid"];
 
 const OPEN_CLAIM = ["Initiated", "Under Review", "Recommended"];
@@ -38,6 +81,16 @@ const SOFT_CHECKS = ["Beneficiary Match", "No Duplicate"];
 
 /** The claims list's audit filter: approved or paid despite failed checks, or without checks. */
 export const NEEDS_AUDIT = "Needs audit";
+
+/** The coded gate that kept a claim from straight-through processing (spec 12 C-12), in words. */
+export const STP_INELIGIBLE_LABELS = {
+  CHECKS_FAILED: "A claim check failed",
+  STP_DISABLED: "Straight-through processing is switched off",
+  OVER_CEILING: "The payout is over the STP ceiling",
+  NO_VERIFIED_PAYOUT: "No verified payout account to pay",
+  PRODUCT_OPT_OUT: "The product is opted out of STP",
+  CLAIM_LIMIT: "The policy reached its yearly claim limit",
+};
 
 function Btn({ icon: I, variant = "primary", children, ...props }) {
   return (
@@ -163,15 +216,17 @@ function fileSize(bytes) {
  */
 export function ClaimDocuments({ claim, ...props }) {
   const closed = ["Paid", "Rejected"].includes(claim.status);
-  const issued = (claim.documents || []).some((d) => d.type === "Claim summary");
-  const interimIssued = (claim.documents || []).some((d) => d.type === "Interim claim summary");
+  // Superseded documents are kept (Blueprint §8) but no longer count as issued.
+  const current = (claim.documents || []).filter((d) => d.status !== "SUPERSEDED");
+  const issued = current.some((d) => d.type === "Claim summary");
+  const interimIssued = current.some((d) => d.type === "Interim claim summary");
   // An open claim gets an interim summary (re-issuing replaces it); a closed one gets its final summary, once.
   const generate = closed
     ? {
         slug: "summary",
         label: "Issue claim summary",
         hint: "A one-time PDF recording the claim as decided: checks, decision, payment, documents and timeline."
-          + (interimIssued ? " It replaces the interim summary." : ""),
+          + (interimIssued ? " It supersedes the interim summary, which is kept." : ""),
         done: "Claim summary issued.",
         blocked: issued ? "This claim's summary has been issued. A summary is issued once per claim." : null,
         hideWhenBlocked: issued,
@@ -181,7 +236,7 @@ export function ClaimDocuments({ claim, ...props }) {
         label: interimIssued ? "Update interim summary" : "Issue interim summary",
         hint:
           "A PDF of the claim so far, marked as not yet decided."
-          + (interimIssued ? " Updating replaces the current interim summary." : "")
+          + (interimIssued ? " Updating supersedes the current interim summary; the earlier one is kept." : "")
           + " The final summary is issued once the claim is paid or rejected.",
         done: interimIssued ? "Interim summary updated." : "Interim summary issued.",
         blocked: null,
@@ -201,7 +256,7 @@ export function ClaimDocuments({ claim, ...props }) {
  * issued once per policy, after the first premium starts cover; a new or renewed policy gets its own.
  */
 export function PolicyDocuments({ policy, ...props }) {
-  const issued = (policy.documents || []).some((d) => d.type === "Policy schedule");
+  const issued = (policy.documents || []).some((d) => d.type === "Policy schedule" && d.status !== "SUPERSEDED");
   return (
     <DocumentsPanel
       record={policy}
@@ -230,6 +285,31 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [inputKey, setInputKey] = useState(0);
+  const [reissuing, setReissuing] = useState(null);
+  const [reason, setReason] = useState("");
+  // Staff may reissue the current policy schedule with a reason (Blueprint §8); the old one is kept as superseded.
+  const mayReissue = (doc) =>
+    canGenerate && !basePath.includes("/shop/") && doc.type === "Policy schedule" && doc.status !== "SUPERSEDED";
+  const byId = new Map(documents.map((d) => [d.id, d]));
+
+  const reissue = async (doc) => {
+    if (reason.trim().length < 5) return;
+    setBusy(true);
+    try {
+      const result = await request(session, basePath + "/" + doc.id + "/reissue", {
+        method: "POST",
+        body: { reason: reason.trim() },
+      });
+      onUploaded(result.data);
+      notify("Schedule reissued. The earlier one is kept as superseded.");
+      setReissuing(null);
+      setReason("");
+    } catch (error) {
+      notify(error.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const choose = (event) => {
     const picked = event.target.files?.[0] || null;
@@ -315,13 +395,43 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
       ) : (
         <ul className="wf-doc-list">
           {documents.map((doc) => (
-            <li key={doc.id}>
+            <li key={doc.id} className={doc.status === "SUPERSEDED" ? "wf-doc-superseded" : undefined}>
               <FileText size={18} aria-hidden="true" />
               <div>
-                <strong>{doc.type}</strong>
+                <strong>
+                  {doc.type}
+                  {doc.status === "SUPERSEDED" && <em className="wf-tag">Superseded</em>}
+                </strong>
                 <small>
                   {doc.fileName} · {fileSize(doc.size)} · {doc.uploadedBy}, {formatDate(doc.uploadedAt)}
+                  {doc.sha256 && (
+                    <span title={"SHA-256 " + doc.sha256}> · SHA-256 {doc.sha256.slice(0, 12)}…</span>
+                  )}
                 </small>
+                {doc.status === "SUPERSEDED" && (
+                  <small className="wf-doc-reason">
+                    Replaced{doc.supersededBy && byId.get(doc.supersededBy) ? " by " + byId.get(doc.supersededBy).fileName : ""}
+                    {doc.supersededReason ? ": " + doc.supersededReason : ""}
+                  </small>
+                )}
+                {reissuing === doc.id && (
+                  <span className="wf-doc-reissue">
+                    <input
+                      className="input"
+                      value={reason}
+                      maxLength={500}
+                      placeholder="Reason for the replacement, e.g. beneficiary name corrected"
+                      aria-label="Reason for reissuing"
+                      onChange={(e) => setReason(e.target.value)}
+                    />
+                    <Btn disabled={busy || reason.trim().length < 5} onClick={() => reissue(doc)}>
+                      {busy ? "Reissuing…" : "Reissue"}
+                    </Btn>
+                    <Btn variant="secondary" onClick={() => setReissuing(null)}>
+                      Cancel
+                    </Btn>
+                  </span>
+                )}
               </div>
               <span className="wf-doc-actions">
                 <Btn variant="secondary" icon={Eye} onClick={() => view(doc)} aria-label={"View " + doc.fileName}>
@@ -330,6 +440,11 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
                 <Btn variant="secondary" icon={Download} onClick={() => download(doc)} aria-label={"Download " + doc.fileName}>
                   Download
                 </Btn>
+                {mayReissue(doc) && reissuing !== doc.id && (
+                  <Btn variant="secondary" icon={FileText} onClick={() => { setReissuing(doc.id); setReason(""); }}>
+                    Reissue
+                  </Btn>
+                )}
               </span>
             </li>
           ))}
@@ -458,9 +573,10 @@ export function BeneficiaryForm({ onSave, busy }) {
   );
 }
 
-/** Choose a payment method and pay. */
-export function PayForm({ label = "Pay now", onPay, busy }) {
+/** Choose a payment method and pay. `hint(method)` may add a line under the button (e.g. "you'll leave this page"). */
+export function PayForm({ label = "Pay now", onPay, busy, hint }) {
   const [method, setMethod] = useState(PAYMENT_METHODS[0]);
+  const note = hint?.(method);
   return (
     <div className="wf-pay">
       <select className="input" aria-label="Payment method" value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -471,6 +587,7 @@ export function PayForm({ label = "Pay now", onPay, busy }) {
       <Btn icon={Wallet} disabled={busy} onClick={() => onPay(method)}>
         {label}
       </Btn>
+      {note && <small className="muted small wf-pay-hint">{note}</small>}
     </div>
   );
 }
@@ -566,7 +683,27 @@ export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, 
       {p.inGrace && (
         <div className="notice">
           <Clock3 size={18} aria-hidden="true" />
-          <p>The premium is overdue. The policy lapses on {formatDate(p.gracePeriodEnd)} unless it is paid.</p>
+          <p>
+            The premium is overdue. Cover ends on {formatDate(p.gracePeriodEnd)} unless it is paid; the policy then
+            stays in force without cover for {NO_COVER_MONTHS} months before it lapses.
+          </p>
+        </div>
+      )}
+      {p.status === NO_COVER && (
+        <div className="notice wf-warn">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <p>
+            <strong>In force, no cover.</strong> The grace period ended with the premium due{" "}
+            {formatDate(p.nextPremiumDue) || "on the due date"} unpaid, so no claim event is covered for now. A premium
+            collected restores cover from that day with no new waiting period
+            {noCoverLapsesOn(p) ? "; unpaid, the policy lapses after " + formatDate(noCoverLapsesOn(p)) : ""}.
+          </p>
+        </div>
+      )}
+      {p.status === "Claimed" && (
+        <div className="notice">
+          <CircleCheck size={18} aria-hidden="true" />
+          <p>This policy ended when a claim on it was paid. It can no longer be paid or changed.</p>
         </div>
       )}
       {p.status === "Cancelled" && p.reviewNote && (
@@ -577,12 +714,12 @@ export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, 
           </p>
         </div>
       )}
-      <h3 className="section-title">Beneficiaries · {p.beneficiaries?.length || 0} of 5</h3>
+      <h3 className="section-title">Beneficiaries · {p.beneficiaries?.length || 0} of {p.maxBeneficiaries || 5}</h3>
       <BeneficiaryList
         beneficiaries={p.beneficiaries}
         busy={busy}
         onRemove={
-          canManage && ["Pending Payment", "Active"].includes(p.status)
+          canManage && BENEFICIARY_STATES.includes(p.status)
             ? async (b) => {
                 const ok = await confirm({
                   title: "Remove " + b.fullName + "?",
@@ -595,41 +732,60 @@ export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, 
             : null
         }
       />
-      {canManage && ["Pending Payment", "Active"].includes(p.status) && (p.beneficiaries?.length || 0) < 5 && (
+      {canManage && BENEFICIARY_STATES.includes(p.status) && (p.beneficiaries?.length || 0) < (p.maxBeneficiaries || 5) && (
         <BeneficiaryForm
           busy={busy}
           onSave={(body) => call("/beneficiaries", { method: "POST", body }, "Beneficiary added.")}
         />
       )}
-      {canManage && ["Pending Payment", "Active"].includes(p.status) && (
+      {canManage && (PAYABLE_STATES.includes(p.status) || CANCELLABLE_STATES.includes(p.status)) && (
         <>
           <h3 className="section-title">
-            {p.status === "Pending Payment" ? "Collect the first premium" : "Record a premium"}
+            {p.status === "Pending Payment"
+              ? "Collect the first premium"
+              : p.status === NO_COVER
+                ? "Record a premium to restore cover"
+                : "Record a premium"}
           </h3>
           <p className="muted small">
             {p.status === "Pending Payment"
               ? "The policy goes Active with cover from today."
-              : "Moves the next due date on by one premium period."}{" "}
+              : p.status === NO_COVER
+                ? "The policy goes back to Active with cover from today and no new waiting period."
+                : "Moves the next due date on by one premium period."}{" "}
             Premium {money(p.premium)}.
           </p>
           <div className="detail-actions">
-            <PayForm
-              busy={busy}
-              label="Record payment"
-              onPay={(method) =>
-                call("/payments", { method: "POST", body: { method } }, "Payment recorded for " + p.id + ".")
-              }
-            />
-            {p.status === "Pending Payment" && (
+            {PAYABLE_STATES.includes(p.status) && (
+              <PayForm
+                busy={busy}
+                label="Record payment"
+                onPay={(method) =>
+                  call("/payments", { method: "POST", body: { method } }, "Payment recorded for " + p.id + ".")
+                }
+              />
+            )}
+            {CANCELLABLE_STATES.includes(p.status) && (
               <ReasonAction
                 label="Cancel policy"
                 busy={busy}
+                placeholder={
+                  p.status === "Pending Payment"
+                    ? "Reason (the customer is told why)"
+                    : "Reason, e.g. the policyholder's written request of 12 Nov (the customer is told why)"
+                }
                 onConfirm={(reason) =>
                   call("/cancel", { method: "POST", body: { reason } }, p.id + " is cancelled.")
                 }
               />
             )}
           </div>
+          {CANCELLABLE_STATES.includes(p.status) && p.status !== "Pending Payment" && (
+            <p className="muted small">
+              Cancelling an in-force policy needs the policyholder's written request. Within 30 days of the policy
+              start it is a cooling-off cancellation and the premiums are refundable.
+            </p>
+          )}
         </>
       )}
     </div>
@@ -643,8 +799,17 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const [editPayee, setEditPayee] = useState(false);
   const [payout, setPayout] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
+  const [fourEyesReason, setFourEyesReason] = useState("");
+  const [approveError, setApproveError] = useState("");
   const open = OPEN_CLAIM.includes(c.status);
+  // Legal from the claim's state (the server's list); whether this user may take it is the permission check below.
   const can = (action) => c.actions?.includes(action);
+  // Four-eyes: whoever assessed the claim may not also approve its payout, unless they hold the break-glass
+  // OVERRIDE_CLAIM_FOUR_EYES and write down why (the reason is kept on the claim and in the controls register).
+  const assessedByMe = Boolean(c.recommendedBy) && c.recommendedBy === profile?.username;
+  const breakGlass = assessedByMe && holds(profile, "OVERRIDE_CLAIM_FOUR_EYES");
+  const mayApprove = can("approve") && holds(profile, "APPROVE_CLAIM") && (!assessedByMe || breakGlass);
+  const stpLabel = c.stpIneligibleCode ? STP_INELIGIBLE_LABELS[c.stpIneligibleCode] || c.stpIneligibleCode : null;
   const result = (name) => c.checks?.find((check) => check.name === name)?.result;
   const hardFailed = HARD_CHECKS.filter((name) => result(name) === "Fail");
   const notChecked = HARD_CHECKS.some((name) => result(name) === "Pending");
@@ -663,7 +828,44 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
     }, done);
   const payee = c.payee || {};
   const payeeComplete = payee.name && payee.payoutMethod && payee.accountRef;
-  const canEditPayee = open && (profile?.canUpdateClaims || profile?.canAssessClaims);
+  const canEditPayee = open && (holds(profile, "UPDATE_CLAIM") || holds(profile, "ASSESS_CLAIM"));
+  const approve = async () => {
+    const amount = payout ? Number(payout) : c.amount;
+    const ok = await confirm({
+      title: "Approve " + c.id + "?",
+      message: (
+        <>
+          Approve a payout of <strong>{money(amount)}</strong>
+          {amount < c.amount ? " (partial, cover " + money(c.amount) + ")" : ""} to {payee.name || "the payee"}.
+          {breakGlass
+            ? " You assessed this claim, so this is a break-glass four-eyes override, recorded on the claim with your reason."
+            : ""}
+        </>
+      ),
+      confirmLabel: breakGlass ? "Override and approve" : "Approve payout",
+      tone: breakGlass ? "danger" : undefined,
+    });
+    if (!ok) return;
+    setApproveError("");
+    await run(async () => {
+      try {
+        const result = await request(session, "/portfolio/claims/" + c.id + "/approve", {
+          method: "POST",
+          body: {
+            ...(payout ? { payoutAmount: Number(payout) } : {}),
+            ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
+            ...(breakGlass ? { fourEyesOverrideReason: fourEyesReason.trim() } : {}),
+          },
+        });
+        onUpdated(result.data);
+        return result.data;
+      } catch (error) {
+        // An approval limit or four-eyes refusal (403) says who may approve instead; keep it next to the button.
+        setApproveError(error.message);
+        throw error;
+      }
+    }, c.id + " is approved.");
+  };
   return (
     <div className="wf-panel">
       <div className="detail-grid">
@@ -695,7 +897,12 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         All five passing pays the claim straight through. If Policy Active, Waiting Period or Premiums Paid fails,
         the claim can only be rejected; if Beneficiary Match or No Duplicate fails, it can be approved with a reason.
       </p>
-      {c.stpIneligibleReason && <p className="muted small">Not straight-through: {c.stpIneligibleReason}.</p>}
+      {(stpLabel || c.stpIneligibleReason) && (
+        <p className="muted small">
+          Not straight-through: <strong>{stpLabel || c.stpIneligibleReason}</strong>
+          {stpLabel && c.stpIneligibleReason && c.stpIneligibleReason !== stpLabel ? " (" + c.stpIneligibleReason + ")" : ""}.
+        </p>
+      )}
       {c.checks?.every((check) => check.result === "Not run") && (
         <p className="muted small">
           The checks never ran on this claim: it was recorded before the claim checks existed
@@ -798,11 +1005,20 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           {c.fourEyesApplied === true
             ? " · four-eyes applied"
             : c.fourEyesApplied === false
-              ? c.adjudicatedBy === c.recommendedBy
-                ? " · four-eyes overridden by super admin"
+              ? c.fourEyesOverrideReason
+                ? " · four-eyes overridden (break-glass)"
                 : " · four-eyes control was off"
               : ""}
         </p>
+      )}
+      {c.fourEyesOverrideReason && (
+        <div className="notice wf-alert">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <p>
+            <strong>Four-eyes override.</strong> {c.adjudicatedBy || "The approver"} approved a claim they assessed
+            themselves: {c.fourEyesOverrideReason}
+          </p>
+        </div>
       )}
       {c.checkOverrideReason && (
         <p className="muted small">
@@ -827,12 +1043,12 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
       )}
 
       <div className="detail-actions">
-        {open && profile?.canUpdateClaims && (
+        {open && holds(profile, "UPDATE_CLAIM") && (
           <Btn variant="secondary" icon={RotateCcw} disabled={busy} onClick={() => call("/checks", { method: "POST" }, "Checks re-run.")}>
             Re-run checks
           </Btn>
         )}
-        {can("assess") && profile?.canAssessClaims && (
+        {can("assess") && holds(profile, "ASSESS_CLAIM") && (
           <Btn
             icon={BadgeCheck}
             disabled={busy || !payeeComplete || !!blocked}
@@ -842,7 +1058,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             Assess &amp; recommend
           </Btn>
         )}
-        {can("approve") && profile?.canApproveClaims && !blocked && softFailed.length > 0 && (
+        {mayApprove && !blocked && softFailed.length > 0 && (
           <label className="form-label wf-override">
             <span>Reason for approving although {softFailed.join(" and ")} failed</span>
             <textarea
@@ -855,7 +1071,20 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             />
           </label>
         )}
-        {can("approve") && profile?.canApproveClaims && (
+        {mayApprove && breakGlass && !blocked && (
+          <label className="form-label wf-override wf-break-glass">
+            <span>Break-glass override — reason (recorded on the claim)</span>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              value={fourEyesReason}
+              onChange={(e) => setFourEyesReason(e.target.value)}
+              placeholder="e.g. Sole approver on duty; second approver unavailable until Monday"
+            />
+          </label>
+        )}
+        {mayApprove && (
           <span className="wf-pay">
             <input
               className="input"
@@ -869,46 +1098,27 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             />
             <Btn
               icon={Check}
-              disabled={busy || !!blocked || (softFailed.length > 0 && !overrideReason.trim())}
+              disabled={
+                busy ||
+                !!blocked ||
+                (softFailed.length > 0 && !overrideReason.trim()) ||
+                (breakGlass && !fourEyesReason.trim())
+              }
               title={
                 blocked ||
-                (softFailed.length > 0 && !overrideReason.trim() ? "Enter the reason for approving first" : undefined)
+                (softFailed.length > 0 && !overrideReason.trim()
+                  ? "Enter the reason for approving first"
+                  : breakGlass && !fourEyesReason.trim()
+                    ? "Enter the break-glass override reason first"
+                    : undefined)
               }
-              onClick={async () => {
-                const amount = payout ? Number(payout) : c.amount;
-                const ok = await confirm({
-                  title: "Approve " + c.id + "?",
-                  message: (
-                    <>
-                      Approve a payout of <strong>{money(amount)}</strong>
-                      {amount < c.amount ? " (partial, cover " + money(c.amount) + ")" : ""} to{" "}
-                      {payee.name || "the payee"}.
-                      {c.recommendedBy === profile?.username
-                        ? " You assessed this claim, so this is recorded as a four-eyes override."
-                        : ""}
-                    </>
-                  ),
-                  confirmLabel: "Approve payout",
-                });
-                if (!ok) return;
-                call(
-                  "/approve",
-                  {
-                    method: "POST",
-                    body: {
-                      ...(payout ? { payoutAmount: Number(payout) } : {}),
-                      ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
-                    },
-                  },
-                  c.id + " is approved.",
-                );
-              }}
+              onClick={approve}
             >
-              Approve
+              {breakGlass ? "Override and approve" : "Approve"}
             </Btn>
           </span>
         )}
-        {can("pay") && profile?.canSettleClaims && (
+        {can("pay") && holds(profile, "SETTLE_CLAIM") && (
           <Btn
             icon={Wallet}
             disabled={busy}
@@ -929,7 +1139,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             Pay out {money(c.payoutAmount)}
           </Btn>
         )}
-        {can("reject") && profile?.canRejectClaims && (
+        {can("reject") && holds(profile, "REJECT_CLAIM") && (
           <ReasonAction
             label="Reject"
             busy={busy}
@@ -937,10 +1147,15 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           />
         )}
       </div>
-      {c.status === "Recommended" && c.recommendedBy === profile?.username && (
+      {approveError && (
+        <p className="form-error" role="alert">
+          {approveError}
+        </p>
+      )}
+      {c.status === "Recommended" && assessedByMe && (
         <p className="muted small">
-          {profile?.superAdmin
-            ? "You assessed this claim. As super admin you can still approve it; it is recorded as a four-eyes override."
+          {breakGlass
+            ? "You assessed this claim. You hold the break-glass authority, so you may approve it only with a written reason; it is recorded on the claim and in the four-eyes register."
             : "You assessed this claim, so a different person must approve it (four-eyes)."}
         </p>
       )}
