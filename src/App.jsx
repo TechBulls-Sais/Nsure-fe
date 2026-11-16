@@ -140,6 +140,7 @@ import Reinsurance from "./Reinsurance";
 import Underwriting from "./Underwriting";
 import PolicyServicing from "./PolicyServicing";
 import CreditLife from "./CreditLife";
+import CareCash from "./CareCash";
 import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
@@ -198,6 +199,7 @@ const navGroups = [
       ["servicing", "Policy servicing", "ClipboardList"],
       ["credit-life", "Credit life", "Landmark"],
       ["claims", "Claims", "HeartHandshake"],
+      ["care-cash", "Hospital cash", "HeartPulse"],
       ["collections", "Collections", "Wallet"],
       ["service-desk", "Service desk", "Headset"],
       ["communications", "Communications", "Mail"],
@@ -2102,6 +2104,8 @@ export default function App() {
             <PolicyServicing session={session} notify={notify} profile={profile} />
           ) : view === "credit-life" ? (
             <CreditLife session={session} notify={notify} profile={profile} />
+          ) : view === "care-cash" ? (
+            <CareCash session={session} notify={notify} profile={profile} />
           ) : view === "service-desk" ? (
             <ServiceDesk session={session} notify={notify} profile={profile} />
           ) : view === "communications" ? (
