@@ -137,6 +137,7 @@ import GroupAdmin from "./GroupAdmin";
 import Finance from "./Finance";
 import Distribution from "./Distribution";
 import Reinsurance from "./Reinsurance";
+import Underwriting from "./Underwriting";
 import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
@@ -190,6 +191,7 @@ const navGroups = [
     items: [
       ["customers", "All customers", "Users"],
       ["applications", "Applications", "FilePlus2"],
+      ["underwriting", "Underwriting", "FileSearch"],
       ["policies", "Policies", "ShieldCheck"],
       ["claims", "Claims", "HeartHandshake"],
       ["collections", "Collections", "Wallet"],
@@ -2090,6 +2092,8 @@ export default function App() {
             <Distribution session={session} notify={notify} profile={profile} />
           ) : view === "reinsurance" ? (
             <Reinsurance session={session} notify={notify} profile={profile} />
+          ) : view === "underwriting" ? (
+            <Underwriting session={session} notify={notify} profile={profile} />
           ) : view === "service-desk" ? (
             <ServiceDesk session={session} notify={notify} profile={profile} />
           ) : view === "communications" ? (
@@ -2307,27 +2311,6 @@ export default function App() {
               claims={claims}
               onGo={go}
               onIssue={canDo(profile, "issuePolicy") ? issue : null}
-              onApprove={
-                canDo(profile, "acceptUnderwriting")
-                  ? async (record) => {
-                      try {
-                        const updated = await request(session, "/portfolio/applications/" + record.id, {
-                          method: "PUT",
-                          body: { status: "Ready to issue" },
-                        });
-                        setApplications((a) => a.map((x) => (x.id === record.id ? updated.data : x)));
-                        setModal({
-                          type: "detail",
-                          entity: "application",
-                          record: updated.data,
-                        });
-                        notify("Underwriting accepted and saved.");
-                      } catch (error) {
-                        notify(error.message, "error");
-                      }
-                    }
-                  : null
-              }
               session={session}
               profile={profile}
               onPolicyUpdated={policyUpdated}
@@ -3623,7 +3606,6 @@ function Detail({
   claims,
   onGo,
   onIssue,
-  onApprove,
   notify,
   session,
   profile,
@@ -3895,22 +3877,14 @@ function Detail({
                       )
                     }
                   >
-                    Simulate policy issue
+                    Issue policy
                   </Button>
                 )}
-                {entity === "application" &&
-                  onApprove &&
-                  ["Under review", "Evidence needed", "Draft"].includes(
-                    r.status,
-                  ) && (
-                    <Button
-                      icon="Check"
-                      disabled={r.status === "Evidence needed" && !evidence}
-                      onClick={() => onApprove(r)}
-                    >
-                      Simulate underwriting acceptance
-                    </Button>
-                  )}
+                {entity === "application" && r.status !== "Draft" && can(profile, "READ_UNDERWRITING") && (
+                  <Button variant="secondary" icon="FileSearch" onClick={() => onGo("underwriting")}>
+                    Open underwriting
+                  </Button>
+                )}
                 {entity === "policy" && (
                   <Button
                     variant="secondary"

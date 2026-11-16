@@ -16,3 +16,11 @@
   width: auto;
   margin: 0;
 }
+
+/* Plain reason lists in case drawers. */
+.uw-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}

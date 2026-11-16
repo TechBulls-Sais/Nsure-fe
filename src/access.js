@@ -9,6 +9,7 @@ export const PAGE_ACCESS = {
   overview: ["READ_DASHBOARD"],
   customers: ["READ_CUSTOMER"],
   applications: ["READ_APPLICATION"],
+  underwriting: ["READ_UNDERWRITING"],
   policies: ["READ_POLICY"],
   claims: ["READ_CLAIM"],
   collections: ["READ_PAYMENT"],
@@ -46,7 +47,6 @@ export const ACTION_ACCESS = {
   newPolicy: ["CREATE_POLICY"],
   // POST /portfolio/policies, then PUT /portfolio/applications/{id} to mark it Issued.
   issuePolicy: ["CREATE_POLICY", "UPDATE_APPLICATION"],
-  acceptUnderwriting: ["UPDATE_APPLICATION"],
   // A receipt is never edited (NS-SH04-005): premiums are recorded on the policy, returns through Collections.
 };
 
