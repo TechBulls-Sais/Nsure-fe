@@ -29,53 +29,7 @@ const os = require("node:os");
       .fill("product studio");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await page.getByRole("button", { name: "Design with AI" }).click();
-    await page
-      .getByRole("textbox", { name: "Describe a product" })
-      .fill("Create a hospital cash plan for individuals");
-    await page.getByRole("button", { name: "Generate blueprint" }).click();
-    await page.getByText("Working on it…").waitFor();
-    await page.getByLabel("Product name", { exact: true }).waitFor();
-    assert.equal(
-      await page.getByLabel("Product name", { exact: true }).inputValue(),
-      "Care Cash Essential",
-    );
-    assert.equal(
-      await page.getByLabel("Product code", { exact: true }).inputValue(),
-      "AI-CARE",
-    );
-    await page.getByRole("button", { name: "Save draft" }).click();
-    await page
-      .getByRole("row")
-      .filter({ hasText: "Care Cash Essential" })
-      .getByText("Draft", { exact: true })
-      .waitFor();
-    await page.getByRole("link", { name: /AI assistant/ }).click();
-    await page.screenshot({
-      path: path.join(os.tmpdir(), "nsure-intelligence-assistant.png"),
-      fullPage: true,
-    });
-    await page
-      .getByRole("button", { name: /Draft a customer message/ })
-      .click();
-    await page.getByText(/Nothing has been sent/).waitFor();
-    await page.getByRole("button", { name: "Clear conversation" }).click();
-    await page
-      .getByRole("textbox", { name: "Message the assistant" })
-      .fill("Show document extraction");
-    await page.keyboard.press("Enter");
-    await page.getByText(/No document was actually processed/).waitFor();
-    await page.getByRole("button", { name: "Clear conversation" }).click();
-    await page
-      .getByRole("button", { name: /Summarize an application/ })
-      .click();
-    await page.getByRole("button", { name: "Clear conversation" }).click();
-    await page.waitForTimeout(1400);
-    assert.equal(
-      await page.locator(".studio-message").count(),
-      0,
-      "Clear cancels pending response",
-    );
+    await page.getByText("From an idea to a ready-to-review product.").waitFor();
     await page
       .getByRole("button", { name: "Enable interface animations" })
       .click();
@@ -89,7 +43,7 @@ const os = require("node:os");
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
       ),
-      "Assistant fits mobile",
+      "Workspace fits mobile",
     );
     await page.screenshot({
       path: path.join(os.tmpdir(), "nsure-intelligence-mobile.png"),
@@ -104,7 +58,7 @@ const os = require("node:os");
     assert.equal(await page.getByRole("dialog").count(), 0);
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: keyboard command palette, AI-style product draft generation, saved draft, assistant prompts, message composer, cancellation, motion toggle, reduced-motion preference, mobile layout, and no runtime errors.",
+      "PASS: keyboard command palette, motion toggle, reduced-motion preference, mobile layout, and no runtime errors.",
     );
   } finally {
     await browser.close();

@@ -104,7 +104,7 @@
 .rt-grid input {
   width: 76px;
   padding: 5px 7px;
-  border: 1px solid light-dark(#dfe5da, oklch(0.339 0.01 130));
+  border: 1px solid var(--field-border);
   border-radius: 6px;
   font: inherit;
   text-align: right;

@@ -55,7 +55,7 @@
   width: 100%;
   min-width: 0;
   height: 32px;
-  border: 1px solid light-dark(#d5e2bf, oklch(0.355 0.029 124));
+  border: 1px solid var(--field-border);
   border-radius: 7px;
   padding: 0 8px;
   font: inherit;

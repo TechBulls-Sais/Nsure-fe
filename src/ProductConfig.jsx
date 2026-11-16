@@ -20,7 +20,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import "./product-config.css";
-import { ProductDraftPrompt, StepReveal, BorderBeam } from "./ui/animated";
+import { StepReveal, BorderBeam } from "./ui/animated";
 
 const base = {
   name: "",
@@ -241,23 +241,6 @@ export default function ProductConfig({ records, setRecords, notify, onSaveRecor
             <Sparkles size={13} /> Interactive prototype
           </span>
         </div>
-        <ProductDraftPrompt
-          onDraft={(draft) => {
-            const suffix = records.filter((p) =>
-              p.code.startsWith(draft.code),
-            ).length;
-            start({
-              ...base,
-              ...draft,
-              code: draft.code + (suffix ? "-" + (suffix + 1) : ""),
-              status: "Draft",
-              version: 1,
-            });
-            notify(
-              "Sample blueprint prepared. Review and edit the illustrative settings.",
-            );
-          }}
-        />
         <div className="config-stats">
           {[
             ["All configurations", records.length, Layers3, "green"],

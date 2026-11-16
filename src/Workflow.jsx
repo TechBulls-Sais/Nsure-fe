@@ -164,22 +164,33 @@ function fileSize(bytes) {
 export function ClaimDocuments({ claim, ...props }) {
   const closed = ["Paid", "Rejected"].includes(claim.status);
   const issued = (claim.documents || []).some((d) => d.type === "Claim summary");
+  const interimIssued = (claim.documents || []).some((d) => d.type === "Interim claim summary");
+  // An open claim gets an interim summary (re-issuing replaces it); a closed one gets its final summary, once.
+  const generate = closed
+    ? {
+        slug: "summary",
+        label: "Issue claim summary",
+        hint: "A one-time PDF recording the claim as decided: checks, decision, payment, documents and timeline."
+          + (interimIssued ? " It replaces the interim summary." : ""),
+        done: "Claim summary issued.",
+        blocked: issued ? "This claim's summary has been issued. A summary is issued once per claim." : null,
+        hideWhenBlocked: issued,
+      }
+    : {
+        slug: "summary",
+        label: interimIssued ? "Update interim summary" : "Issue interim summary",
+        hint:
+          "A PDF of the claim so far, marked as not yet decided."
+          + (interimIssued ? " Updating replaces the current interim summary." : "")
+          + " The final summary is issued once the claim is paid or rejected.",
+        done: interimIssued ? "Interim summary updated." : "Interim summary issued.",
+        blocked: null,
+      };
   return (
     <DocumentsPanel
       record={claim}
       open={!closed}
-      generate={{
-        slug: "summary",
-        label: "Issue claim summary",
-        hint: "A one-time PDF recording the claim as decided: checks, decision, payment, documents and timeline.",
-        done: "Claim summary issued.",
-        blocked: issued
-          ? "This claim's summary has been issued. A summary is issued once per claim."
-          : !closed
-            ? "The claim summary can be issued once the claim is paid or rejected."
-            : null,
-        hideWhenBlocked: issued,
-      }}
+      generate={generate}
       {...props}
     />
   );

@@ -28,8 +28,7 @@ npm run preview
 6. Group schemes → Explore scheme or Demo census import. Load four sample rows and download validation results.
 7. Products → select a product arrow to begin its application journey.
 8. Collections → open an unpaid invoice and record a demo receipt.
-9. AI assistant → try case summaries, communication drafting, and document extraction. All outputs are scripted.
-10. Settings → change table density, notification indicator, or reset sample data.
+9. Settings → change table density, notification indicator, or reset sample data.
 
 Tables support search/status filters and CSV export where shown. Details include overview, sample documents, and an illustrative activity timeline. The navigation is responsive and supports browser history via hash routes.
 
@@ -85,13 +84,10 @@ Run the focused configuration browser check with `npm run test:products` while t
 The UI now uses adapted open-source components from **Kokonut UI** and **Magic UI**, with **Motion** and **Anime.js** installed as runtime dependencies. Component origins and retained MIT licenses are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); public license files are included in the production build.
 
 - Dashboard: Anime.js scoped/staggered page entrance, animated metric counters, shimmer headings, an orbital illustration, and contextual shortcuts.
-- Product catalogue: Kokonut-style spring-based spotlight hover cards.
-- Product Studio: **Design with AI** opens an animated prompt composer. A brief mentioning family/funeral, hospital/cash, or group/employer chooses a fixed sample template and fills the editable configuration. Other briefs use a generic life template. This is deterministic keyword matching, not a real model.
-- AI assistant: animated prompt cards, expanding composer, finite thinking states, example response cards, copy response, and cancellation through Clear conversation.
 - Workspace command palette: **Cmd/Ctrl+K** opens search with arrow-key navigation, Enter selection, and Escape dismissal. It opens pages or starts applications/claims.
-- Motion: the header toggle pauses decorative animation. System reduced-motion preferences are respected, including changes while the app is open. Page timelines clean up on navigation; decorative effects have bounded repeats. Thinking animation exists only during a finite simulated response.
+- Motion: the header toggle pauses decorative animation. System reduced-motion preferences are respected, including changes while the app is open. Page timelines clean up on navigation; decorative effects have bounded repeats.
 
-Run all browser checks with `npm test` while the dev server and backend are running, or run only the new interactions with `npm run test:intelligence`. AI replies stay scripted in the browser. Portfolio records are stored by the backend.
+Run all browser checks with `npm test` while the dev server and backend are running, or run only the new interactions with `npm run test:intelligence`. Portfolio records are stored by the backend.
 
 Dropdown fields share a themed Radix Select menu with selected checkmarks, keyboard navigation, and mobile-aware positioning. Run `npm run test:select` for selection, premium updates, focus/Escape, mobile bounds, and claim submission checks.
 

@@ -1,6 +1,5 @@
 /*
- * Adaptations of MIT-licensed Kokonut UI components (shimmer-text, spotlight-cards,
- * ai-input-search, action-search-bar) and Magic UI (number-ticker, border-beam).
+ * Adaptations of MIT-licensed Kokonut UI components (shimmer-text, action-search-bar) and Magic UI (number-ticker, border-beam).
  * Attribution, exact source paths, and licenses: THIRD_PARTY_NOTICES.md.
  * Changed to plain CSS/JSX, bounded motion, reduced-motion support and demo actions.
  */
@@ -13,25 +12,19 @@ import React, {
 } from "react";
 import {
   motion,
-  AnimatePresence,
   MotionConfig,
   useInView,
   useMotionValue,
   useSpring,
-  useTransform,
 } from "motion/react";
 import { createScope, createTimeline, stagger } from "animejs";
 import {
-  ArrowUp,
   ArrowUpRight,
   Sparkles,
   Command,
   Search,
-  FileText,
-  Check,
   Layers3,
   ShieldCheck,
-  WandSparkles,
 } from "lucide-react";
 import "./intelligence.css";
 // Animations follow the operating system's "reduce motion" setting; there is no in-app switch.
@@ -135,56 +128,6 @@ export function BorderBeam() {
     </div>
   );
 }
-export function SpotlightCard({
-  children,
-  className = "",
-  color = "#8b7ee0",
-  ...props
-}) {
-  const ref = useRef(null);
-  const off = useCalmMotion();
-  const x = useMotionValue(0.5),
-    y = useMotionValue(0.5);
-  const rx = useSpring(useTransform(y, [0, 1], [2, -2]), {
-    stiffness: 300,
-    damping: 28,
-  });
-  const ry = useSpring(useTransform(x, [0, 1], [-2, 2]), {
-    stiffness: 300,
-    damping: 28,
-  });
-  const glow = useSpring(0, { stiffness: 180, damping: 22 });
-  return (
-    <motion.article
-      {...props}
-      ref={ref}
-      className={"spotlight-card " + className}
-      onPointerMove={(e) => {
-        if (off || e.pointerType === "touch") return;
-        const r = ref.current.getBoundingClientRect();
-        x.set((e.clientX - r.left) / r.width);
-        y.set((e.clientY - r.top) / r.height);
-      }}
-      onPointerEnter={() => !off && glow.set(1)}
-      onPointerLeave={() => {
-        x.set(0.5);
-        y.set(0.5);
-        glow.set(0);
-      }}
-      style={off ? {} : { rotateX: rx, rotateY: ry, transformPerspective: 900 }}
-    >
-      <motion.div
-        aria-hidden="true"
-        className="spotlight-glow"
-        style={{
-          opacity: off ? 0 : glow,
-          background: `radial-gradient(ellipse at 20% 20%,${color}20,transparent 70%)`,
-        }}
-      />
-      {children}
-    </motion.article>
-  );
-}
 function NumberTicker({ value, decimals }) {
   const ref = useRef(null);
   const raw = useMotionValue(value * 0.8);
@@ -256,133 +199,6 @@ export function IntelligenceOrb({ small = false }) {
       </span>
       <span className="orb-satellite satellite-b">
         <Layers3 size={17} />
-      </span>
-    </div>
-  );
-}
-export function AIComposer({
-  onSubmit,
-  busy = false,
-  placeholder = "Ask anything about your workspace…",
-  label = "Message the assistant",
-  buttonLabel = "Send message",
-  onSample,
-}) {
-  const [value, setValue] = useState("");
-  const [focus, setFocus] = useState(false);
-  const ref = useRef(null);
-  const off = useCalmMotion();
-  const submit = () => {
-    if (!value.trim() || busy) return;
-    onSubmit(value.trim());
-    setValue("");
-  };
-  useEffect(() => {
-    if (ref.current) {
-      ref.current.style.height = "auto";
-      ref.current.style.height = Math.min(ref.current.scrollHeight, 160) + "px";
-    }
-  }, [value]);
-  return (
-    <motion.div
-      className={"ai-composer " + (focus ? "focused" : "")}
-      animate={{
-        boxShadow: focus
-          ? "0 0 0 3px #b0a3df20, 0 10px 35px #6e58ab0a"
-          : "0 3px 18px #38433305",
-      }}
-      transition={{ duration: off ? 0 : 0.2 }}
-    >
-      <textarea
-        aria-label={label}
-        ref={ref}
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onFocus={() => setFocus(true)}
-        onBlur={() => setFocus(false)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        rows={2}
-      />
-      <div className="composer-tools">
-        <div>
-          <span className="composer-model">
-            <Sparkles size={13} /> Nsure intelligence
-          </span>
-          {onSample && (
-            <button
-              className="composer-sample"
-              type="button"
-              onClick={() => {
-                setValue("Summarize an application");
-                onSample();
-                ref.current?.focus();
-              }}
-            >
-              <FileText size={14} />
-              Sample case
-            </button>
-          )}
-        </div>
-        <motion.button
-          type="button"
-          className="composer-submit"
-          disabled={busy || !value.trim()}
-          aria-label={buttonLabel}
-          onClick={submit}
-          whileTap={off ? {} : { scale: 0.92 }}
-        >
-          <ArrowUp size={19} />
-        </motion.button>
-      </div>
-      <BorderBeam />
-    </motion.div>
-  );
-}
-export function ThinkingSteps({
-  steps = [
-    "Reading sample context",
-    "Organizing the key details",
-    "Preparing a response",
-  ],
-}) {
-  const [index, setIndex] = useState(0);
-  const off = useCalmMotion();
-  useEffect(() => {
-    const id = setInterval(
-      () => setIndex((i) => Math.min(i + 1, steps.length - 1)),
-      400,
-    );
-    return () => clearInterval(id);
-  }, [steps.length]);
-  return (
-    <div className="thinking-steps" role="status">
-      <span className="thinking-icon">
-        <Sparkles size={16} />
-      </span>
-      <div>
-        <ShimmerText>Working on it…</ShimmerText>
-        <AnimatePresence mode="wait">
-          <motion.p
-            key={index}
-            initial={off ? false : { opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: off ? 0 : 0.15 }}
-          >
-            {steps[index]}
-          </motion.p>
-        </AnimatePresence>
-      </div>
-      <span className="thinking-dots">
-        <i />
-        <i />
-        <i />
       </span>
     </div>
   );
@@ -477,124 +293,6 @@ export function ActionSearch({ actions, onSelect }) {
         <span>↑ ↓ navigate · ↵ open</span>
         <span>⌘ / Ctrl K to toggle</span>
       </div>
-    </div>
-  );
-}
-export function ProductDraftPrompt({ onDraft }) {
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const timer = useRef(null);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const generate = (text) => {
-    setBusy(true);
-    timer.current = setTimeout(() => {
-      let product = /funeral|family/i.test(text)
-        ? {
-            name: "FamilyCare Plus",
-            code: "AI-FAM",
-            benefits: ["Funeral benefit", "Accidental death"],
-            cover: 50000,
-            premium: 185,
-          }
-        : /hospital|cash|health/i.test(text)
-          ? {
-              name: "Care Cash Essential",
-              code: "AI-CARE",
-              benefits: ["Hospital cash"],
-              cover: 1000,
-              premium: 265,
-            }
-          : /group|employer|employee/i.test(text)
-            ? {
-                name: "Team Life Protect",
-                code: "AI-GROUP",
-                domain: "Group Life",
-                benefits: ["Death benefit", "Accidental death"],
-                cover: 500000,
-                premium: 350,
-              }
-            : {
-                name: "LifeCare Essential",
-                code: "AI-LIFE",
-                benefits: ["Death benefit"],
-                cover: 500000,
-                premium: 420,
-              };
-      onDraft({
-        ...product,
-        description:
-          "Illustrative blueprint based on your brief: " + text.slice(0, 180),
-      });
-      setBusy(false);
-      setOpen(false);
-    }, 1200);
-  };
-  return (
-    <div className="draft-copilot">
-      <div className="draft-copilot-heading">
-        <span className="copilot-mark">
-          <WandSparkles size={20} />
-        </span>
-        <div>
-          <h3>Start with an idea. Let’s shape the details.</h3>
-          <p>
-            Describe your product and explore an AI-style configuration flow.
-          </p>
-        </div>
-        <button
-          className="btn ai-gradient-button"
-          onClick={() => setOpen((x) => !x)}
-          aria-expanded={open}
-        >
-          <Sparkles size={15} />
-          {open ? "Hide copilot" : "Design with AI"}
-        </button>
-      </div>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            className="draft-copilot-body"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <div className="draft-examples">
-              {[
-                "Family funeral cover",
-                "Hospital cash plan",
-                "Group employee protection",
-              ].map((t) => (
-                <button key={t} disabled={busy} onClick={() => generate(t)}>
-                  {t}
-                  <ArrowUpRight size={12} />
-                </button>
-              ))}
-            </div>
-            {busy ? (
-              <ThinkingSteps
-                steps={[
-                  "Matching a sample product template",
-                  "Adding illustrative benefits and rates",
-                  "Preparing your editable blueprint",
-                ]}
-              />
-            ) : (
-              <AIComposer
-                label="Describe a product"
-                placeholder="e.g. A family funeral plan with affordable monthly premiums…"
-                buttonLabel="Generate blueprint"
-                onSubmit={generate}
-              />
-            )}
-            <p className="copilot-disclaimer">
-              Scripted templates, not live AI. Review and edit every proposed
-              setting.
-            </p>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <BorderBeam />
     </div>
   );
 }

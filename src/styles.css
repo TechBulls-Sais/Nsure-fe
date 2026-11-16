@@ -15,6 +15,9 @@
   --muted: light-dark(#2f3933, oklch(0.84 0.016 155));
   --green: light-dark(#173f35, oklch(0.815 0.051 174));
   --line: light-dark(#e9ede7, oklch(0.317 0.005 135));
+  /* Edges of form fields: at least 3:1 against the field background so every box is clearly visible. */
+  --field-border: light-dark(#8a9683, oklch(0.52 0.012 135));
+  --field-border-hover: light-dark(#6c7866, oklch(0.62 0.014 135));
   --lime: light-dark(#d7eb9e, oklch(0.236 0.07 120));
 }
 :root[data-theme="dark"] {
@@ -253,15 +256,6 @@ p {
 }
 .nav-item.active .nav-count {
   background: light-dark(#244d2b13, oklch(0.38 0.074 148 / 0.075));
-}
-.ai-nav-badge {
-  font-size: 13px;
-  letter-spacing: 0.6px;
-  margin-left: auto;
-  color: light-dark(#d7eb9e, oklch(0.907 0.101 120));
-  border: 1px solid light-dark(#d7eb9e45, oklch(0.344 0.04 120 / 0.271));
-  padding: 1px 4px;
-  border-radius: 4px;
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -1243,7 +1237,7 @@ p {
 .select,
 .textarea {
   width: 100%;
-  border: 1px solid light-dark(#e2e8dc, oklch(0.332 0.01 129));
+  border: 1px solid var(--field-border);
   border-radius: 7px;
   min-height: 40px;
   padding: 10px 12px;
@@ -1252,10 +1246,15 @@ p {
   font-size: 13px;
   outline: none;
 }
+.input:hover,
+.select:hover,
+.textarea:hover {
+  border-color: var(--field-border-hover);
+}
 .input:focus,
 .select:focus,
 .textarea:focus {
-  border-color: light-dark(#9fbc80, oklch(0.758 0.088 129));
+  border-color: light-dark(#4f7f32, oklch(0.78 0.1 129));
   box-shadow: 0 0 0 3px light-dark(#dce9c640, oklch(0.2 0.02 124 / 0.251));
 }
 .input::placeholder,
@@ -1443,21 +1442,6 @@ p {
   gap: 10px;
   flex-wrap: wrap;
   margin: 23px 0 12px;
-}
-.ai-summary {
-  margin-top: 24px;
-  padding: 14px 16px;
-  border: 1px solid light-dark(#e9e5f0, oklch(0.327 0.009 303));
-  background: light-dark(#faf8fd, oklch(0.195 0.005 304));
-  border-radius: 8px;
-}
-.ai-summary .text-link {
-  color: light-dark(#443c4e, oklch(0.86 0.07 305));
-}
-.ai-summary p {
-  font-size: 13px;
-  line-height: 1.8;
-  margin-top: 12px;
 }
 .timeline {
   padding: 14px 0;
@@ -5183,11 +5167,6 @@ p {
 .sidebar .nav-item.active .nav-count {
   background: light-dark(#1b3a2a1f, oklch(0.319 0.047 160 / 0.122));
   color: light-dark(#1b3a2a, oklch(0.86 0.05 160));
-}
-.sidebar .ai-nav-badge {
-  font-size: 13px;
-  color: light-dark(#e3f3b8, oklch(0.938 0.079 120));
-  border-color: light-dark(#d7eb9e80, oklch(0.344 0.04 120 / 0.502));
 }
 .sidebar .sidebar-note {
   background: light-dark(#ffffff10, oklch(0.225 0.006 90 / 0.063));

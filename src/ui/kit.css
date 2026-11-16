@@ -180,7 +180,7 @@ html:has(dialog.nk-dialog[open]) {
   ) {
   min-height: 38px;
   padding: 8px 11px;
-  border: 1px solid var(--nk-line);
+  border: 1px solid var(--field-border, var(--nk-line));
   border-radius: 8px;
   background: var(--nk-surface);
   color: var(--nk-ink);

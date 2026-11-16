@@ -11,10 +11,7 @@ Repository: https://github.com/kokonut-labs/kokonutui
 Adapted source components:
 
 - `components/kokonutui/shimmer-text.tsx` — `ShimmerText` in `src/ui/animated.jsx`; background-position animation with bounded repeats and reduced-motion handling.
-- `components/kokonutui/spotlight-cards.tsx` — `SpotlightCard`; spring-driven pointer tilt and glow, reduced tilt range, no sibling dimming, no touch tilt.
-- `components/kokonutui/ai-input-search.tsx` — `AIComposer`; resizing textarea, focused container, contextual controls, keyboard submission, and motion feedback. File/web-search actions replaced by an explicit sample-case action; no uploads or network search.
 - `components/kokonutui/action-search-bar.tsx` — `ActionSearch`; filtered action list and arrow/enter keyboard selection, used inside the existing dialog with an implemented Cmd/Ctrl+K shortcut.
-- `components/kokonutui/ai-loading.tsx` — sequence-based loading presentation informed `ThinkingSteps`; finite demo processing sequences replace the original continuously advancing examples. No web searches or model processing are claimed.
 
 Original authors include @kokonutui and @dorianbaffier. TypeScript/Tailwind/shadcn dependencies were replaced by app-local JSX/CSS and accessible native controls.
 

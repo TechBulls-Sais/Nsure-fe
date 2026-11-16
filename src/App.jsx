@@ -127,7 +127,6 @@ import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
 import { request } from "./api";
-import AssistantStudio from "./AssistantStudio";
 import AccessAdmin from "./AccessAdmin";
 import GroupAdmin from "./GroupAdmin";
 import Finance from "./Finance";
@@ -178,7 +177,6 @@ const navItems = [
   ["product-config", "Product studio", "Settings2"],
   ["rate-tables", "Rate tables", "Table2"],
   ["collections", "Collections", "Wallet"],
-  ["assistant", "AI assistant", "Sparkles"],
 ];
 // Nsure Life operational workspaces, each shown only to users holding its read permission.
 const lifeNavItems = [
@@ -240,7 +238,6 @@ const navGroups = [
     items: [
       ["reports", "Management", "PieChart", "READ_REPORT"],
       ["integration", "Integration", "Cable", "READ_INTEGRATION"],
-      ["assistant", "AI assistant", "Sparkles"],
     ],
   },
   { key: "administration", label: "Administration", icon: "ShieldCheck", superAdmin: true, items: [["access", "Access", "ShieldCheck"]] },
@@ -1023,9 +1020,6 @@ export default function App() {
             <button onClick={() => go("product-config")}>
               Design a product <Icon name="ArrowUpRight" small />
             </button>
-            <button onClick={() => go("assistant")}>
-              Ask your copilot <Icon name="Sparkles" small />
-            </button>
           </div>
         </section>
         <div className="stat-grid">
@@ -1178,22 +1172,11 @@ export default function App() {
               "customer",
               "blue",
             ],
-            [
-              "Ask Nsure AI",
-              "A little help goes a long way",
-              "Sparkles",
-              "assistant",
-              "amber",
-            ],
           ].map(([title, sub, icon, action, color]) => (
             <button
               key={title}
               className="quick-action"
-              onClick={() =>
-                action === "assistant"
-                  ? go("assistant")
-                  : setModal({ type: action })
-              }
+              onClick={() => setModal({ type: action })}
             >
               <span className={"quick-icon " + color}>
                 <Icon name={icon} />
@@ -1709,7 +1692,6 @@ export default function App() {
                     {pendingPolicies.length}
                   </span>
                 )}
-                {key === "assistant" && <span className="ai-nav-badge">NEW</span>}
               </a>
             );
             if (group.item) return renderItem(group.item, false);
@@ -1881,8 +1863,6 @@ export default function App() {
             <IntegrationMonitor session={session} notify={notify} profile={profile} />
           ) : page === "configuration" ? (
             <ConfigReleases session={session} notify={notify} profile={profile} products={products} />
-          ) : page === "assistant" ? (
-            <AssistantStudio />
           ) : page === "access" ? (
             profile?.superAdmin ? (
               <AccessAdmin session={session} notify={notify} />
@@ -1945,10 +1925,7 @@ export default function App() {
                 ...navItems.map(([id, label]) => ({
                   id,
                   label,
-                  description:
-                    id === "product-config"
-                      ? "Create a product with your copilot"
-                      : "Open the " + label.toLowerCase() + " workspace",
+                  description: "Open the " + label.toLowerCase() + " workspace",
                 })),
               ]}
               onSelect={(id) =>
@@ -3311,7 +3288,6 @@ function Detail({
   // An application's identity check is its customer's KYC; a policy can only be issued once it is verified.
   const applicant = entity === "application" ? customers.find((c) => c.name === r.name) : null;
   const identityStatus = applicant ? kycLabel(applicant) : "Verified";
-  const [summary, setSummary] = useState(false);
   // Extra policy fields the insurer's active configuration requires for this product, filled in before issue.
   const issuing = entity === "application" && r.status === "Ready to issue";
   const { form: issueForm, error: issueFormError } = usePolicyForm(session, issuing ? r.product : null);
@@ -3592,23 +3568,6 @@ function Detail({
               )}
             </>
           )}
-          <div className="ai-summary">
-            <button className="text-link" onClick={() => setSummary(!summary)}>
-              <Icon name="Sparkles" /> {summary ? "Hide" : "Show"} sample AI
-              summary
-            </button>
-            {summary && (
-              <p>
-                <strong>Simulated assistant:</strong> {r.name} is linked to{" "}
-                {r.product || "this account"}. Current status:{" "}
-                {r.status || "Active"}.{" "}
-                {r.status === "Evidence needed"
-                  ? "Supporting documentation needs review before the case can proceed."
-                  : "Review the record and its evidence before taking the next action."}{" "}
-                This is a scripted summary of the displayed record.
-              </p>
-            )}
-          </div>
         </>
       ) : tab === "Documents" && entity === "claim" ? (
         <ClaimDocuments
