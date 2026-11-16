@@ -20,6 +20,7 @@ export const PAGE_ACCESS = {
   communications: ["READ_COMMUNICATION"],
   // Group administration needs READ_SCHEME; READ_POLICY alone still opens the older scheme overview.
   schemes: ["READ_SCHEME", "READ_POLICY"],
+  "scheme-lifecycle": ["READ_SCHEME"],
   products: [],
   "product-config": ["READ_PRODUCT"],
   "rate-tables": ["READ_RATE_TABLE"],

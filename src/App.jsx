@@ -141,6 +141,7 @@ import Underwriting from "./Underwriting";
 import PolicyServicing from "./PolicyServicing";
 import CreditLife from "./CreditLife";
 import CareCash from "./CareCash";
+import GroupLife from "./GroupLife";
 import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
@@ -205,7 +206,7 @@ const navGroups = [
       ["communications", "Communications", "Mail"],
     ],
   },
-  { key: "group-business", label: "Group business", icon: "Building2", items: [["schemes", "Group schemes", "Building2"]] },
+  { key: "group-business", label: "Group business", icon: "Building2", items: [["schemes", "Group schemes", "Building2"], ["scheme-lifecycle", "Scheme lifecycle", "ClipboardList"]] },
   {
     key: "products",
     label: "Products & pricing",
@@ -2104,6 +2105,8 @@ export default function App() {
             <PolicyServicing session={session} notify={notify} profile={profile} />
           ) : view === "credit-life" ? (
             <CreditLife session={session} notify={notify} profile={profile} />
+          ) : view === "scheme-lifecycle" ? (
+            <GroupLife session={session} notify={notify} profile={profile} />
           ) : view === "care-cash" ? (
             <CareCash session={session} notify={notify} profile={profile} />
           ) : view === "service-desk" ? (
