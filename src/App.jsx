@@ -128,7 +128,7 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { request, setUnauthorizedHandler } from "./api";
+import { closeSession, openSession, request, setUnauthorizedHandler } from "./api";
 import AccessAdmin from "./AccessAdmin";
 import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
@@ -157,6 +157,8 @@ import {
   NO_COVER,
   POLICY_STATES,
   PolicyWorkflowPanel,
+  ApplicationChecklist,
+  QuotePanel,
   policyTone,
   ReasonAction,
   WorkflowTimeline,
@@ -494,15 +496,18 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
               e.preventDefault();
               setError("");
               setBusy(true);
-              const next = { username: email.trim().toLowerCase(), password };
               try {
+                // The password opens a session once; only the session token is kept (NS-SH11-001).
+                const next = await openSession(email.trim().toLowerCase(), password);
                 const me = await request(next, "/me");
                 if (customerLogin && !me.data.customerPortal) {
+                  closeSession(next);
                   setError("This form is for customers. Use the username and password saved on the customer.");
                   return;
                 }
                 // Customer accounts sign in on the customer portal only, never the operations workspace.
                 if (!customerLogin && me.data.customerPortal) {
+                  closeSession(next);
                   setError("This is a customer account. Choose Customer above to sign in to the customer portal.");
                   return;
                 }
@@ -581,7 +586,13 @@ export default function App() {
   const insurer = useInsurer();
   const [session, setSession] = useState(() => {
     try {
-      return JSON.parse(sessionStorage.getItem("nsure-session") || "null");
+      const saved = JSON.parse(sessionStorage.getItem("nsure-session") || "null");
+      // A session saved before tokens held the password: drop it, so the password leaves browser storage.
+      if (saved && !saved.token) {
+        sessionStorage.removeItem("nsure-session");
+        return null;
+      }
+      return saved;
     } catch {
       return null;
     }
@@ -660,6 +671,7 @@ export default function App() {
   }, [loggedIn]);
   const close = React.useCallback(() => setModal(null), []);
   const logout = () => {
+    closeSession(session);
     sessionStorage.removeItem("nsure-session");
     setSession(null);
     setProfile(null);
@@ -860,38 +872,33 @@ export default function App() {
   const issue = async (record, extra = {}) => {
     let created;
     try {
+      // NS-IL01-006: the server takes the customer from the application, marks it Issued in the same step and
+      // refuses a second issue; the fixed key makes a double click return the same offer.
       created = await request(session, "/portfolio/policies", {
         method: "POST",
+        idempotencyKey: "issue-" + record.id,
         body: {
-          name: record.name,
+          applicationRef: record.id,
           product: record.product,
           tier: record.tier || undefined,
           amount: record.amount,
           premium: record.premium || 0,
-          status: "Active",
           // The application's other lives carry over and are re-priced at issue (R-18).
           ...(record.lives?.length ? { lives: otherLives(record) } : {}),
           ...extra,
         },
-      });
-      await request(session, "/portfolio/applications/" + record.id, {
-        method: "PUT",
-        body: { status: "Issued" },
       });
     } catch (error) {
       // The backend refuses a policy until the customer's KYC is verified; say so instead of failing silently.
       notify(error.message, "error");
       return;
     }
-    setPolicies((p) => [created.data, ...p]);
+    setPolicies((p) => [created.data, ...p.filter((x) => x.id !== created.data.id)]);
     setApplications((a) =>
       a.map((x) => (x.id === record.id ? { ...x, status: "Issued" } : x)),
     );
-    setCustomers((c) =>
-      c.map((x) => (x.name === record.name ? { ...x, policies: x.policies + 1 } : x)),
-    );
     setModal({ type: "detail", entity: "policy", record: created.data });
-    notify("Policy issued and saved.");
+    notify("Offer " + created.data.id + " created. Record the first premium to start cover.");
   };
   if (!loggedIn) {
     const publicPages = ["overview", "home", "cover", "how-it-works", "questions"];
@@ -2201,21 +2208,17 @@ export default function App() {
               onCancel={close}
               onSave={async (data) => {
                 try {
+                  const { issueKey, ...body } = data;
                   const created = await request(session, "/portfolio/policies", {
                     method: "POST",
-                    body: data,
+                    idempotencyKey: issueKey,
+                    body,
                   });
-                  setPolicies((rows) => [created.data, ...rows]);
-                  setCustomers((rows) =>
-                    rows.map((row) =>
-                      row.name === data.name
-                        ? { ...row, policies: row.policies + 1, product: data.product }
-                        : row,
-                    ),
-                  );
+                  setPolicies((rows) => [created.data, ...rows.filter((row) => row.id !== created.data.id)]);
                   close();
                   go("policies");
-                  notify("Policy added.");
+                  // NS-IL01-006: a staff issue is an offer; recording the first premium starts cover.
+                  notify("Offer " + created.data.id + " created. Record the first premium to start cover.");
                 } catch (error) {
                   notify(error.message, "error");
                 }
@@ -2344,27 +2347,6 @@ export default function App() {
               onAddPolicy={
                 canDo(profile, "newPolicy") ? (record) => setModal({ type: "policy", customer: record.name }) : null
               }
-              onReceipt={
-                canDo(profile, "recordReceipt")
-                  ? async (r) => {
-                      try {
-                        const updated = await request(session, "/portfolio/receipts/" + r.id, {
-                          method: "PUT",
-                          body: { status: "Paid" },
-                        });
-                        setReceipts((a) => a.map((x) => (x.id === r.id ? updated.data : x)));
-                        setModal({
-                          type: "detail",
-                          entity: "collection",
-                          record: updated.data,
-                        });
-                        notify("Receipt saved.");
-                      } catch (error) {
-                        notify(error.message, "error");
-                      }
-                    }
-                  : null
-              }
               notify={notify}
             />
           )}
@@ -2381,6 +2363,8 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
       popularProduct(products) || { name: "", cover: "0", premium: "0" };
     const tier = defaultTier(p);
     return {
+      // Chosen by reference: two customers can share a name (NS-SH01-001).
+      customerRef: customers[0]?.id || "",
       name: customers[0]?.name || "",
       product: p.name,
       tier: tier?.name || "",
@@ -2393,18 +2377,48 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
   const tiers = productTiers(chosen);
   const ratedTier = tiers.find((t) => t.name === data.tier && t.priceIsFrom);
   const [lives, setLives] = useState([]);
+  // NS-IL01-002/003: who pays and how, the channel, and the product's disclosure questions.
+  const [details, setDetails] = useState({
+    payerName: "",
+    payerRelationship: "",
+    mandateMethod: "",
+    mandateInstitution: "",
+    mandateAccount: "",
+    mandateDebitDay: "",
+    channel: "DIRECT",
+    intermediaryCode: "",
+    disclosures: {},
+  });
+  const [questions, setQuestions] = useState([]);
+  useEffect(() => {
+    let live = true;
+    if (!data.product) return undefined;
+    request(session, "/portfolio/application-questions?product=" + encodeURIComponent(data.product))
+      .then((r) => live && setQuestions(r.data || []))
+      .catch(() => live && setQuestions([]));
+    return () => {
+      live = false;
+    };
+  }, [session, data.product]);
   const priced = useLifeQuote(
     session,
     "/portfolio/quote",
-    { name: data.name, product: data.product, tier: data.tier, lives: livesBody(completeLives(lives)) },
-    Boolean(ratedTier && data.name),
+    { customerRef: data.customerRef, product: data.product, tier: data.tier, lives: livesBody(completeLives(lives)) },
+    Boolean(ratedTier && data.customerRef),
   );
   const save = (status) =>
-    onSave({ ...data, status, ...(ratedTier ? { lives: livesBody(lives) } : {}) });
+    onSave({
+      ...data,
+      status,
+      ...details,
+      mandateDebitDay: details.mandateDebitDay || undefined,
+      declarationAccepted: consent,
+      ...(ratedTier ? { lives: livesBody(lives) } : {}),
+    });
   return (
     <>
       <div className="stepper">
-        {["Customer", "Protection", "Review"].map((s, i) => (
+        {["Customer", "Protection", "Details", "Review"].map((s, i) => (
           <span
             className={
               "step " + (i === step ? "active" : i < step ? "complete" : "")
@@ -2419,7 +2433,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (step < 2) setStep(step + 1);
+          if (step < 3) setStep(step + 1);
           else save("Under review");
         }}
       >
@@ -2432,11 +2446,19 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
             <Field label="Customer">
               <Select
                 className="select"
-                value={data.name}
-                onChange={(e) => setData({ ...data, name: e.target.value })}
+                value={data.customerRef}
+                onChange={(e) =>
+                  setData({
+                    ...data,
+                    customerRef: e.target.value,
+                    name: customers.find((c) => c.id === e.target.value)?.name || "",
+                  })
+                }
               >
                 {customers.map((c) => (
-                  <option key={c.id}>{c.name}</option>
+                  <option key={c.id} value={c.id}>
+                    {c.name} · {c.id}
+                  </option>
                 ))}
               </Select>
             </Field>
@@ -2537,6 +2559,135 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
               </div>
             )}
           </>
+        ) : step === 2 ? (
+          <>
+            <h3>Who pays, and what has been disclosed?</h3>
+            <p className="subtitle">
+              Leave the payer blank when the policyholder pays. A debit order needs the bank, account and debit day; an
+              agent or broker sale needs the intermediary's code.
+            </p>
+            <div className="form-grid">
+              <label className="form-label">
+                <span>Payer (if not the policyholder)</span>
+                <input
+                  className="input"
+                  value={details.payerName}
+                  onChange={(e) => setDetails({ ...details, payerName: e.target.value })}
+                />
+              </label>
+              <label className="form-label">
+                <span>Payer's relationship</span>
+                <input
+                  className="input"
+                  value={details.payerRelationship}
+                  placeholder="e.g. Spouse, Employer"
+                  onChange={(e) => setDetails({ ...details, payerRelationship: e.target.value })}
+                />
+              </label>
+              <label className="form-label">
+                <span>Payment mandate</span>
+                <select
+                  className="input"
+                  value={details.mandateMethod}
+                  onChange={(e) => setDetails({ ...details, mandateMethod: e.target.value })}
+                >
+                  <option value="">Not decided yet</option>
+                  <option value="DEBIT_ORDER">Debit order</option>
+                  <option value="MOBILE_WALLET">Mobile wallet</option>
+                  <option value="CARD">Card</option>
+                  <option value="BANK_EFT">Bank transfer</option>
+                </select>
+              </label>
+              {details.mandateMethod === "DEBIT_ORDER" && (
+                <>
+                  <label className="form-label">
+                    <span>Bank</span>
+                    <input
+                      className="input"
+                      value={details.mandateInstitution}
+                      onChange={(e) => setDetails({ ...details, mandateInstitution: e.target.value })}
+                    />
+                  </label>
+                  <label className="form-label">
+                    <span>Account number</span>
+                    <input
+                      className="input"
+                      value={details.mandateAccount}
+                      onChange={(e) => setDetails({ ...details, mandateAccount: e.target.value })}
+                    />
+                  </label>
+                  <label className="form-label">
+                    <span>Debit day</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min="1"
+                      max="28"
+                      value={details.mandateDebitDay}
+                      onChange={(e) => setDetails({ ...details, mandateDebitDay: e.target.value })}
+                    />
+                  </label>
+                </>
+              )}
+              <label className="form-label">
+                <span>Channel</span>
+                <select
+                  className="input"
+                  value={details.channel}
+                  onChange={(e) => setDetails({ ...details, channel: e.target.value })}
+                >
+                  <option value="DIRECT">Direct</option>
+                  <option value="BRANCH">Branch</option>
+                  <option value="AGENT">Agent</option>
+                  <option value="BROKER">Broker</option>
+                  <option value="CALL_CENTRE">Call centre</option>
+                </select>
+              </label>
+              {["AGENT", "BROKER"].includes(details.channel) && (
+                <label className="form-label">
+                  <span>Intermediary code</span>
+                  <input
+                    className="input"
+                    value={details.intermediaryCode}
+                    onChange={(e) => setDetails({ ...details, intermediaryCode: e.target.value })}
+                  />
+                </label>
+              )}
+            </div>
+            <h3>Disclosures</h3>
+            {questions.map((q) => (
+              <label className="form-label full" key={q.code}>
+                <span>
+                  {q.question}
+                  {q.mandatory ? " *" : ""}
+                </span>
+                {q.answerType === "YES_NO" ? (
+                  <select
+                    className="input"
+                    required={q.mandatory}
+                    value={details.disclosures[q.code] || ""}
+                    onChange={(e) =>
+                      setDetails({ ...details, disclosures: { ...details.disclosures, [q.code]: e.target.value } })
+                    }
+                  >
+                    <option value="">Choose</option>
+                    <option value="NO">No</option>
+                    <option value="YES">Yes</option>
+                  </select>
+                ) : (
+                  <input
+                    className="input"
+                    maxLength={500}
+                    required={q.mandatory}
+                    value={details.disclosures[q.code] || ""}
+                    onChange={(e) =>
+                      setDetails({ ...details, disclosures: { ...details.disclosures, [q.code]: e.target.value } })
+                    }
+                  />
+                )}
+              </label>
+            ))}
+          </>
         ) : (
           <>
             <h3>Looking good. Let’s review.</h3>
@@ -2574,8 +2725,8 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
                 checked={consent}
                 onChange={(e) => setConsent(e.target.checked)}
               />
-              I understand this submission does not create insurance cover
-              until a policy is issued.
+              The applicant has made the declaration: the answers above are true and complete, and this submission
+              creates no cover until a policy is issued.
             </label>
           </>
         )}
@@ -2587,7 +2738,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
           >
             {step > 0 ? "Back" : "Cancel"}
           </Button>
-          {step < 2 && (
+          {step < 3 && (
             <Button
               type="button"
               variant="secondary"
@@ -2596,8 +2747,8 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
               Save draft
             </Button>
           )}
-          <Button type="submit" icon={step === 2 ? "Check" : "ArrowRight"}>
-            {step === 2 ? "Submit application" : "Continue"}
+          <Button type="submit" icon={step === 3 ? "Check" : "ArrowRight"}>
+            {step === 3 ? "Submit application" : "Continue"}
           </Button>
         </div>
       </form>
@@ -3171,7 +3322,7 @@ function CustomerSignup({ onLogin }) {
         method: "POST",
         body: { ...details, otp },
       });
-      const session = { username: created.data.loginUsername, password: details.password };
+      const session = await openSession(created.data.loginUsername, details.password);
       await request(session, "/me");
       sessionStorage.setItem("nsure-session", JSON.stringify(session));
       onLogin(session);
@@ -3326,9 +3477,13 @@ function CustomerForm({ onSave, onCancel }) {
 }
 function PolicyForm({ session, customers, products = [], defaultCustomer, onSave, onCancel }) {
   const ready = customers.filter((customer) => customer.kycStatus === "VERIFIED");
-  const first = ready.find((customer) => customer.name === defaultCustomer) || ready[0];
+  const first = ready.find((customer) => customer.name === defaultCustomer || customer.id === defaultCustomer) || ready[0];
   const initialProduct = products[0] || { name: "", cover: "0", premium: "0" };
-  const [customerName, setCustomerName] = useState(first?.name || "");
+  // The customer is chosen by reference: two customers can share a name (NS-SH01-001).
+  const [customerRef, setCustomerRef] = useState(first?.id || "");
+  // One key per form: a double submit returns the same offer instead of creating two (NS-IL01-006).
+  const [issueKey] = useState(() => crypto.randomUUID());
+  const customerName = ready.find((customer) => customer.id === customerRef)?.name || "";
   const [productName, setProductName] = useState(initialProduct.name);
   const product = products.find((item) => item.name === productName) || initialProduct;
   const tiers = productTiers(product);
@@ -3342,8 +3497,8 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
   const priced = useLifeQuote(
     session,
     "/portfolio/quote",
-    { name: customerName, product: product.name, tier: tierName, lives: livesBody(completeLives(lives)) },
-    Boolean(rated && customerName),
+    { customerRef, product: product.name, tier: tierName, lives: livesBody(completeLives(lives)) },
+    Boolean(rated && customerRef),
   );
   if (!ready.length) {
     return (
@@ -3364,12 +3519,13 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
       onSubmit={(event) => {
         event.preventDefault();
         onSave({
+          issueKey,
+          customerRef,
           name: customerName,
           product: product.name,
           tier: tier?.name,
           amount: tier ? tier.cover : amountOf(product.cover),
           premium: tier ? tier.premium : amountOf(product.premium),
-          status: "Active",
           ...(rated ? { lives: livesBody(lives) } : {}),
           ...(policyForm?.formVersionId
             ? { formVersionId: policyForm.formVersionId, customAttributes: cleanValues(custom) }
@@ -3384,12 +3540,12 @@ function PolicyForm({ session, customers, products = [], defaultCustomer, onSave
         <Field label="Customer">
           <Select
             className="select"
-            value={customerName}
-            onChange={(event) => setCustomerName(event.target.value)}
+            value={customerRef}
+            onChange={(event) => setCustomerRef(event.target.value)}
           >
             {ready.map((customer) => (
-              <option key={customer.id} value={customer.name}>
-                {customer.name}
+              <option key={customer.id} value={customer.id}>
+                {customer.name} · {customer.id}
               </option>
             ))}
           </Select>
@@ -3468,7 +3624,6 @@ function Detail({
   onGo,
   onIssue,
   onApprove,
-  onReceipt,
   notify,
   session,
   profile,
@@ -3654,6 +3809,18 @@ function Detail({
                   <LifeCoverList lives={r.lives} />
                 </>
               )}
+              {entity === "application" && (
+                <ApplicationChecklist
+                  session={session}
+                  application={r}
+                  profile={profile}
+                  notify={notify}
+                  onChanged={onPolicyUpdated}
+                />
+              )}
+              {(entity === "application" || entity === "policy") && r.quoteRef && (
+                <QuotePanel session={session} quoteRef={r.quoteRef} profile={profile} notify={notify} />
+              )}
               {entity === "policy" && (
                 <PolicyAttributesPanel
                   session={session}
@@ -3667,6 +3834,7 @@ function Detail({
                   session={session}
                   policy={r}
                   canManage={can(profile, "UPDATE_POLICY")}
+                  profile={profile}
                   onUpdated={onPolicyUpdated}
                   notify={notify}
                 />
@@ -3743,11 +3911,6 @@ function Detail({
                       Simulate underwriting acceptance
                     </Button>
                   )}
-                {entity === "collection" && r.status !== "Paid" && onReceipt && (
-                  <Button icon="Wallet" onClick={() => onReceipt(r)}>
-                    Record receipt
-                  </Button>
-                )}
                 {entity === "policy" && (
                   <Button
                     variant="secondary"

@@ -748,7 +748,7 @@ export default function CustomerPortal({
                   className={["Rejected"].includes(item.status) ? "is-rejected" : "is-pending"}
                 >
                   <span className="customer-request-icon" aria-hidden="true">
-                    {item.status === "Rejected" ? <X size={15} /> : ["Approved", "Paid"].includes(item.status) ? <Check size={15} /> : <Clock3 size={15} />}
+                    {item.status === "Rejected" ? <X size={15} /> : ["Approved", "Payout Sent", "Paid"].includes(item.status) ? <Check size={15} /> : <Clock3 size={15} />}
                   </span>
                   <div>
                     <strong>
@@ -762,6 +762,18 @@ export default function CustomerPortal({
                     {item.status === "Approved" && (
                       <p>
                         Approved for {money(item.payoutAmount)}. The payout to {item.payee?.name} is on its way.
+                      </p>
+                    )}
+                    {item.status === "Payout Sent" && (
+                      <p>
+                        {money(item.payoutAmount)} has been sent to {item.payee?.name}. We confirm here once the
+                        payment arrives.
+                      </p>
+                    )}
+                    {item.status === "Payout Failed" && (
+                      <p>
+                        Approved for {money(item.payoutAmount)}, but the payment to {item.payee?.name} did not go
+                        through. Our team is checking the payout details and will send it again.
                       </p>
                     )}
                     {item.status === "Paid" && (

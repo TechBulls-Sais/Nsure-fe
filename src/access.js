@@ -47,8 +47,7 @@ export const ACTION_ACCESS = {
   // POST /portfolio/policies, then PUT /portfolio/applications/{id} to mark it Issued.
   issuePolicy: ["CREATE_POLICY", "UPDATE_APPLICATION"],
   acceptUnderwriting: ["UPDATE_APPLICATION"],
-  // PUT /portfolio/receipts/{id}.
-  recordReceipt: ["UPDATE_POLICY"],
+  // A receipt is never edited (NS-SH04-005): premiums are recorded on the policy, returns through Collections.
 };
 
 /** A workspace user: anyone signed in who is not a portal customer (the API's staff rule). */

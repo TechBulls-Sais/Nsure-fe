@@ -70,7 +70,16 @@ export function policyTone(status) {
   return null;
 }
 
-export const CLAIM_STATES = ["Initiated", "Under Review", "Recommended", "Approved", "Rejected", "Paid"];
+export const CLAIM_STATES = [
+  "Initiated",
+  "Under Review",
+  "Recommended",
+  "Approved",
+  "Payout Sent",
+  "Payout Failed",
+  "Rejected",
+  "Paid",
+];
 
 const OPEN_CLAIM = ["Initiated", "Under Review", "Recommended"];
 
@@ -90,6 +99,7 @@ export const STP_INELIGIBLE_LABELS = {
   NO_VERIFIED_PAYOUT: "No verified payout account to pay",
   PRODUCT_OPT_OUT: "The product is opted out of STP",
   CLAIM_LIMIT: "The policy reached its yearly claim limit",
+  OVER_LIMIT: "The payout is more than what is left of the benefit limit",
 };
 
 function Btn({ icon: I, variant = "primary", children, ...props }) {
@@ -655,7 +665,7 @@ function useAction(notify) {
 }
 
 /** Staff view of a policy's lifecycle: dates, beneficiaries, record a premium, cancel an unpaid policy. */
-export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, notify }) {
+export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, notify, profile }) {
   const [busy, run] = useAction(notify);
   const confirm = useConfirm();
   const call = (path, options, done) =>
@@ -788,6 +798,181 @@ export function PolicyWorkflowPanel({ session, policy: p, canManage, onUpdated, 
           )}
         </>
       )}
+      <BillingAccount session={session} policy={p} profile={profile} notify={notify} onChanged={onUpdated} />
+    </div>
+  );
+}
+
+/**
+ * The policy's billing account (NS-SH04-001/004): its due schedule, what was applied to each instalment, the
+ * receipts, paid-to date and arrears. Finance can record a returned or charged-back receipt, which reopens the
+ * period and starts a cover review (AT-SH04-02).
+ */
+function BillingAccount({ session, policy: p, profile, notify, onChanged }) {
+  const [account, setAccount] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, run] = useAction(notify);
+  const [reversing, setReversing] = useState(null);
+  const load = React.useCallback(async () => {
+    try {
+      setAccount((await request(session, "/collections/policies/" + p.id)).data);
+      setError("");
+    } catch (err) {
+      setError(err.status === 403 ? "" : err.message);
+    }
+  }, [session, p.id]);
+  useEffect(() => {
+    load();
+  }, [load, p.status, p.nextPremiumDue]);
+  if (!account) return error ? <p className="form-error">{error}</p> : null;
+  const reverse = (receipt, kind, reason) =>
+    run(async () => {
+      const result = await request(session, "/collections/receipts/" + receipt.receiptRef + "/reverse", {
+        method: "POST",
+        body: { kind, reason },
+      });
+      setReversing(null);
+      await load();
+      const fresh = await request(session, "/portfolio/policies");
+      const updated = (fresh.data || []).find((x) => x.id === p.id);
+      if (updated) onChanged(updated);
+      return result.data;
+    }, receipt.receiptRef + " recorded as " + kind.toLowerCase() + "; cover is under review.");
+  const mayReverse = holds(profile, "MANAGE_FINANCE");
+  return (
+    <div className="wf-billing">
+      <h3 className="section-title">Billing</h3>
+      <div className="detail-grid">
+        <Item label="Paid to" value={account.paidTo ? formatDate(account.paidTo) : "Not yet paid"} />
+        <Item label="Next due" value={formatDate(account.nextDue)} />
+        <Item
+          label="Arrears"
+          value={
+            Number(account.arrears) > 0
+              ? money(account.arrears) + " (" + account.overdueInstalments + " overdue)"
+              : "None"
+          }
+        />
+        <Item label="Instalments issued" value={String(account.instalments.length)} />
+      </div>
+      {account.unresolvedPayments.length > 0 && (
+        <div className="notice">
+          <Clock3 size={18} aria-hidden="true" />
+          <p>
+            Waiting on money that may still arrive: {account.unresolvedPayments.join("; ")}. Cover decisions wait until
+            it is resolved.
+          </p>
+        </div>
+      )}
+      {account.instalments.length > 0 && (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Instalment</th>
+                <th>Period</th>
+                <th className="num">Billed</th>
+                <th className="num">Applied</th>
+                <th className="num">Outstanding</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {account.instalments.map((i) => (
+                <tr key={i.ref}>
+                  <td>{i.ref}</td>
+                  <td>
+                    {formatDate(i.periodStart)} – {formatDate(i.periodEnd)}
+                  </td>
+                  <td className="num">
+                    {money(i.billed)}
+                    {Number(i.adjustments) !== 0 && <small className="ws-hint"> adj. {money(i.adjustments)}</small>}
+                  </td>
+                  <td className="num">{money(i.allocated)}</td>
+                  <td className="num">{money(i.outstanding)}</td>
+                  <td>
+                    <span className={"badge " + (i.status === "PAID" ? "green" : i.status === "WAIVED" ? "gray" : "amber")}>
+                      <span className="status-dot" />
+                      {i.status.replace("_", " ").toLowerCase()}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {account.receipts.length > 0 && (
+        <div className="wf-receipts">
+          {account.receipts.map((r) => (
+            <div key={r.receiptRef} className="linked-record">
+              <Wallet aria-hidden="true" />
+              <div>
+                <strong>
+                  {r.receiptRef} · {money(r.amount)} by {r.method}
+                </strong>
+                <small>
+                  {formatDate(r.periodStart)} – {formatDate(r.periodEnd)} · {formatDate(r.paidAt)}
+                  {r.reversalRef ? " · " + r.reversalKind.toLowerCase() + " (" + r.reversalRef + "): " + r.reversalReason : ""}
+                </small>
+              </div>
+              {r.status === "SUCCESSFUL" && mayReverse && reversing !== r.receiptRef && (
+                <Btn variant="secondary" disabled={busy} onClick={() => setReversing(r.receiptRef)}>
+                  Record a return
+                </Btn>
+              )}
+              {r.status !== "SUCCESSFUL" && (
+                <span className="badge red">
+                  <span className="status-dot" />
+                  Reversed
+                </span>
+              )}
+            </div>
+          ))}
+          {reversing && (
+            <ReturnForm
+              receipt={account.receipts.find((r) => r.receiptRef === reversing)}
+              busy={busy}
+              onCancel={() => setReversing(null)}
+              onConfirm={reverse}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Why the bank took a receipt back. The receipt is kept; the period reopens and cover is reviewed. */
+function ReturnForm({ receipt, busy, onCancel, onConfirm }) {
+  const [kind, setKind] = useState("RETURNED");
+  const [reason, setReason] = useState("");
+  return (
+    <div className="wf-reason">
+      <label className="form-label">
+        <span>What happened to {receipt.receiptRef}</span>
+        <select className="input" value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="RETURNED">Returned by the bank (e.g. unpaid debit)</option>
+          <option value="CHARGEBACK">Charged back by the payer</option>
+          <option value="REVERSED">Reversed in error</option>
+        </select>
+      </label>
+      <textarea
+        className="textarea"
+        rows={2}
+        maxLength={500}
+        placeholder="Reason, e.g. Debit returned: insufficient funds (bank ref 4471)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <div className="detail-actions">
+        <Btn variant="secondary" onClick={onCancel}>
+          Back
+        </Btn>
+        <Btn icon={CircleX} disabled={busy || reason.trim().length < 10} onClick={() => onConfirm(receipt, kind, reason.trim())}>
+          Record the return
+        </Btn>
+      </div>
     </div>
   );
 }
@@ -822,13 +1007,16 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
       : null;
   const call = (path, options, done) =>
     run(async () => {
-      const result = await request(session, "/portfolio/claims/" + c.id + path, options);
+      // Acts on the version on screen; if someone else changed the claim meanwhile the server refuses it (409).
+      const result = await request(session, "/portfolio/claims/" + c.id + path, { ...options, version: c.version });
       onUpdated(result.data);
       return result.data;
     }, done);
   const payee = c.payee || {};
   const payeeComplete = payee.name && payee.payoutMethod && payee.accountRef;
-  const canEditPayee = open && (holds(profile, "UPDATE_CLAIM") || holds(profile, "ASSESS_CLAIM"));
+  // A failed payout is corrected (and re-verified) before it is sent again.
+  const canEditPayee =
+    (open || c.status === "Payout Failed") && (holds(profile, "UPDATE_CLAIM") || holds(profile, "ASSESS_CLAIM"));
   const approve = async () => {
     const amount = payout ? Number(payout) : c.amount;
     const ok = await confirm({
@@ -851,6 +1039,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
       try {
         const result = await request(session, "/portfolio/claims/" + c.id + "/approve", {
           method: "POST",
+          version: c.version,
           body: {
             ...(payout ? { payoutAmount: Number(payout) } : {}),
             ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
@@ -870,11 +1059,13 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
     <div className="wf-panel">
       <div className="detail-grid">
         <Item label="Policy" value={c.policy} />
+        <Item label="Covered life" value={c.coveredLife} />
         <Item label="Claimant" value={c.claimant + (c.claimantRelationship ? " (" + c.claimantRelationship + ")" : "")} />
         <Item label="Date of event" value={formatDate(c.eventDate)} />
         <Item label="Processing" value={c.processingType} />
         <Item label="Policy cover" value={money(c.amount)} />
         <Item label="Payout" value={c.payoutAmount != null ? money(c.payoutAmount) : "Not decided"} />
+        <Item label="Case reserve" value={money(c.reserve)} />
       </div>
       {c.description && (
         <div className="notice">
@@ -893,6 +1084,33 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
       )}
       <h3 className="section-title">Checks</h3>
       <ClaimChecks checks={c.checks} />
+      {c.evidence?.length > 0 && (
+        <>
+          <h3 className="section-title">Evidence</h3>
+          <ul className="wf-evidence">
+            {c.evidence.map((e) => (
+              <li key={e.documentType} className={e.received ? "received" : e.mandatory ? "missing" : "optional"}>
+                {e.received ? <BadgeCheck size={15} aria-hidden="true" /> : <Clock3 size={15} aria-hidden="true" />}
+                {e.documentType}
+                <small>{e.received ? "on file" : e.mandatory ? "required, not yet on file" : "optional"}</small>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {c.related?.length > 0 && (
+        <>
+          <h3 className="section-title">Other claims on this policy</h3>
+          <ul className="wf-evidence">
+            {c.related.map((r) => (
+              <li key={r.ref} className={r.possibleDuplicate ? "missing" : "optional"}>
+                {r.ref} · {r.type} · {r.coveredLife} · event {formatDate(r.eventDate)} · {r.status}
+                {r.possibleDuplicate && <small>possibly the same event</small>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <p className="muted small">
         All five passing pays the claim straight through. If Policy Active, Waiting Period or Premiums Paid fails,
         the claim can only be rejected; if Beneficiary Match or No Duplicate fails, it can be approved with a reason.
@@ -1041,6 +1259,24 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           </p>
         </div>
       )}
+      {c.status === "Payout Sent" && (
+        <div className="notice">
+          <Clock3 size={18} aria-hidden="true" />
+          <p>
+            {money(c.payoutAmount)} sent to {payee.name} · {c.payoutReference}. It counts as paid once the provider
+            confirms settlement.
+          </p>
+        </div>
+      )}
+      {c.status === "Payout Failed" && (
+        <div className="notice">
+          <CircleX size={18} aria-hidden="true" />
+          <p>
+            Payout {c.payoutReference} failed or was returned. Correct and verify the payee's details, then send it
+            again. The claim history records the provider's reason.
+          </p>
+        </div>
+      )}
 
       <div className="detail-actions">
         {open && holds(profile, "UPDATE_CLAIM") && (
@@ -1089,7 +1325,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             <input
               className="input"
               type="number"
-              min="1"
+              min="0.01"
+              step="0.01"
               max={c.amount}
               placeholder={"Payout (default " + c.amount + ")"}
               aria-label="Payout amount"
@@ -1124,20 +1361,78 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             disabled={busy}
             onClick={async () => {
               const ok = await confirm({
-                title: "Pay out " + money(c.payoutAmount) + "?",
+                title: (c.status === "Payout Failed" ? "Send again: " : "Pay out ") + money(c.payoutAmount) + "?",
                 message: (
                   <>
                     Sends {money(c.payoutAmount)} to <strong>{payee.name}</strong> by {payee.payoutMethod}{" "}
-                    {payee.accountRef}. A payout cannot be recalled from here.
+                    {payee.accountRef}. The claim is paid once the provider confirms settlement. A payout cannot be
+                    recalled from here.
                   </>
                 ),
                 confirmLabel: "Send payout",
               });
-              if (ok) call("/pay", { method: "POST" }, "Payout sent for " + c.id + ".");
+              if (ok)
+                call(
+                  "/pay",
+                  { method: "POST" },
+                  "Payout sent for " + c.id + ". Waiting for the provider to confirm settlement.",
+                );
             }}
           >
-            Pay out {money(c.payoutAmount)}
+            {c.status === "Payout Failed" ? "Send payout again" : "Pay out " + money(c.payoutAmount)}
           </Btn>
+        )}
+        {can("confirm-payout") && holds(profile, "SETTLE_CLAIM") && (
+          <Btn
+            icon={CircleCheck}
+            disabled={busy}
+            onClick={async () => {
+              const ok = await confirm({
+                title: "Confirm settlement of " + c.payoutReference + "?",
+                message: (
+                  <>
+                    Only when the provider or bank statement shows {money(c.payoutAmount)} reached{" "}
+                    <strong>{payee.name}</strong>. The claim becomes Paid and the payment is posted.
+                  </>
+                ),
+                confirmLabel: "Confirm settlement",
+              });
+              if (ok)
+                call(
+                  "/confirm-payout",
+                  { method: "POST", body: { providerReference: c.payoutReference } },
+                  c.id + " is paid.",
+                );
+            }}
+          >
+            Confirm settlement
+          </Btn>
+        )}
+        {can("payout-failed") && holds(profile, "SETTLE_CLAIM") && (
+          <ReasonAction
+            label="Payout failed"
+            icon={CircleX}
+            busy={busy}
+            placeholder="What the provider or bank said, e.g. Returned: account closed"
+            onConfirm={(reason) =>
+              call(
+                "/payout-failed",
+                { method: "POST", body: { reason } },
+                "Payout on " + c.id + " recorded as failed. Verify the payee's details before sending again.",
+              )
+            }
+          />
+        )}
+        {can("reopen") && holds(profile, "APPROVE_CLAIM") && (
+          <ReasonAction
+            label="Reopen"
+            icon={RotateCcw}
+            busy={busy}
+            placeholder="Why the decision is being reviewed, e.g. the death certificate has now arrived"
+            onConfirm={(reason) =>
+              call("/reopen", { method: "POST", body: { reason } }, c.id + " is reopened for review.")
+            }
+          />
         )}
         {can("reject") && holds(profile, "REJECT_CLAIM") && (
           <ReasonAction
@@ -1237,6 +1532,16 @@ export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = 
             <option>Hospital admission</option>
           </select>
         </label>
+        <label className="form-label">
+          <span>Covered life (optional)</span>
+          <input
+            name="coveredLife"
+            className="input"
+            maxLength={200}
+            placeholder="Leave blank for the policyholder"
+            title="The full name of the covered spouse, child or parent the claim is for"
+          />
+        </label>
         <label className="form-label full">
           <span>What happened</span>
           <textarea name="description" className="textarea" rows={3} required maxLength={1000} />
@@ -1257,5 +1562,353 @@ export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = 
         </Btn>
       </div>
     </form>
+  );
+}
+
+/**
+ * The quote behind an application or policy (NS-IL01-001/004): every version with its price, rate version, validity,
+ * calculation trace and acceptance. An expired or changed offer is re-quoted into the next version, which shows what
+ * changed and needs the customer's acceptance before issue. Earlier versions stay readable (AT-IL01-01).
+ */
+export function QuotePanel({ session, quoteRef, profile, notify, onChanged }) {
+  const [versions, setVersions] = useState(null);
+  const [error, setError] = useState("");
+  const [shown, setShown] = useState(null);
+  const [replay, setReplay] = useState(null);
+  const [busy, run] = useAction(notify);
+  const confirm = useConfirm();
+  const load = React.useCallback(async () => {
+    try {
+      const data = (await request(session, "/portfolio/quotes/" + quoteRef)).data || [];
+      setVersions(data);
+      setError("");
+    } catch (err) {
+      setError(err.status === 403 ? "" : err.message);
+    }
+  }, [session, quoteRef]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  if (!versions) return error ? <p className="form-error">{error}</p> : null;
+  const latest = versions[0];
+  const q = versions.find((v) => v.version === shown) || latest;
+  const mayQuote = holds(profile, "CREATE_APPLICATION") || holds(profile, "CREATE_POLICY");
+  const requote = () =>
+    run(async () => {
+      const result = await request(session, "/portfolio/quotes/" + quoteRef + "/requote", { method: "POST" });
+      await load();
+      setShown(null);
+      return result.data;
+    }, "Re-quoted as version " + (latest.version + 1) + ". Show the customer what changed and record their acceptance.");
+  const accept = async () => {
+    const ok = await confirm({
+      title: "Record acceptance of " + quoteRef + " v" + latest.version + "?",
+      message: (
+        <>
+          Only when the customer has accepted <strong>{money(latest.premium)}</strong> a month on the rates{" "}
+          {latest.rateVersion}
+          {latest.differences ? <> after seeing what changed: {latest.differences}</> : null}.
+        </>
+      ),
+      confirmLabel: "Record acceptance",
+    });
+    if (!ok) return;
+    await run(async () => {
+      const result = await request(session, "/portfolio/quotes/" + quoteRef + "/accept", {
+        method: "POST",
+        body: { version: latest.version },
+      });
+      await load();
+      onChanged?.(result.data);
+      return result.data;
+    }, "Acceptance recorded for " + quoteRef + " v" + latest.version + ".");
+  };
+  const check = () =>
+    run(async () => {
+      const result = await request(session, "/portfolio/quotes/" + quoteRef + "/replay?version=" + q.version);
+      setReplay(result.data);
+      return result.data;
+    });
+  const lines = q.trace?.lines || [];
+  return (
+    <div className="wf-panel">
+      <h3 className="section-title">
+        Quote {quoteRef} · version {q.version}
+        {q.version !== latest.version ? " (earlier offer)" : ""}
+      </h3>
+      <div className="detail-grid">
+        <Item label="Premium" value={money(q.premium) + " a month"} />
+        <Item label="Cover" value={money(q.sumAssured)} />
+        <Item label="Rates" value={q.pricingMethod === "RATE_TABLE" ? q.rateVersion : "Flat tier premium"} />
+        <Item label="Priced on" value={formatDate(q.pricedOn)} />
+        <Item label="Valid until" value={formatDate(q.validUntil) + (q.expired ? " (expired)" : "")} />
+        <Item
+          label="Status"
+          value={
+            q.status === "ACCEPTED"
+              ? "Accepted by " + q.acceptedBy + " on " + formatDate(q.acceptedAt)
+              : q.status === "SUPERSEDED"
+                ? "Replaced by a later version"
+                : "Waiting for the customer's acceptance"
+          }
+        />
+      </div>
+      {q.differences && (
+        <div className="notice">
+          <RotateCcw size={18} aria-hidden="true" />
+          <p>Changed from the previous version: {q.differences}</p>
+        </div>
+      )}
+      {latest.expired && latest.version === q.version && (
+        <div className="notice">
+          <Clock3 size={18} aria-hidden="true" />
+          <p>
+            This offer expired on {formatDate(latest.validUntil)}. It cannot be issued; re-quote it, show the customer
+            what changed and record their acceptance of the revised offer.
+          </p>
+        </div>
+      )}
+      {lines.length > 0 && (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Life</th>
+                <th>Relationship</th>
+                <th className="num">Age</th>
+                <th className="num">Cover</th>
+                <th className="num">Premium</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i}>
+                  <td>{l.fullName}</td>
+                  <td>{l.relationship}</td>
+                  <td className="num">{l.age}</td>
+                  <td className="num">{money(l.coverAmount)}</td>
+                  <td className="num">{money(l.monthlyPremium)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small">
+        {q.trace?.rounding}. Inputs fingerprint {String(q.inputHash).slice(0, 12)}… · {q.serviceVersion}
+        {replay && replay.version === q.version
+          ? " · Re-priced under " + replay.rateVersion + ": " + (replay.reproduced ? "same amount" : "different amount (" + money(replay.replayed) + ")")
+          : ""}
+      </p>
+      <div className="detail-actions">
+        {versions.length > 1 && (
+          <select
+            className="input"
+            aria-label="Quote version"
+            value={q.version}
+            onChange={(e) => setShown(Number(e.target.value))}
+          >
+            {versions.map((v) => (
+              <option key={v.version} value={v.version}>
+                Version {v.version} · {v.status.toLowerCase()} · {money(v.premium)}
+              </option>
+            ))}
+          </select>
+        )}
+        <Btn variant="secondary" disabled={busy} onClick={check}>
+          Check the price
+        </Btn>
+        {mayQuote && latest.status === "QUOTED" && !latest.expired && (
+          <Btn icon={Check} disabled={busy} onClick={accept}>
+            Record acceptance
+          </Btn>
+        )}
+        {mayQuote && !latest.policyRef && (
+          <Btn variant="secondary" icon={RotateCcw} disabled={busy} onClick={requote}>
+            Re-quote
+          </Btn>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * What an application captured and what it still needs (NS-IL01-002/003): payer, mandate, channel, disclosure
+ * answers, the declaration, and the evidence checklist. A draft shows what stands between it and submission; a
+ * submitted one shows the evidence still outstanding, which holds issue until it is recorded (AT-IL01-02).
+ */
+export function ApplicationChecklist({ session, application: a, profile, notify, onChanged }) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, run] = useAction(notify);
+  const [recording, setRecording] = useState(null);
+  const load = React.useCallback(async () => {
+    try {
+      setState((await request(session, "/portfolio/applications/" + a.id + "/checklist")).data);
+      setError("");
+    } catch (err) {
+      setError(err.status === 403 ? "" : err.message);
+    }
+  }, [session, a.id]);
+  useEffect(() => {
+    load();
+  }, [load, a.status]);
+  if (!state) return error ? <p className="form-error">{error}</p> : null;
+  const mayUpdate = holds(profile, "UPDATE_APPLICATION");
+  const call = (path, options, done) =>
+    run(async () => {
+      const result = await request(session, "/portfolio/applications/" + a.id + path, options);
+      setState(result.data);
+      setRecording(null);
+      onChanged?.({ ...a, status: result.data.status });
+      return result.data;
+    }, done);
+  return (
+    <div className="wf-panel">
+      <h3 className="section-title">Application details</h3>
+      <div className="detail-grid">
+        <Item label="Proposer" value={state.proposer} />
+        <Item label="Payer" value={state.payer} />
+        <Item
+          label="Payment mandate"
+          value={
+            state.mandateMethod
+              ? state.mandateMethod.replace("_", " ").toLowerCase() +
+                (state.mandateAccount ? " · " + state.mandateInstitution + " " + state.mandateAccount : "") +
+                (state.mandateDebitDay ? " · day " + state.mandateDebitDay : "")
+              : "Not decided yet"
+          }
+        />
+        <Item
+          label="Channel"
+          value={state.channel.replace("_", " ").toLowerCase() + (state.intermediaryCode ? " · " + state.intermediaryCode : "")}
+        />
+        <Item
+          label="Declaration"
+          value={
+            state.declaredAt
+              ? "Accepted, recorded by " + state.declaredBy
+              : state.preCapture
+                ? "Not recorded (predates this record)"
+                : "Not accepted"
+          }
+        />
+        <Item
+          label="Submitted"
+          value={
+            state.submittedAt
+              ? formatDate(state.submittedAt) + " by " + state.submittedBy
+              : state.preCapture
+                ? "Before this was recorded"
+                : "Not submitted"
+          }
+        />
+      </div>
+      {state.submissionProblems.length > 0 && (
+        <div className="notice">
+          <Clock3 size={18} aria-hidden="true" />
+          <p>Before this application can be submitted: {state.submissionProblems.join(" ")}</p>
+        </div>
+      )}
+      {state.missingEvidence.length > 0 && (
+        <div className="notice">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <p>
+            It cannot be issued until this evidence is received: {state.missingEvidence.join(", ")}. Record each item
+            below when it arrives.
+          </p>
+        </div>
+      )}
+      {state.preCapture && (
+        <p className="muted small">
+          This application was submitted before disclosures and the declaration were captured, so none were recorded
+          for it. New applications capture them before they can be submitted.
+        </p>
+      )}
+      {state.disclosures.length > 0 && !state.preCapture && (
+        <>
+          <h3 className="section-title">Disclosures</h3>
+          <ul className="wf-evidence">
+            {state.disclosures.map((d) => (
+              <li key={d.code} className={d.answer ? "received" : d.mandatory ? "missing" : "optional"}>
+                {d.answer ? <BadgeCheck size={15} aria-hidden="true" /> : <Clock3 size={15} aria-hidden="true" />}
+                {d.question}
+                <small>{d.answer ? d.answer : d.mandatory ? "not answered" : "optional"}</small>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <h3 className="section-title">Evidence</h3>
+      <ul className="wf-evidence">
+        {state.evidence.map((e) => (
+          <li key={e.documentType} className={e.received ? "received" : e.mandatory ? "missing" : "optional"}>
+            {e.received ? <BadgeCheck size={15} aria-hidden="true" /> : <Clock3 size={15} aria-hidden="true" />}
+            {e.documentType}
+            <small>
+              {e.received
+                ? e.note + (e.recordedBy ? " · " + e.recordedBy : "")
+                : e.mandatory
+                  ? "required, not yet received"
+                  : "optional"}
+            </small>
+            {!e.received && mayUpdate && recording !== e.documentType && (
+              <Btn variant="secondary" disabled={busy} onClick={() => setRecording(e.documentType)}>
+                Record
+              </Btn>
+            )}
+          </li>
+        ))}
+      </ul>
+      {recording && (
+        <EvidenceNote
+          documentType={recording}
+          busy={busy}
+          onCancel={() => setRecording(null)}
+          onConfirm={(note) =>
+            call("/evidence", { method: "POST", body: { documentType: recording, note } }, recording + " recorded.")
+          }
+        />
+      )}
+      {a.status === "Draft" && mayUpdate && (
+        <div className="detail-actions">
+          <Btn
+            icon={Check}
+            disabled={busy || state.submissionProblems.length > 0}
+            title={state.submissionProblems.length > 0 ? "Complete the application first" : undefined}
+            onClick={() => call("/submit", { method: "POST" }, a.id + " submitted.")}
+          >
+            Submit application
+          </Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** What was received and checked, kept with the evidence item. */
+function EvidenceNote({ documentType, busy, onCancel, onConfirm }) {
+  const [note, setNote] = useState("");
+  return (
+    <div className="wf-reason">
+      <textarea
+        className="textarea"
+        rows={2}
+        maxLength={300}
+        autoFocus
+        placeholder={"What was received and checked for " + documentType}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <div className="detail-actions">
+        <Btn variant="secondary" onClick={onCancel}>
+          Back
+        </Btn>
+        <Btn icon={Check} disabled={busy || note.trim().length < 5} onClick={() => onConfirm(note.trim())}>
+          Record it
+        </Btn>
+      </div>
+    </div>
   );
 }

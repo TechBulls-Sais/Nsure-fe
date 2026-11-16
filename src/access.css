@@ -224,3 +224,33 @@ div.alerts-item {
 .emergency-grant {
   margin-top: 12px;
 }
+/* Audit evidence: filter by record, and the chain check result. */
+.access-filter {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0;
+  flex-wrap: wrap;
+}
+.access-filter .input {
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+.notice.danger {
+  border-color: light-dark(#f0c9c4, oklch(0.42 0.09 25));
+  background: light-dark(#fdf2f1, oklch(0.24 0.04 25));
+}
+/* Finance: split a suspense receipt over several policies; compact owner input in tables. */
+.split-lines {
+  display: grid;
+  gap: 8px;
+}
+.split-line {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.compact-input {
+  min-width: 0;
+  max-width: 140px;
+  padding: 4px 8px;
+}

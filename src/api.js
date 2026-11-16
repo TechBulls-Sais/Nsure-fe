@@ -22,9 +22,29 @@ function signedOut(session, response) {
   if (response.status === 401 && session && unauthorizedHandler) unauthorizedHandler(response);
 }
 
-function basic(session) {
-  const token = btoa(`${session.username}:${session.password}`);
-  return `Basic ${token}`;
+// A signed-in browser holds only a session token (NS-SH11-001); the password is sent once, to openSession.
+function authorization(session) {
+  if (session.token) return `Bearer ${session.token}`;
+  return `Basic ${btoa(`${session.username}:${session.password}`)}`;
+}
+
+/**
+ * Signs in: exchanges the username and password for a session token. The result is the session to keep; it holds
+ * no password. The token ends after idle time, at its expiry, on sign-out, or when the password changes.
+ */
+export async function openSession(username, password) {
+  const { data } = await request({ username, password }, "/auth/session", { method: "POST" });
+  return { username: data.username, token: data.token, expiresAt: data.expiresAt };
+}
+
+/** Signs out on the server so the token stops working at once; the browser forgets it either way. */
+export async function closeSession(session) {
+  if (!session?.token) return;
+  try {
+    await fetch("/api/auth/session", { method: "DELETE", headers: { Authorization: authorization(session) } });
+  } catch {
+    // The server is unreachable; the token still expires on its own.
+  }
 }
 
 // The backend is down or restarting: no response at all, a gateway error (502/503/504 from a proxy), or the
@@ -41,7 +61,11 @@ function unreachable(response, data) {
 /** The error to throw for a failed response: the server's own message, or why the server could not answer. */
 function failure(response, data, fallback) {
   if (unreachable(response, data)) return new ApiError(response.status, UNREACHABLE);
-  return new ApiError(response.status, data?.message || fallback);
+  // A server fault carries a reference support can find in the logs (NS-API-001).
+  const reference = response.status >= 500 && data?.correlationId ? ` (reference ${data.correlationId})` : "";
+  const error = new ApiError(response.status, (data?.message || fallback) + reference);
+  error.code = data?.code;
+  return error;
 }
 
 async function readBody(response) {
@@ -56,9 +80,11 @@ async function readBody(response) {
 
 export async function request(session, path, options = {}) {
   const headers = { Accept: "application/json" };
-  if (session) headers.Authorization = basic(session);
+  if (session) headers.Authorization = authorization(session);
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+  // The version the screen showed (NS-TXN-001): a record changed meanwhile is refused with 409 STALE_VERSION.
+  if (options.version !== undefined && options.version !== null) headers["If-Match"] = String(options.version);
 
   let response;
   try {
@@ -83,7 +109,7 @@ async function send(session, path, init) {
   try {
     return await fetch(`/api${path}`, {
       ...init,
-      headers: { ...(session ? { Authorization: basic(session) } : {}), ...init.headers },
+      headers: { ...(session ? { Authorization: authorization(session) } : {}), ...init.headers },
     });
   } catch {
     throw new ApiError(0, UNREACHABLE);

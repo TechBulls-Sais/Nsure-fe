@@ -56,6 +56,7 @@ export default function AccessAdmin({ session, notify, profile }) {
     allow.readUsers && ["users", "Users"],
     allow.readRoles && ["limits", "Approval limits"],
     allow.readAudit && ["approvals", "Approvals"],
+    allow.readAudit && ["evidence", "Audit evidence"],
     readEmergency && ["emergency", "Emergency access"],
   ].filter(Boolean);
   const [tab, setTab] = useState(() => tabs[0]?.[0] || "roles");
@@ -369,6 +370,8 @@ export default function AccessAdmin({ session, notify, profile }) {
         />
       )}
 
+      {tab === "evidence" && allow.readAudit && <EvidencePanel session={session} />}
+
       {tab === "emergency" && readEmergency && (
         <EmergencyPanel
           grants={emergency}
@@ -457,6 +460,110 @@ function describeCommand(command) {
  * The maker-checker inbox. Changes to users and roles wait here for a second person holding CHECKER_<code>; nobody
  * approves their own change, the administrator included (Nsure Life NS-UX-004).
  */
+/**
+ * Append-only audit evidence (NS-SH11-005): decisions, approvals, sign-ins, sensitive downloads and exports, each
+ * chained to the one before by its hash. "Check the chain" recomputes every link, so an edited or removed record is
+ * named (AT-SH11-03).
+ */
+function EvidencePanel({ session }) {
+  const [rows, setRows] = useState([]);
+  const [ref, setRef] = useState("");
+  const [check, setCheck] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async (record) => {
+    setError("");
+    try {
+      const query = record ? "?entityRef=" + encodeURIComponent(record) + "&limit=200" : "?limit=200";
+      const r = await request(session, "/audits/evidence" + query);
+      setRows((r.data || []).map((row) => ({ ...row, id: row.sequenceNo })));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+  useEffect(() => {
+    load("");
+  }, [session]);
+  const verify = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      setCheck((await request(session, "/audits/evidence/verify")).data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2>Audit evidence</h2>
+          <p className="subtitle">
+            Every decision, approval, sign-in, document download and export, newest first. Records are never edited or
+            deleted; each one carries the hash of the one before it.
+          </p>
+        </div>
+        <button className="btn secondary" disabled={busy} onClick={verify}>
+          {busy ? "Checking…" : "Check the chain"}
+        </button>
+      </div>
+      {check && (
+        <p className={"notice " + (check.intact ? "" : "danger")} role="status">
+          {check.intact
+            ? "Intact: all " + check.records + " records link up and none was changed."
+            : "Broken at record " + check.brokenAt + ": " + check.problem}
+        </p>
+      )}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <form
+        className="access-filter"
+        onSubmit={(e) => {
+          e.preventDefault();
+          load(ref.trim());
+        }}
+      >
+        <input
+          className="input"
+          value={ref}
+          placeholder="Record reference, e.g. POL-10843 or CLM-0843"
+          aria-label="Record reference"
+          onChange={(e) => setRef(e.target.value)}
+        />
+        <button className="btn secondary" type="submit">
+          Show
+        </button>
+      </form>
+      <ResourceTable
+        columns={["#", "When", "Who", "What", "Record", "Why", "Reference"]}
+        rows={rows}
+        render={(e) => (
+          <>
+            <td>{e.sequenceNo}</td>
+            <td>{when(e.occurredAt)}</td>
+            <td>{e.actor}</td>
+            <td>{e.action}</td>
+            <td>
+              {e.entityType}
+              {e.entityRef ? " " + e.entityRef : ""}
+            </td>
+            <td>{e.reason || "—"}</td>
+            <td>
+              <small>{e.correlationId ? e.correlationId.slice(0, 8) : "—"}</small>
+            </td>
+          </>
+        )}
+        editable={() => false}
+      />
+    </section>
+  );
+}
+
 function ApprovalsPanel({ pending, users, profile, busy, decide }) {
   const names = new Map(users.map((user) => [user.id, user.username]));
   return (

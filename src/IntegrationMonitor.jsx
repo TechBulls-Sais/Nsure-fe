@@ -211,6 +211,7 @@ const blankConfirmation = () => ({
   amount: "",
   currency: "BWP",
   method: "Orange Money",
+  providerHolds: true,
 });
 
 function Inbound({ session, notify, profile, onChange }) {
@@ -218,9 +219,22 @@ function Inbound({ session, notify, profile, onChange }) {
   const [form, setForm] = useState(null);
   const action = useAction(notify);
   const submit = async () => {
-    const r = await action.run(() =>
-      request(session, "/integration/payment-notifications", { method: "POST", body: form }),
-    );
+    const { providerHolds, ...notification } = form;
+    const r = await action.run(async () => {
+      // The provider's own record comes first: a notification it cannot confirm goes to suspense.
+      if (providerHolds) {
+        await request(session, "/integration/simulator/provider-receipts", {
+          method: "POST",
+          body: {
+            provider: form.provider,
+            providerReference: form.providerReference,
+            amount: form.amount,
+            currency: form.currency,
+          },
+        });
+      }
+      return request(session, "/integration/payment-notifications", { method: "POST", body: notification });
+    });
     if (r) {
       notify(
         r.data.status === "APPLIED"
@@ -238,7 +252,7 @@ function Inbound({ session, notify, profile, onChange }) {
       {form && (
         <Drawer
           title="Simulate a payment confirmation"
-          description="What a bank or wallet callback does. Repeating a provider reference returns the first result."
+          description="What a bank or wallet callback does. Premium is collected only when the provider confirms it holds the money; repeating a provider reference returns the first result."
           onClose={() => setForm(null)}
         >
           <FormGrid submitLabel="Send confirmation" busy={action.busy} error={action.error} onSubmit={submit}>
@@ -264,6 +278,14 @@ function Inbound({ session, notify, profile, onChange }) {
                 ))}
               </select>
             </Field>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={form.providerHolds}
+                onChange={(e) => setForm({ ...form, providerHolds: e.target.checked })}
+              />
+              The provider has received this money (simulated provider record)
+            </label>
           </FormGrid>
         </Drawer>
       )}

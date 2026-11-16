@@ -46,6 +46,7 @@ export default function Finance({ session, notify, profile }) {
           ["gl", "GL export"],
           ["manual", "Manual journals"],
           ["suspense", "Suspense"],
+          ["reconciliation", "Reconciliation"],
         ]}
       />
       {tab === "balance" && <TrialBalance session={session} />}
@@ -56,6 +57,7 @@ export default function Finance({ session, notify, profile }) {
       {tab === "gl" && <GlExport session={session} notify={notify} profile={profile} />}
       {tab === "manual" && <ManualJournals session={session} notify={notify} profile={profile} />}
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
+      {tab === "reconciliation" && <Reconciliation session={session} notify={notify} profile={profile} />}
     </>
   );
 }
@@ -191,7 +193,14 @@ function Journals({ session, notify, profile }) {
           <div className="ws-kv">
             <div><small>Event date</small><strong>{open.eventDate}</strong></div>
             <div><small>Accounting date</small><strong>{open.accountingDate}</strong></div>
-            <div><small>Rule version</small><strong>{open.ruleVersion ?? "—"}</strong></div>
+            <div>
+              <small>Posting rule</small>
+              <strong>
+                {open.ruleVersion == null
+                  ? "—"
+                  : "v" + open.ruleVersion + (open.postingRuleId == null ? " (version no longer on file)" : "")}
+              </strong>
+            </div>
             <div><small>Posted by</small><strong>{open.createdBy}</strong></div>
           </div>
           <DataTable
@@ -281,24 +290,101 @@ function Exceptions({ session, notify, profile }) {
   );
 }
 
+/**
+ * Posting rules are versioned (NS-SH08-001): a change proposes the next version with a reason and an effective date,
+ * someone else approves it, and it applies to events dated from then on. Journals keep the version they posted with.
+ */
 function Rules({ session, notify, profile }) {
   const rules = useResource(session, "/finance/posting-rules", []);
   const accounts = useResource(session, "/finance/accounts", []);
   const [edit, setEdit] = useState(null);
+  const [rejecting, setRejecting] = useState(null);
+  const [history, setHistory] = useState(false);
   const action = useAction(notify);
+  const confirm = useConfirm();
+  const me = profile?.username;
+  // The local calendar date (not UTC), so a change made after midnight is not dated yesterday.
+  const today = new Date().toLocaleDateString("en-CA");
+  const all = rules.data || [];
+  const pendingFor = (eventType) => all.find((r) => r.eventType === eventType && r.approvalStatus === "PENDING_APPROVAL");
+  const latestFor = (eventType) => all.filter((r) => r.eventType === eventType).reduce((a, r) => Math.max(a, r.version), 0);
+  // Today's rule, anything waiting or scheduled; the full history on request.
+  const shown = history
+    ? all
+    : all.filter(
+        (r) =>
+          r.inForce ||
+          r.approvalStatus === "PENDING_APPROVAL" ||
+          (r.approvalStatus === "APPROVED" && r.effectiveFrom > today),
+      );
   const save = async () => {
     const done = await action.run(
       () =>
         request(session, "/finance/posting-rules/" + encodeURIComponent(edit.eventType), {
           method: "PUT",
-          body: edit,
+          body: { ...edit, baseVersion: latestFor(edit.eventType) },
         }),
-      "Posting rule saved",
+      "Change proposed — another user must approve it",
     );
     if (done) {
       setEdit(null);
       rules.reload();
     }
+  };
+  const approve = async (r) => {
+    const ok = await confirm({
+      title: `Approve ${r.eventType} v${r.version}?`,
+      message: (
+        <>
+          {r.updatedBy} proposed Dr {r.debitAccount} / Cr {r.creditAccount} ({r.status}) from {r.effectiveFrom}:{" "}
+          <em>{r.changeReason}</em>. Events dated from then on post with it; journals already posted keep their version.
+        </>
+      ),
+      confirmLabel: "Approve",
+    });
+    if (!ok) return;
+    const done = await action.run(
+      () =>
+        request(session, `/finance/posting-rules/${encodeURIComponent(r.eventType)}/versions/${r.version}/approve`, {
+          method: "POST",
+        }),
+      `${r.eventType} v${r.version} approved`,
+    );
+    if (done) rules.reload();
+  };
+  const reject = async () => {
+    const done = await action.run(
+      () =>
+        request(
+          session,
+          `/finance/posting-rules/${encodeURIComponent(rejecting.eventType)}/versions/${rejecting.version}/reject`,
+          { method: "POST", body: { reason: rejecting.reason } },
+        ),
+      `${rejecting.eventType} v${rejecting.version} rejected`,
+    );
+    if (done) {
+      setRejecting(null);
+      rules.reload();
+    }
+  };
+  const startEdit = (r) => {
+    if (!can(profile, "MANAGE_FINANCE")) return;
+    const pending = pendingFor(r.eventType);
+    if (pending) {
+      notify?.(`${r.eventType} v${pending.version} is awaiting approval; approve or reject it first.`, "error");
+      return;
+    }
+    setEdit({
+      eventType: r.eventType,
+      debitAccount: r.debitAccount,
+      creditAccount: r.creditAccount,
+      amountField: r.amountField,
+      domain: r.domain,
+      status: r.status,
+      description: r.description,
+      effectiveFrom: today,
+      reason: "",
+    });
   };
   const accountSelect = (field) => (
     <select value={edit[field]} onChange={(e) => setEdit({ ...edit, [field]: e.target.value })}>
@@ -311,35 +397,90 @@ function Rules({ session, notify, profile }) {
   );
   return (
     <>
-      <Panel title="Posting rules" subtitle="Event → debit / credit. Each change is versioned and recorded on every journal.">
-        <ErrorNote error={rules.error} />
+      <Panel
+        title="Posting rules"
+        subtitle="Event → debit / credit. A change is a new version that someone else approves; it applies to events dated from its effective date, and every journal keeps the version it posted with."
+        action={
+          <Button variant="secondary" onClick={() => setHistory(!history)}>
+            {history ? "Hide history" : "Show history"}
+          </Button>
+        }
+      >
+        <ErrorNote error={rules.error || (!edit && !rejecting && action.error)} />
         <DataTable
-          rowKey={(r) => r.eventType}
-          rows={rules.data}
+          rowKey={(r) => r.id}
+          rows={shown}
           loading={rules.loading}
           empty="No posting rules"
           emptyDetail="Each business event needs a rule naming the accounts it debits and credits before it can post."
           searchPlaceholder="Search event, account, domain…"
-          onRowClick={can(profile, "MANAGE_FINANCE") ? (r) => setEdit({ ...r }) : undefined}
+          onRowClick={can(profile, "MANAGE_FINANCE") ? startEdit : undefined}
           columns={[
             { key: "eventType", label: "Event" },
+            { key: "version", label: "Version", render: (r) => "v" + r.version },
             { key: "debitAccount", label: "Debit" },
             { key: "creditAccount", label: "Credit" },
-            { key: "amountField", label: "Amount field" },
             { key: "domain", label: "Domain" },
-            { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
-            { key: "version", label: "Version" },
-            { key: "updatedBy", label: "Changed by" },
+            { key: "status", label: "Posts", render: (r) => <Badge>{r.status}</Badge> },
+            {
+              key: "effectiveFrom",
+              label: "Applies",
+              render: (r) => (r.effectiveTo ? `${r.effectiveFrom} – ${r.effectiveTo}` : `from ${r.effectiveFrom}`),
+            },
+            {
+              key: "approvalStatus",
+              label: "Approval",
+              render: (r) => <Badge>{r.inForce ? "IN FORCE" : r.approvalStatus.replace("_", " ")}</Badge>,
+            },
+            { key: "updatedBy", label: "Proposed by" },
+            { key: "approvedBy", label: "Decided by", render: (r) => r.approvedBy || "—" },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.approvalStatus !== "PENDING_APPROVAL" || !can(profile, "APPROVE_JOURNAL") ? null : r.updatedBy ===
+                  me ? (
+                  <small className="ws-hint">Needs another approver</small>
+                ) : (
+                  <span className="ws-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                      Approve
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setRejecting({ eventType: r.eventType, version: r.version, reason: "" })}
+                    >
+                      Reject
+                    </Button>
+                  </span>
+                ),
+            },
           ]}
         />
       </Panel>
+      {rejecting && (
+        <Drawer
+          title={`Reject ${rejecting.eventType} v${rejecting.version}`}
+          description="The proposer sees your reason. The rule in force stays as it is."
+          onClose={() => setRejecting(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject">
+            <Field label="Reason" full>
+              <input
+                value={rejecting.reason}
+                onChange={(e) => setRejecting({ ...rejecting, reason: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {edit && (
         <Drawer
-          title={"Edit rule · " + edit.eventType}
-          description="Each saved change is a new version of the rule; every journal records the version it posted with."
+          title={"Propose a change · " + edit.eventType}
+          description="This becomes the next version once someone else approves it. Events dated before its effective date, and journals already posted, keep the version they had."
           onClose={() => setEdit(null)}
         >
-          <FormGrid busy={action.busy} error={action.error} onSubmit={save}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={save} submitLabel="Propose change">
             <Field label="Debit account">{accountSelect("debitAccount")}</Field>
             <Field label="Credit account">{accountSelect("creditAccount")}</Field>
             <Field label="Amount field">
@@ -360,6 +501,16 @@ function Rules({ session, notify, profile }) {
             </Field>
             <Field label="Description">
               <input value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
+            </Field>
+            <Field label="Effective from">
+              <input
+                type="date"
+                value={edit.effectiveFrom}
+                onChange={(e) => setEdit({ ...edit, effectiveFrom: e.target.value })}
+              />
+            </Field>
+            <Field label="Reason for the change" full>
+              <input value={edit.reason} onChange={(e) => setEdit({ ...edit, reason: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>
@@ -852,6 +1003,237 @@ function ManualJournals({ session, notify, profile }) {
  * Suspense (Solution Blueprint §7): cash received that could not be applied. Allocating it to a policy or refunding
  * it is requested with a reason and applied only when someone else approves it.
  */
+/** The split lines of a clearance request, in words; null when it allocates the whole receipt to one policy. */
+function splitLines(r) {
+  if (!r.allocations) return null;
+  try {
+    return JSON.parse(r.allocations)
+      .map((l) => pula(l.amount) + " to " + l.policyRef)
+      .join(", ");
+  } catch {
+    return null;
+  }
+}
+
+const RECON_LABELS = {
+  MATCHED: "Matched",
+  MISSING_RECEIPT: "On the statement, not here",
+  AMOUNT_MISMATCH: "Amount differs",
+  CURRENCY_MISMATCH: "Currency differs",
+  DUPLICATE: "Twice on the statement",
+  NOT_ON_STATEMENT: "Here, not on the statement",
+};
+
+/** Statement lines "reference,amount[,currency][,valueDate]", one per line; a header line is skipped. */
+function parseStatementLines(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^reference/i.test(line))
+    .map((line) => {
+      const [reference, amount, currency, valueDate] = line.split(",").map((part) => part.trim());
+      return { reference, amount, currency: currency || undefined, valueDate: valueDate || undefined };
+    });
+}
+
+/**
+ * Statement reconciliation (NS-SH04-006): upload a provider or bank statement; every line is matched to a receipt
+ * by reference and checked for amount and currency, and receipts the statement does not show are listed too. Each
+ * exception stays open with an owner and its age until someone says how it was resolved.
+ */
+function Reconciliation({ session, notify, profile }) {
+  const open = useResource(session, "/collections/reconciliation", []);
+  const statements = useResource(session, "/collections/statements", []);
+  const action = useAction(notify);
+  const [upload, setUpload] = useState(null);
+  const [resolving, setResolving] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const today = new Date().toISOString().slice(0, 10);
+  const send = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/statements", {
+          method: "POST",
+          body: {
+            provider: upload.provider,
+            periodFrom: upload.periodFrom,
+            periodTo: upload.periodTo,
+            lines: parseStatementLines(upload.lines),
+          },
+        }),
+      "Statement reconciled",
+    );
+    if (done) {
+      setUpload(null);
+      open.reload();
+      statements.reload();
+    }
+  };
+  const resolve = async () => {
+    const done = await action.run(
+      () =>
+        request(session, `/collections/reconciliation//resolve`, {
+          method: "POST",
+          body: { resolution: resolving.resolution },
+        }),
+      "Exception resolved",
+    );
+    if (done) {
+      setResolving(null);
+      open.reload();
+      statements.reload();
+    }
+  };
+  const assign = async (item, owner) => {
+    const done = await action.run(
+      () => request(session, `/collections/reconciliation//assign`, { method: "POST", body: { owner } }),
+      "Owner set",
+    );
+    if (done) open.reload();
+  };
+  return (
+    <>
+      <Panel
+        title="Open reconciliation exceptions"
+        subtitle="Oldest first. Each has an owner and stays open until someone records how it was resolved."
+        action={
+          manage && (
+            <Button
+              icon={Upload}
+              onClick={() => setUpload({ provider: "", periodFrom: today, periodTo: today, lines: "" })}
+            >
+              Reconcile a statement
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={open.error || (!upload && !resolving && action.error)} />
+        <DataTable
+          rows={open.data}
+          loading={open.loading}
+          empty="No open exceptions"
+          emptyDetail="Every statement line matched a receipt, or each difference has been resolved."
+          searchPlaceholder="Search reference, statement, owner…"
+          columns={[
+            { key: "statementRef", label: "Statement" },
+            { key: "providerRef", label: "Reference" },
+            { key: "status", label: "Exception", render: (r) => <Badge>{RECON_LABELS[r.status] || r.status}</Badge> },
+            { key: "amount", label: "Amount", align: "right", render: (r) => (r.amount == null ? "—" : pula(r.amount)) },
+            {
+              key: "expectedAmount",
+              label: "Recorded here",
+              align: "right",
+              render: (r) => (r.expectedAmount == null ? "—" : pula(r.expectedAmount)),
+            },
+            { key: "ageDays", label: "Age", align: "right", render: (r) => r.ageDays + " d" },
+            {
+              key: "owner",
+              label: "Owner",
+              render: (r) =>
+                manage ? (
+                  <input
+                    className="input compact-input"
+                    defaultValue={r.owner || ""}
+                    aria-label={"Owner of " + r.providerRef}
+                    onBlur={(e) => e.target.value.trim() && e.target.value.trim() !== r.owner && assign(r, e.target.value.trim())}
+                  />
+                ) : (
+                  r.owner || "—"
+                ),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                manage && (
+                  <Button variant="secondary" onClick={() => setResolving({ ...r, resolution: "" })}>
+                    Resolve
+                  </Button>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      <Panel title="Statements" subtitle="Each upload is kept with its counts.">
+        <ErrorNote error={statements.error} />
+        <DataTable
+          rows={statements.data.map((s) => ({ ...s, id: s.ref }))}
+          loading={statements.loading}
+          empty="No statements yet"
+          emptyDetail="Reconcile a provider or bank statement to see it here."
+          columns={[
+            { key: "ref", label: "Statement" },
+            { key: "provider", label: "Provider" },
+            { key: "periodFrom", label: "Period", render: (s) => s.periodFrom + " to " + s.periodTo },
+            { key: "lines", label: "Lines", align: "right" },
+            { key: "matched", label: "Matched", align: "right" },
+            { key: "openExceptions", label: "Open", align: "right" },
+            { key: "uploadedBy", label: "By", render: (s) => s.uploadedBy + " · " + when(s.uploadedAt) },
+          ]}
+        />
+      </Panel>
+      {upload && (
+        <Drawer
+          title="Reconcile a statement"
+          description="Paste the statement lines as reference,amount[,currency][,valueDate], one per line. Receipts are matched by the provider's reference."
+          onClose={() => setUpload(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={send} submitLabel="Reconcile">
+            <Field label="Provider" hint="As it appears on receipts here, e.g. OrangeMoney or MOCK">
+              <input required value={upload.provider} onChange={(e) => setUpload({ ...upload, provider: e.target.value })} />
+            </Field>
+            <Field label="From">
+              <input
+                required
+                type="date"
+                value={upload.periodFrom}
+                onChange={(e) => setUpload({ ...upload, periodFrom: e.target.value })}
+              />
+            </Field>
+            <Field label="To">
+              <input
+                required
+                type="date"
+                value={upload.periodTo}
+                onChange={(e) => setUpload({ ...upload, periodTo: e.target.value })}
+              />
+            </Field>
+            <Field label="Statement lines" full>
+              <textarea
+                required
+                rows={8}
+                className="textarea"
+                placeholder={"reference,amount,currency,valueDate\nOM-1001,120.00,BWP," + today}
+                value={upload.lines}
+                onChange={(e) => setUpload({ ...upload, lines: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {resolving && (
+        <Drawer
+          title={"Resolve " + resolving.providerRef}
+          description={(RECON_LABELS[resolving.status] || resolving.status) + ". Say what was done; this closes the exception."}
+          onClose={() => setResolving(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={resolve} submitLabel="Resolve">
+            <Field label="How it was resolved" full>
+              <input
+                required
+                minLength={10}
+                maxLength={500}
+                value={resolving.resolution}
+                onChange={(e) => setResolving({ ...resolving, resolution: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
 function Suspense({ session, notify, profile }) {
   const list = useResource(session, "/finance/suspense", []);
   const action = useAction(notify);
@@ -864,8 +1246,13 @@ function Suspense({ session, notify, profile }) {
         request(session, `/finance/suspense/${clearing.id}/clearance`, {
           method: "POST",
           body: {
-            action: clearing.action,
+            action: clearing.action === "SPLIT" ? "ALLOCATE" : clearing.action,
             policyRef: clearing.action === "ALLOCATE" ? clearing.policyRef : null,
+            // NS-SH04-003: split across policies or part-pay one; what is left stays unapplied in suspense.
+            allocations:
+              clearing.action === "SPLIT"
+                ? clearing.lines.filter((l) => l.policyRef.trim()).map((l) => ({ policyRef: l.policyRef.trim(), amount: l.amount }))
+                : undefined,
             reason: clearing.reason,
           },
         }),
@@ -882,7 +1269,10 @@ function Suspense({ session, notify, profile }) {
       message: (
         <>
           {r.requestedBy} asked to{" "}
-          {r.clearanceAction === "ALLOCATE" ? "allocate it to " + r.clearancePolicyRef : "refund it"}:{" "}
+          {r.clearanceAction === "ALLOCATE"
+            ? "allocate " + (splitLines(r) || "it to " + r.clearancePolicyRef)
+            : "refund it"}
+          :{" "}
           <em>{r.clearanceReason}</em>.
         </>
       ),
@@ -910,6 +1300,12 @@ function Suspense({ session, notify, profile }) {
             { key: "providerRef", label: "Provider ref" },
             { key: "policyRef", label: "Quoted policy" },
             { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+            {
+              key: "unapplied",
+              label: "Unapplied",
+              align: "right",
+              render: (r) => (r.status === "SUSPENSE" ? pula(r.unapplied) : "—"),
+            },
             { key: "detail", label: "Why / outcome" },
             {
               key: "status",
@@ -926,7 +1322,16 @@ function Suspense({ session, notify, profile }) {
                   can(profile, "MANAGE_FINANCE") && (
                     <Button
                       variant="secondary"
-                      onClick={() => setClearing({ id: r.id, action: "REFUND", policyRef: "", reason: "" })}
+                      onClick={() =>
+                        setClearing({
+                          id: r.id,
+                          action: "REFUND",
+                          policyRef: "",
+                          reason: "",
+                          unapplied: r.unapplied,
+                          lines: [{ policyRef: "", amount: "" }],
+                        })
+                      }
                     >
                       Request clearance
                     </Button>
@@ -957,9 +1362,64 @@ function Suspense({ session, notify, profile }) {
             <Field label="Action">
               <select value={clearing.action} onChange={(e) => setClearing({ ...clearing, action: e.target.value })}>
                 <option value="REFUND">Refund to the payer</option>
-                <option value="ALLOCATE">Allocate to a policy</option>
+                <option value="ALLOCATE">Allocate all of it to a policy</option>
+                <option value="SPLIT">Split or part-pay (the rest stays unapplied)</option>
               </select>
             </Field>
+            {clearing.action === "SPLIT" && (
+              <Field
+                label="Allocations"
+                full
+                hint={
+                  "Unapplied BWP " +
+                  clearing.unapplied +
+                  " · allocating BWP " +
+                  clearing.lines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0).toFixed(2) +
+                  ". A line below the policy's due amount part-pays its instalment."
+                }
+              >
+                <div className="split-lines">
+                  {clearing.lines.map((line, i) => (
+                    <div key={i} className="split-line">
+                      <input
+                        required={i === 0}
+                        placeholder="POL-…"
+                        aria-label={"Policy " + (i + 1)}
+                        value={line.policyRef}
+                        onChange={(e) =>
+                          setClearing({
+                            ...clearing,
+                            lines: clearing.lines.map((l, j) => (j === i ? { ...l, policyRef: e.target.value } : l)),
+                          })
+                        }
+                      />
+                      <input
+                        required={Boolean(line.policyRef)}
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="Amount"
+                        aria-label={"Amount " + (i + 1)}
+                        value={line.amount}
+                        onChange={(e) =>
+                          setClearing({
+                            ...clearing,
+                            lines: clearing.lines.map((l, j) => (j === i ? { ...l, amount: e.target.value } : l)),
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={() => setClearing({ ...clearing, lines: [...clearing.lines, { policyRef: "", amount: "" }] })}
+                  >
+                    Add a policy
+                  </Button>
+                </div>
+              </Field>
+            )}
             {clearing.action === "ALLOCATE" && (
               <Field label="Policy">
                 <input
