@@ -30,6 +30,7 @@ export const PAGE_ACCESS = {
   reinsurance: ["READ_REINSURANCE"],
   reports: ["READ_REPORT"],
   integration: ["READ_INTEGRATION"],
+  "data-assistants": [],
   access: [
     "READ_ROLE",
     "READ_USER",

@@ -142,6 +142,7 @@ import PolicyServicing from "./PolicyServicing";
 import CreditLife from "./CreditLife";
 import CareCash from "./CareCash";
 import GroupLife from "./GroupLife";
+import PlatformServices from "./PlatformServices";
 import Communications from "./Communications";
 import ServiceDesk from "./ServiceDesk";
 import IntegrationMonitor from "./IntegrationMonitor";
@@ -235,6 +236,7 @@ const navGroups = [
     items: [
       ["reports", "Management", "PieChart"],
       ["integration", "Integration", "Cable"],
+      ["data-assistants", "Data & assistants", "Sparkles"],
     ],
   },
   {
@@ -2099,6 +2101,8 @@ export default function App() {
             <PolicyServicing session={session} notify={notify} profile={profile} />
           ) : view === "credit-life" ? (
             <CreditLife session={session} notify={notify} profile={profile} />
+          ) : view === "data-assistants" ? (
+            <PlatformServices session={session} notify={notify} profile={profile} />
           ) : view === "scheme-lifecycle" ? (
             <GroupLife session={session} notify={notify} profile={profile} />
           ) : view === "care-cash" ? (
