@@ -12,6 +12,7 @@ export const PAGE_ACCESS = {
   underwriting: ["READ_UNDERWRITING"],
   policies: ["READ_POLICY"],
   servicing: ["READ_SERVICING"],
+  "credit-life": ["READ_CREDIT"],
   claims: ["READ_CLAIM"],
   collections: ["READ_PAYMENT"],
   "service-desk": ["READ_SERVICE_CASE"],
