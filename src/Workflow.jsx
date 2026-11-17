@@ -1210,6 +1210,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           </ul>
         </>
       )}
+      {financials && <ClaimCalculation claim={c} financials={financials} profile={profile} />}
       <p className="muted small">
         All five passing pays the claim straight through. If Policy Active, Waiting Period or Premiums Paid fails,
         the claim can only be rejected; if Beneficiary Match or No Duplicate fails, it can be approved with a reason.
@@ -1644,6 +1645,116 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * The SH05 claim workspace beside the checks: the cover reconstructed as at the event date, the benefit calculation
+ * against the cover and the per-life and policy limits, the case reserve's movements, every decision (including those
+ * a reopening set aside) and the reinsurance recoveries on the claim. All from GET /portfolio/claims/{ref}/financials.
+ */
+function ClaimCalculation({ claim: c, financials: f, profile }) {
+  const cover = f.eventCover;
+  const left = (limit, used) => (limit == null || used == null ? null : Number(limit) - Number(used));
+  const lifeLeft = left(f.lifeLimit, f.lifeUsed);
+  const policyLeft = left(f.policyLimit, f.policyUsed);
+  // While the claim is open, nothing of it is reserved yet: the most it can be approved for is what is left.
+  const open = OPEN_CLAIM.includes(c.status);
+  const most = open ? Math.min(Number(c.amount), lifeLeft ?? Infinity, policyLeft ?? Infinity) : null;
+  const label = (d) => ({ APPROVED: "Approved", PARTIALLY_APPROVED: "Partially approved", REJECTED: "Declined", REOPENED: "Reopened" })[d] || d;
+  return (
+    <>
+      {cover && (
+        <>
+          <h3 className="section-title">Cover on the event date</h3>
+          <div className="detail-grid">
+            <Item label={"Policy on " + formatDate(cover.eventDate)} value={cover.policyStatusOnEventDate + (cover.coverInForce ? " · cover in force" : " · no cover")} />
+            <Item label="Cover from" value={formatDate(cover.coverStartDate)} />
+            <Item
+              label="Waiting period"
+              value={cover.waitingPeriodDays ? cover.waitingPeriodDays + " days, to " + formatDate(cover.waitingPeriodEnds) : "None"}
+            />
+            <Item label="Cover claimed" value={money(cover.coverAmount)} />
+            <Item label="Paid to (today)" value={cover.paidTo ? formatDate(cover.paidTo) : "Not recorded"} />
+            <Item label="Beneficiaries then" value={(cover.beneficiariesOnEventDate || []).join(", ") || "None designated"} />
+          </div>
+        </>
+      )}
+      <h3 className="section-title">Benefit calculation</h3>
+      <table className="wf-before-after">
+        <tbody>
+          <tr>
+            <th scope="row">Cover for {c.coveredLife || "the life"}</th>
+            <td>{money(c.amount)}</td>
+          </tr>
+          {lifeLeft != null && (
+            <tr>
+              <th scope="row">Benefit limit for {c.coveredLife || "the life"}</th>
+              <td>
+                {money(f.lifeLimit)} · used or reserved {money(f.lifeUsed)} · left {money(lifeLeft)}
+              </td>
+            </tr>
+          )}
+          {policyLeft != null && (
+            <tr>
+              <th scope="row">Policy limit</th>
+              <td>
+                {money(f.policyLimit)} · used or reserved {money(f.policyUsed)} · left {money(policyLeft)}
+              </td>
+            </tr>
+          )}
+          <tr>
+            <th scope="row">{open ? "Most that can be approved now" : "Approved payout"}</th>
+            <td>
+              <strong>{open ? money(most) : c.payoutAmount != null ? money(c.payoutAmount) : "—"}</strong>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {(f.movements?.length > 0 || f.decisions?.length > 0) && (
+        <>
+          <h3 className="section-title">Reserve and decisions</h3>
+          <ul className="wf-evidence">
+            {(f.movements || []).map((m, i) => (
+              <li key={"m" + i} className="optional">
+                Reserve {Number(m.change) >= 0 ? "+" : "−"}
+                {money(Math.abs(Number(m.change)))} → {money(m.balance)} · {m.reason}
+                <small>
+                  {m.by} · {formatDate(m.at)}
+                </small>
+              </li>
+            ))}
+            {(f.decisions || []).map((d) => (
+              <li key={"d" + d.sequence} className={d.supersededBy ? "optional" : "received"}>
+                {label(d.decision)}
+                {d.amount != null ? " · " + money(d.amount) : ""}
+                {d.reason ? " · " + d.reason : ""}
+                <small>
+                  {d.decidedBy} · {formatDate(d.decidedAt)}
+                  {d.supersededBy ? " · set aside by decision " + d.supersededBy : ""}
+                </small>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {f.recoveries?.length > 0 && (
+        <>
+          <h3 className="section-title">Reinsurance recoveries</h3>
+          <ul className="wf-evidence">
+            {f.recoveries.map((r) => (
+              <li key={r.ref} className={r.status === "RECEIVED" ? "received" : "missing"}>
+                {r.ref} · {r.treatyRef} · {money(r.amount)}
+                <small>
+                  {r.status === "RECEIVED" ? "received " + money(r.receivedAmount) : "expected from the reinsurer"}
+                </small>
+                {holds(profile, "READ_REINSURANCE") && <a href="#/reinsurance">Open in Reinsurance</a>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
   );
 }
 
