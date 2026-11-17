@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { CheckCircle2, Plus, Rocket, Send, Trash2, XCircle } from "lucide-react";
 import { request } from "./api";
 import { environmentLabel } from "./insurer";
+import { ConfigVersionCompare, ProductTermsLog, ReleaseChecklist } from "./configuration/ProductVersions";
 import {
   Badge,
   Button,
@@ -12,6 +13,7 @@ import {
   Heading,
   Panel,
   Stat,
+  Tabs,
   can,
   useAction,
   useResource,
@@ -39,6 +41,9 @@ export default function ConfigReleases({ session, notify, profile, products = []
   const releases = useResource(session, "/admin/config-releases", []);
   const [editing, setEditing] = useState(null);
   const [open, setOpen] = useState(null);
+  // SH02 workspace: releases with their checklist, the product terms approval log and configuration versions.
+  const [tab, setTab] = useState("releases");
+  const productReader = can(profile, "READ_PRODUCT");
   const d = deployment.data;
   const reload = () => {
     releases.reload();
@@ -57,6 +62,7 @@ export default function ConfigReleases({ session, notify, profile, products = []
             icon={Plus}
             onClick={() => {
               setOpen(null);
+              setTab("releases");
               setEditing({ code: "", description: "", forms: [{ product: products[0]?.name || "", fields: [blankField()] }] });
             }}
           >
@@ -83,7 +89,20 @@ export default function ConfigReleases({ session, notify, profile, products = []
         </p>
       )}
       <ErrorNote error={deployment.error} />
-      {editing && (
+      {productReader && (
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            ["releases", "Releases"],
+            ["terms", "Product terms"],
+            ["versions", "Configuration versions"],
+          ]}
+        />
+      )}
+      {productReader && tab === "terms" && <ProductTermsLog session={session} notify={notify} profile={profile} products={products} />}
+      {productReader && tab === "versions" && <ConfigVersionCompare session={session} />}
+      {(!productReader || tab === "releases") && editing && (
         <ReleaseEditor
           session={session}
           notify={notify}
@@ -97,6 +116,7 @@ export default function ConfigReleases({ session, notify, profile, products = []
           }}
         />
       )}
+      {(!productReader || tab === "releases") && (
       <Panel title="Releases" subtitle="Draft → in review → approved → active. Rejected and retired releases stay as history.">
         <ErrorNote error={releases.error} />
         <DataTable
@@ -114,7 +134,8 @@ export default function ConfigReleases({ session, notify, profile, products = []
           ]}
         />
       </Panel>
-      {selected && (
+      )}
+      {(!productReader || tab === "releases") && selected && (
         <ReleaseDetail
           key={selected.id + ":" + selected.rowVersion}
           session={session}
@@ -171,6 +192,7 @@ function ReleaseDetail({ session, notify, profile, release, onEdit, onChanged })
         <div><small>Schema at submit</small><strong>{release.schemaVersion || "—"}</strong></div>
       </div>
       {release.rejectionReason && <ErrorNote error={"Rejected: " + release.rejectionReason} />}
+      <ReleaseChecklist release={release} />
       {release.forms.map((form) => (
         <div key={form.product}>
           <h3 className="section-title">
@@ -216,7 +238,14 @@ function ReleaseDetail({ session, notify, profile, release, onEdit, onChanged })
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
-              <Button variant="secondary" icon={XCircle} busy={action.busy} onClick={() => act("reject", "rejected", { reason })}>
+              <Button
+                variant="secondary"
+                icon={XCircle}
+                busy={action.busy}
+                disabled={!reason.trim()}
+                title={reason.trim() ? undefined : "Give a reason to reject"}
+                onClick={() => act("reject", "rejected", { reason })}
+              >
                 Reject
               </Button>
               <Button icon={CheckCircle2} busy={action.busy} onClick={() => act("approve", "approved")}>
