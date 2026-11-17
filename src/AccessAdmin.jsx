@@ -71,6 +71,7 @@ export default function AccessAdmin({ session, notify, profile }) {
     allow.readAudit && ["evidence", "Audit evidence"],
     readEmergency && ["emergency", "Emergency access"],
     (allow.reviewAccess || allow.readAudit) && ["review", "Access review"],
+    allow.readAudit && ["security", "Security events"],
   ].filter(Boolean);
   const [tab, setTab] = useState(() => tabs[0]?.[0] || "roles");
   const [roles, setRoles] = useState([]);
@@ -402,6 +403,10 @@ export default function AccessAdmin({ session, notify, profile }) {
 
       {tab === "review" && (allow.reviewAccess || allow.readAudit) && (
         <AccessReviewPanel session={session} notify={notify} profile={profile} allow={allow} />
+      )}
+
+      {tab === "security" && allow.readAudit && (
+        <SecurityEventsPanel session={session} notify={notify} profile={profile} />
       )}
 
       {tabs.length === 0 && (
@@ -1163,6 +1168,133 @@ function AccessReviewPanel({ session, notify, profile, allow }) {
         </Dialog>
       )}
     </>
+  );
+}
+
+/**
+ * Security events with an owner and an escalation route (SH11): someone who may act on an event takes it and alone
+ * resolves it with a written outcome; an event nobody takes in time is escalated to the security administrators.
+ */
+function SecurityEventsPanel({ session, notify, profile }) {
+  const [events, setEvents] = useState([]);
+  const [resolving, setResolving] = useState(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const formId = useId();
+  const load = async () => setEvents(((await request(session, "/admin/security-events")).data || []).map((e) => ({ ...e })));
+  useEffect(() => {
+    load().catch((err) => setError(err.message));
+  }, [session]);
+  const act = async (path, body, message) => {
+    setBusy(true);
+    setError("");
+    try {
+      await request(session, "/admin/security-events/" + path, { method: "POST", body });
+      await load();
+      notify(message, "success");
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const status = (e) =>
+    e.status === "RESOLVED"
+      ? "Resolved by " + e.resolvedBy
+      : e.status === "OWNED"
+        ? "Owned by " + e.owner
+        : "Nobody yet";
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2>Security events</h2>
+          <p className="subtitle">
+            Emergency access, controls switched off, payment tampering, flagged access and changes applied without a
+            second approver. Each has one owner who resolves it; one nobody takes in time is escalated to the security
+            administrators.
+          </p>
+        </div>
+      </div>
+      {error && !resolving && <p className="form-error">{error}</p>}
+      <ResourceTable
+        columns={["When", "Event", "Details", "Handling", "Escalated"]}
+        rows={events}
+        render={(e) => (
+          <>
+            <td>{when(e.createdAt)}</td>
+            <td>{e.title}</td>
+            <td>
+              <small>{e.body}</small>
+            </td>
+            <td>
+              {status(e)}
+              {e.resolution && (
+                <>
+                  <br />
+                  <small>{e.resolution}</small>
+                </>
+              )}
+            </td>
+            <td>{e.escalatedAt ? when(e.escalatedAt) : "—"}</td>
+          </>
+        )}
+        editable={(e) => e.status === "OPEN" && e.canHandle}
+        editLabel={() => (busy ? "Working…" : "Take")}
+        onEdit={(e) => act(e.id + "/own", undefined, "You own this security event.")}
+        removable={(e) => e.status === "OWNED" && e.owner === profile?.username}
+        removeLabel="Resolve"
+        onDelete={(e) => {
+          setResolving(e);
+          setText("");
+          setError("");
+        }}
+      />
+      {resolving && (
+        <Dialog
+          title={"Resolve: " + resolving.title}
+          eyebrow="Security event"
+          onClose={() => setResolving(null)}
+          footer={
+            <>
+              <button type="button" className="btn secondary" onClick={() => setResolving(null)}>
+                Cancel
+              </button>
+              <button className="btn primary" form={formId} disabled={busy}>
+                {busy ? "Saving…" : "Resolve"}
+              </button>
+            </>
+          }
+        >
+          <form
+            id={formId}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (await act(resolving.id + "/resolve", { resolution: text }, "Security event resolved.")) setResolving(null);
+            }}
+          >
+            {error && <p className="form-error">{error}</p>}
+            <p className="subtitle">{resolving.body}</p>
+            <label className="form-label">
+              What was found and done
+              <textarea
+                className="input"
+                rows={3}
+                required
+                minLength={5}
+                maxLength={500}
+                autoFocus
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+              />
+            </label>
+          </form>
+        </Dialog>
+      )}
+    </section>
   );
 }
 
