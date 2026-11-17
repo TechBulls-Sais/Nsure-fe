@@ -255,3 +255,23 @@
   text-align: right;
   white-space: nowrap;
 }
+.wf-approval {
+  display: grid;
+  gap: 10px;
+}
+.wf-before-after {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.wf-before-after th,
+.wf-before-after td {
+  text-align: left;
+  padding: 4px 8px 4px 0;
+  border-bottom: 1px solid var(--line, rgba(127, 127, 127, 0.2));
+  vertical-align: top;
+}
+.wf-before-after thead th {
+  color: var(--muted, #6b7280);
+  font-weight: 500;
+}

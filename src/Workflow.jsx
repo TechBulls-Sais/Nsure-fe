@@ -1056,6 +1056,17 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const [fourEyesReason, setFourEyesReason] = useState("");
   const [evidenceReason, setEvidenceReason] = useState("");
   const [approveError, setApproveError] = useState("");
+  // Reserve history, benefit limits and decisions (GET .../financials), for the approval summary and the panel.
+  const [financials, setFinancials] = useState(null);
+  useEffect(() => {
+    let active = true;
+    request(session, "/portfolio/claims/" + encodeURIComponent(c.id) + "/financials")
+      .then((r) => active && setFinancials(r.data))
+      .catch(() => active && setFinancials(null));
+    return () => {
+      active = false;
+    };
+  }, [session, c.id, c.version]);
   const open = OPEN_CLAIM.includes(c.status);
   // Legal from the claim's state (the server's list); whether this user may take it is the permission check below.
   const can = (action) => c.actions?.includes(action);
@@ -1094,13 +1105,17 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
     const ok = await confirm({
       title: "Approve " + c.id + "?",
       message: (
-        <>
-          Approve a payout of <strong>{money(amount)}</strong>
-          {amount < c.amount ? " (partial, cover " + money(c.amount) + ")" : ""} to {payee.name || "the payee"}.
-          {breakGlass
-            ? " You assessed this claim, so this is a break-glass four-eyes override, recorded on the claim with your reason."
-            : ""}
-        </>
+        <ApprovalSummary
+          claim={c}
+          amount={amount}
+          financials={financials}
+          softFailed={softFailed}
+          overrideReason={overrideReason.trim()}
+          missingEvidence={missingEvidence}
+          evidenceReason={evidenceReason.trim()}
+          breakGlass={breakGlass}
+          fourEyesReason={fourEyesReason.trim()}
+        />
       ),
       confirmLabel: breakGlass ? "Override and approve" : "Approve payout",
       tone: breakGlass ? "danger" : undefined,
@@ -1564,6 +1579,83 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             : "You assessed this claim, so a different person must approve it (four-eyes)."}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * What an approval changes (NS-UX-004): the claim's state, the payout against the cover, the case reserve and the
+ * benefit limits before and after, the payee, the checks and evidence it is approved on, and the reasons recorded.
+ */
+function ApprovalSummary({
+  claim: c,
+  amount,
+  financials: f,
+  softFailed,
+  overrideReason,
+  missingEvidence,
+  evidenceReason,
+  breakGlass,
+  fourEyesReason,
+}) {
+  const payee = c.payee || {};
+  const left = (limit, used) => (limit == null || used == null ? null : Number(limit) - Number(used));
+  const lifeLeft = left(f?.lifeLimit, f?.lifeUsed);
+  const policyLeft = left(f?.policyLimit, f?.policyUsed);
+  const mandatory = (c.evidence || []).filter((e) => e.mandatory);
+  const rows = [
+    ["Status", c.status, "Approved"],
+    ["Payout", c.payoutAmount != null ? money(c.payoutAmount) : "Not decided", money(amount) + (amount < c.amount ? " (partial of " + money(c.amount) + ")" : "")],
+    ["Case reserve", money(c.reserve), money(amount)],
+    ...(lifeLeft != null ? [["Benefit limit left for " + (c.coveredLife || "the life"), money(lifeLeft), money(lifeLeft - amount)]] : []),
+    ...(policyLeft != null ? [["Policy limit left", money(policyLeft), money(policyLeft - amount)]] : []),
+  ];
+  return (
+    <div className="wf-approval">
+      <table className="wf-before-after">
+        <thead>
+          <tr>
+            <th scope="col"></th>
+            <th scope="col">Before</th>
+            <th scope="col">After</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, before, after]) => (
+            <tr key={label}>
+              <th scope="row">{label}</th>
+              <td>{before}</td>
+              <td>
+                <strong>{after}</strong>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        Pays <strong>{payee.name || "the payee"}</strong>
+        {payee.payoutMethod ? " by " + payee.payoutMethod + " " + (payee.accountRef || "") : ""}
+        {payee.verified ? " (details verified" + (payee.verifiedBy ? " by " + payee.verifiedBy : "") + ")" : ""}. The
+        amount is reserved against the limits now and used once the payout settles.
+      </p>
+      <ul className="wf-evidence">
+        <li className={softFailed.length ? "missing" : "received"}>
+          Checks: {softFailed.length ? softFailed.join(" and ") + " failed" : "all passed"}
+          {softFailed.length > 0 && <small>reason: {overrideReason || "—"}</small>}
+        </li>
+        <li className={missingEvidence.length ? "missing" : "received"}>
+          Evidence: {mandatory.length - missingEvidence.length} of {mandatory.length} required on file
+          {missingEvidence.length > 0 && (
+            <small>
+              missing {missingEvidence.join(", ")} · reason: {evidenceReason || "—"}
+            </small>
+          )}
+        </li>
+        <li className={breakGlass ? "missing" : "received"}>
+          Four-eyes: {c.recommendedBy ? "assessed by " + c.recommendedBy : "not assessed"}
+          {breakGlass && <small>break-glass override · reason: {fourEyesReason || "—"}</small>}
+        </li>
+      </ul>
     </div>
   );
 }
