@@ -278,6 +278,8 @@ export function PolicyDocuments({ policy, ...props }) {
       // panel says it is being prepared and looks again, rather than offering to issue a second one.
       waitFor={(documents) => Boolean(policy.coverStartDate) && !hasSchedule(documents)}
       waitingText="Preparing the policy schedule…"
+      // SH09A template preview: the schedule as it would be issued now, marked as a preview and never filed.
+      previewSlug="schedule/preview"
       generate={{
         slug: "schedule",
         label: "Issue policy schedule",
@@ -318,6 +320,7 @@ function DocumentsPanel({
   notify,
   waitFor,
   waitingText,
+  previewSlug,
 }) {
   const documents = record.documents || [];
   const [type, setType] = useState(DOCUMENT_TYPES[0]);
@@ -433,10 +436,10 @@ function DocumentsPanel({
   };
 
   // The tab opens on the click itself so the popup blocker allows it; the file arrives a moment later.
-  const view = async (doc) => {
+  const view = async (doc, path = basePath + "/" + doc.id) => {
     const tab = window.open("", "_blank");
     try {
-      const url = URL.createObjectURL(await fetchFile(session, basePath + "/" + doc.id));
+      const url = URL.createObjectURL(await fetchFile(session, path));
       if (tab) tab.location.href = url;
       else window.location.assign(url);
       setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -472,6 +475,14 @@ function DocumentsPanel({
             {generate.label}
           </Btn>
           <small className="muted">{generate.blocked || generate.hint}</small>
+        </div>
+      )}
+      {canGenerate && previewSlug && listable && (
+        <div className="wf-doc-generate">
+          <Btn variant="secondary" icon={Eye} onClick={() => view(null, basePath + "/" + previewSlug)}>
+            Preview
+          </Btn>
+          <small className="muted">The schedule as it would be issued now, from today's data and wording. Not filed.</small>
         </div>
       )}
       {generate.blocked && generate.hideWhenBlocked && <p className="muted small">{generate.blocked}</p>}
