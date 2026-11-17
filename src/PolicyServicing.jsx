@@ -182,6 +182,29 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
       return byPerson;
     }, {}),
   ).filter((list) => list.length > 1);
+  // IL03 cover history: sum assured and premium over time, from issue through each applied endorsement.
+  const applied = (v?.endorsements || [])
+    .filter((e) => e.status === "APPLIED")
+    .slice()
+    .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)) || String(a.ref).localeCompare(String(b.ref)));
+  const coverHistory = p
+    ? [
+        {
+          key: "issue",
+          from: p.coverStartDate || "—",
+          change: "Issued",
+          sumAssured: applied[0]?.oldSumAssured ?? p.sumAssured,
+          premium: applied[0]?.oldPremium ?? p.premium,
+        },
+        ...applied.map((e) => ({
+          key: e.ref,
+          from: e.effectiveDate,
+          change: (TYPE_LABEL[e.type] || e.type) + " · " + e.ref,
+          sumAssured: e.newSumAssured ?? e.oldSumAssured,
+          premium: e.newPremium ?? e.oldPremium,
+        })),
+      ]
+    : [];
   const manage = can(profile, "MANAGE_SERVICING");
   const approve = can(profile, "APPROVE_ENDORSEMENT");
   const inForce = p && ["Active", "Active - No Cover", "Reinstatement Pending"].includes(p.contractStatus);
@@ -443,6 +466,40 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 ))}
               </>
             )}
+          </Panel>
+
+          <Panel title="Cover history" subtitle="Sum assured and premium over time: at issue, then after each applied change.">
+            <DataTable
+              rows={coverHistory}
+              rowKey={(r) => r.key}
+              searchFrom={99}
+              columns={[
+                { key: "from", label: "From" },
+                { key: "change", label: "Change" },
+                { key: "sumAssured", label: "Sum assured", align: "right", render: (r) => (r.sumAssured == null ? "—" : pula(r.sumAssured)) },
+                { key: "premium", label: "Premium", align: "right", render: (r) => (r.premium == null ? "—" : pula(r.premium)) },
+              ]}
+            />
+          </Panel>
+
+          <Panel title="Beneficiary history" subtitle="Every designation the policy has had, current and removed.">
+            <DataTable
+              rows={v.beneficiaryHistory || []}
+              rowKey={(r, i) => r.fullName + i}
+              searchFrom={99}
+              empty="No beneficiaries designated"
+              columns={[
+                { key: "fullName", label: "Beneficiary", render: (r) => r.fullName + (r.primary ? " (primary)" : "") },
+                { key: "relationship", label: "Relationship" },
+                { key: "effectiveFrom", label: "From", render: (r) => r.effectiveFrom || "—" },
+                {
+                  key: "removedFrom",
+                  label: "Status",
+                  render: (r) =>
+                    r.removedFrom ? <Badge>Removed {r.removedFrom + (r.removedBy ? " by " + r.removedBy : "")}</Badge> : <Badge tone="green">Current</Badge>,
+                },
+              ]}
+            />
           </Panel>
 
           <Panel
