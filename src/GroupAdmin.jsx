@@ -37,6 +37,8 @@ import "./group-admin.css";
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
 
 const CENSUS_HEADER = "memberKey,firstName,lastName,dateOfBirth,category,salary,action,effectiveDate";
+// Optional trailing columns: the actively-at-work declaration (Y/N) and the date the member became eligible.
+const CENSUS_OPTIONAL = "activelyAtWork,eligibleDate,rowKey";
 
 const MEMBER_TONES = {
   ACTIVE: "green",
@@ -44,6 +46,7 @@ const MEMBER_TONES = {
   PARTIALLY_ACCEPTED: "blue",
   DECLINED: "red",
   CEASED: "gray",
+  SUSPENDED: "amber",
 };
 const ROW_TONES = { VALID: "green", APPLIED: "green", INVALID: "red", REJECTED: "red" };
 const INVOICE_TONES = { ISSUED: "blue", PARTIALLY_PAID: "amber", PAID: "green" };
@@ -72,6 +75,11 @@ const number = (value, digits = 0) =>
       });
 
 const today = () => new Date().toISOString().slice(0, 10);
+// Every write on these screens shows its error next to the form or button that failed, so the error is not raised
+// a second time as a toast over the drawer's actions (D-41).
+const inlineErrors = (notify) => (message, tone) => {
+  if (tone !== "error") notify?.(message, tone);
+};
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const plusYear = (iso) => {
   if (!iso) return "";
@@ -83,6 +91,26 @@ function basisText(category) {
   return category.benefitBasis === "SALARY_MULTIPLE"
     ? `${number(category.salaryMultiple)} × salary`
     : `Fixed ${pula(category.fixedCover)}`;
+}
+
+const csvCell = (value) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  // Quote cells with separators, and neutralise spreadsheet formulas in values that came from the uploaded file.
+  const safe = /^[=+\-@\t\r]/.test(text) ? "'" + text : text;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+};
+
+/** The batch's results file (NS-UX-002): every row of the file with its outcome, error and resulting member. */
+function batchResultsCsv(batch) {
+  const head = [
+    "batch", "externalBatchId", "lineNo", "rowKey", "memberKey", "firstName", "lastName", "dateOfBirth", "category",
+    "salary", "action", "effectiveDate", "outcome", "errors", "memberId", "changeId",
+  ];
+  const lines = batch.rows.map((r) =>
+    [batch.ref, batch.externalBatchId, r.lineNo, r.rowKey, r.memberKey, r.firstName, r.lastName, r.dateOfBirth,
+      r.category, r.salary, r.action, r.effectiveDate, r.status, r.error, r.memberId, r.changeId].map(csvCell).join(","),
+  );
+  return [head.join(","), ...lines].join("\n") + "\n";
 }
 
 function saveTextFile(name, text, type = "text/csv") {
@@ -102,6 +130,9 @@ export default function GroupAdmin({ session, notify, profile }) {
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const schemes = useResource(session, "/group/schemes", []);
+  const queue = useResource(session, "/group/underwriting-queue", []);
+  const arrears = useResource(session, "/group/arrears", []);
+  const [deciding, setDeciding] = useState(null);
 
   if (selected) {
     return (
@@ -212,6 +243,84 @@ export default function GroupAdmin({ session, notify, profile }) {
           ))}
         </div>
       )}
+
+      <Panel
+        title="Member underwriting queue"
+        subtitle="Cover pending underwriting across all schemes, oldest first: requested against the free-cover limit, the actively-at-work declaration and why it was referred."
+      >
+        <ErrorNote error={queue.error} />
+        <DataTable
+          rows={queue.data}
+          loading={queue.loading}
+          rowKey={(m) => m.memberId}
+          empty="Nothing waiting for underwriting"
+          searchPlaceholder="Search scheme, member…"
+          columns={[
+            { key: "schemeRef", label: "Scheme", render: (m) => `${m.schemeRef} · ${m.schemeName}` },
+            { key: "memberKey", label: "Member", render: (m) => (
+              <div className="ga-person">
+                <strong>{m.name}</strong>
+                <span className="ws-mono">{m.memberKey}</span>
+              </div>
+            ) },
+            { key: "requestedCover", label: "Requested", align: "right", render: (m) => pula(m.requestedCover) },
+            { key: "freeCoverLimit", label: "Free cover limit", align: "right", render: (m) => pula(m.freeCoverLimit) },
+            { key: "pendingCover", label: "Pending", align: "right", render: (m) => <strong className="ga-pending">{pula(m.pendingCover)}</strong> },
+            { key: "activelyAtWork", label: "At work", render: (m) => (m.activelyAtWork == null ? "Not declared" : m.activelyAtWork ? "Yes" : "No") },
+            { key: "referredBecause", label: "Referred because", render: (m) => m.referredBecause || "—" },
+            { key: "schemeCoverPending", label: "Scheme pending / in force", align: "right", render: (m) => `${pula(m.schemeCoverPending)} / ${pula(m.schemeCoverInForce)}` },
+            { key: "waitingSince", label: "Waiting since", render: (m) => when(m.waitingSince) },
+            ...(can(profile, "UNDERWRITE_MEMBER")
+              ? [{
+                  key: "act",
+                  label: "",
+                  render: (m) =>
+                    m.schemeStatus === "ACTIVE" ? (
+                      <Button icon={ShieldCheck} onClick={() => setDeciding({ ...m, id: m.memberId, salary: null })}>
+                        Decide
+                      </Button>
+                    ) : (
+                      <span className="ga-muted">Scheme {label(m.schemeStatus)}</span>
+                    ),
+                }]
+              : []),
+          ]}
+        />
+      </Panel>
+      {deciding && (
+        <UnderwritingPanel
+          session={session}
+          notify={notify}
+          member={deciding}
+          onClose={() => setDeciding(null)}
+          onDone={() => {
+            setDeciding(null);
+            queue.reload();
+            schemes.reload();
+          }}
+        />
+      )}
+
+      <Panel title="Arrears" subtitle="Scheme invoices still owed after their billing month ended, oldest first.">
+        <ErrorNote error={arrears.error} />
+        <DataTable
+          rows={arrears.data}
+          loading={arrears.loading}
+          rowKey={(i) => i.invoiceRef}
+          empty="No scheme is in arrears"
+          searchPlaceholder="Search scheme, invoice…"
+          columns={[
+            { key: "invoiceRef", label: "Invoice", render: (i) => <span className="ws-mono">{i.invoiceRef}</span> },
+            { key: "schemeRef", label: "Scheme", render: (i) => `${i.schemeRef} · ${i.schemeName}` },
+            { key: "period", label: "Period" },
+            { key: "policyYear", label: "Year", align: "right", render: (i) => i.policyYear ?? "—" },
+            { key: "outstanding", label: "Outstanding", align: "right", render: (i) => <strong className="ga-bad">{pula(i.outstanding)}</strong> },
+            { key: "disputedAmount", label: "Disputed", align: "right", render: (i) => (Number(i.disputedAmount) > 0 ? pula(i.disputedAmount) : "—") },
+            { key: "daysOverdue", label: "Days overdue", align: "right" },
+            { key: "status", label: "Status", render: (i) => <Badge tone={INVOICE_TONES[i.status]}>{label(i.status)}</Badge> },
+          ]}
+        />
+      </Panel>
     </div>
   );
 }
@@ -224,7 +333,7 @@ function NewSchemeForm({ session, notify, onCancel, onCreated }) {
     renewalDate: plusYear(today()),
     billingFrequency: "MONTHLY",
   });
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const set = (key) => (e) => {
     const value = e.target.value;
     setForm((f) => ({
@@ -285,10 +394,15 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
         title={scheme?.name || "Scheme"}
         subtitle={
           scheme
-            ? `Scheme year ${day(scheme.inceptionDate)} – ${day(scheme.renewalDate)} · ${label(scheme.billingFrequency)} billing`
+            ? `Policy year ${scheme.policyYear ?? 1} to ${day(scheme.renewalDate)} · in force from ${day(scheme.inceptionDate)} · ${label(scheme.billingFrequency)} billing` +
+              (scheme.quoteRef ? ` · accepted terms ${scheme.quoteRef}` : "")
             : undefined
         }
       >
+        {scheme && <Badge tone={scheme.status === "ACTIVE" ? "green" : scheme.status === "SUSPENDED" ? "amber" : undefined}>{label(scheme.status)}</Badge>}
+        {d && can(profile, "MANAGE_SCHEME") && !d.members.length && !d.censusBatches.length && !d.invoices.length && (
+          <DeleteScheme session={session} notify={notify} scheme={scheme} onDeleted={onBack} />
+        )}
         <Button variant="secondary" icon={ArrowLeft} onClick={onBack}>
           All schemes
         </Button>
@@ -322,15 +436,53 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
               ["members", `Members (${d.members.length})`],
               ["census", `Census (${d.censusBatches.length})`],
               ["billing", `Billing (${d.invoices.length})`],
+              ["claims", "Claims"],
+              ["timeline", "Timeline & rules"],
             ]}
           />
+          {scheme.status !== "ACTIVE" && (
+            <p className="ga-status-note" role="status">
+              {scheme.status === "SUSPENDED"
+                ? "This scheme is suspended: cover is suspended for its members, and census changes and underwriting decisions wait until it is reactivated."
+                : "This scheme is closed: members' cover has ended and is kept as history. Invoices, receipts and claims for earlier cover can still be recorded."}
+            </p>
+          )}
           {tab === "categories" && <CategoriesTab {...shared} />}
           {tab === "members" && <MembersTab {...shared} />}
           {tab === "census" && <CensusTab {...shared} />}
           {tab === "billing" && <BillingTab {...shared} />}
+          {tab === "claims" && <ClaimsTab {...shared} />}
+          {tab === "timeline" && <TimelineTab {...shared} />}
         </>
       )}
     </div>
+  );
+}
+
+/** Only a scheme with no contractual or financial activity can be deleted; the server checks and explains. */
+function DeleteScheme({ session, notify, scheme, onDeleted }) {
+  const confirm = useConfirm();
+  const action = useAction(notify);
+  const remove = async () => {
+    const ok = await confirm({
+      title: `Delete ${scheme.ref}?`,
+      message: (
+        <>
+          <strong>{scheme.name}</strong> has no members, census, invoices or claims, so it can be removed as set up by
+          mistake. A scheme with any activity is closed instead and keeps its history.
+        </>
+      ),
+      confirmLabel: "Delete scheme",
+      tone: "danger",
+    });
+    if (!ok) return;
+    const r = await action.run(() => request(session, `/group/schemes/${encodeURIComponent(scheme.ref)}`, { method: "DELETE" }), `Scheme ${scheme.ref} deleted`);
+    if (r) onDeleted();
+  };
+  return (
+    <Button variant="secondary" busy={action.busy} onClick={remove}>
+      Delete scheme
+    </Button>
   );
 }
 
@@ -346,13 +498,14 @@ const EMPTY_CATEGORY = {
   ratePerMille: "0.45",
   minEntryAge: "18",
   maxEntryAge: "64",
+  lateEntryDays: "",
 };
 
 function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
   const manage = can(profile, "MANAGE_SCHEME");
   const [editing, setEditing] = useState(null); // null: closed, "": new, code: edit
   const [form, setForm] = useState(EMPTY_CATEGORY);
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const scheme = detail.scheme;
 
   const open = (category) => {
@@ -372,6 +525,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
       ratePerMille: String(Number(category.ratePerMille)),
       minEntryAge: String(category.minEntryAge),
       maxEntryAge: String(category.maxEntryAge),
+      lateEntryDays: category.lateEntryDays != null ? String(category.lateEntryDays) : "",
     });
     setEditing(category.code);
   };
@@ -382,6 +536,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
       ...form,
       salaryMultiple: form.benefitBasis === "SALARY_MULTIPLE" ? form.salaryMultiple : null,
       fixedCover: form.benefitBasis === "FIXED" ? form.fixedCover : null,
+      lateEntryDays: form.lateEntryDays === "" ? null : form.lateEntryDays,
     };
     const path = `/group/schemes/${scheme.ref}/categories` + (editing ? `/${encodeURIComponent(editing)}` : "");
     const r = await action.run(
@@ -401,6 +556,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
     { key: "freeCoverLimit", label: "Free cover limit", align: "right", render: (c) => pula(c.freeCoverLimit) },
     { key: "ratePerMille", label: "Rate ‰ / month", align: "right", render: (c) => number(c.ratePerMille, 2) },
     { key: "ages", label: "Entry ages", render: (c) => `${c.minEntryAge}–${c.maxEntryAge}`, sortValue: (c) => c.minEntryAge },
+    { key: "lateEntryDays", label: "Late entry", render: (c) => (c.lateEntryDays != null ? `${c.lateEntryDays} days` : "—") },
     { key: "activeMembers", label: "Members", align: "right" },
   ];
   if (manage) {
@@ -496,6 +652,9 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
             <Field label="Maximum entry age">
               <input className="input" type="number" min="0" max="100" value={form.maxEntryAge} onChange={set("maxEntryAge")} required />
             </Field>
+            <Field label="Late-entry window (days)" hint="Optional. A joiner more than this many days after their eligibleDate gets no free cover; blank: no late-entry rule.">
+              <input className="input" type="number" min="0" max="3650" value={form.lateEntryDays} onChange={set("lateEntryDays")} />
+            </Field>
           </FormGrid>
         </Drawer>
       )}
@@ -529,7 +688,12 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
     ) },
     { key: "category", label: "Category", render: (m) => <span title={m.categoryName}>{m.category}</span> },
     { key: "salary", label: "Salary", align: "right", render: (m) => (m.salary != null ? pula(m.salary) : "—") },
-    { key: "status", label: "Status", render: (m) => <Badge tone={MEMBER_TONES[m.status]}>{label(m.status)}</Badge> },
+    { key: "status", label: "Status", render: (m) => (
+      <>
+        <Badge tone={MEMBER_TONES[m.status]}>{label(m.status)}</Badge>
+        {m.activelyAtWork === false && <span className="ga-muted"> · not at work when declared</span>}
+      </>
+    ) },
     { key: "joinDate", label: "Cover dates", render: (m) => (
       <span className="ga-nowrap">{day(m.joinDate)}{m.exitDate ? ` – ${day(m.exitDate)}` : ""}</span>
     ) },
@@ -588,6 +752,7 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
               <option value="UNDERWRITING_PENDING">Underwriting pending</option>
               <option value="PARTIALLY_ACCEPTED">Partially accepted</option>
               <option value="ACTIVE">Active</option>
+              <option value="SUSPENDED">Suspended</option>
               <option value="CEASED">Ceased</option>
               <option value="DECLINED">Declined</option>
               <option value="ALL">All</option>
@@ -617,7 +782,7 @@ function UnderwritingPanel({ session, notify, member, onClose, onDone }) {
   const [decision, setDecision] = useState("ACCEPT");
   const [amount, setAmount] = useState(String(Number(member.requestedCover)));
   const [reason, setReason] = useState("");
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const confirm = useConfirm();
 
   const submit = async () => {
@@ -738,8 +903,20 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     csv: "",
   }));
   const [fileName, setFileName] = useState("");
-  const upload = useAction(notify);
-  const commit = useAction(notify);
+  const upload = useAction(inlineErrors(notify));
+  const commit = useAction(inlineErrors(notify));
+  const [recon, setRecon] = useState(null);
+  useEffect(() => {
+    setRecon(null);
+    if (!batch || batch.status !== "COMMITTED") return;
+    let live = true;
+    request(session, `/group/census-batches/${encodeURIComponent(batch.ref)}/reconciliation`)
+      .then((r) => live && setRecon(r.data))
+      .catch(() => live && setRecon(null));
+    return () => {
+      live = false;
+    };
+  }, [session, batch]);
 
   useEffect(() => {
     if (!batchRef) {
@@ -759,11 +936,11 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     const codes = detail.categories.map((c) => c.code);
     const first = codes[0] || "STAFF";
     const lines = [
-      CENSUS_HEADER,
-      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()}`,
-      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()}`,
-      `EMP-0999,,,,,,LEAVE,${today()}`,
-      `EMP-0998,,,,,210000,SALARY,${today()}`,
+      `${CENSUS_HEADER},${CENSUS_OPTIONAL}`,
+      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()},Y,${today()},HR-1`,
+      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()},Y,,HR-2`,
+      `EMP-0999,,,,,,LEAVE,${today()},,,HR-3`,
+      `EMP-0998,,,,,210000,SALARY,${today()},Y,,HR-4`,
     ];
     saveTextFile(`census-template-${scheme.ref}.csv`, lines.join("\n") + "\n");
   };
@@ -872,7 +1049,7 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                 <option value="ATOMIC">Atomic — all or nothing</option>
               </select>
             </Field>
-            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}`}>
+            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}, optionally followed by ${CENSUS_OPTIONAL}. A joiner declared not actively at work (N) has all cover referred to underwriting; a rowKey already applied is never applied again.`}>
               <label className="btn secondary ga-file">
                 <FileSpreadsheet className="icon icon-sm" aria-hidden="true" />
                 Choose .csv file
@@ -982,14 +1159,47 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                   <strong className="ws-mono" title={batch.fileHash}>{batch.fileHash.slice(0, 16)}…</strong>
                 </div>
               </div>
+              {recon && (
+                <section className="ga-drawer-section">
+                  <h3>Reconciliation</h3>
+                  <p className="subtitle">
+                    {recon.appliedRows} applied row(s) · {recon.rowsTracedToChanges} traced to a member change · {recon.certificates}{" "}
+                    with a certificate in force · {recon.invoiceLines} invoice line(s) billed since ·{" "}
+                    {recon.reconciled ? <Badge tone="green">Reconciled</Badge> : <Badge tone="red">Does not reconcile</Badge>}
+                  </p>
+                  <DataTable
+                    rows={recon.rows}
+                    rowKey={(r) => r.lineNo}
+                    searchFrom={20}
+                    empty="No applied rows"
+                    columns={[
+                      { key: "lineNo", label: "Line", align: "right" },
+                      { key: "memberKey", label: "Member key", render: (r) => <span className="ws-mono">{r.memberKey}</span> },
+                      { key: "changeType", label: "Change", render: (r) => (r.changeType ? `${label(r.changeType)} #${r.changeId}` : "—") },
+                      { key: "coverAfter", label: "Cover after", align: "right", render: (r) => (r.coverAfter != null ? pula(r.coverAfter) : "—") },
+                      { key: "certificateNo", label: "Certificate", render: (r) => r.certificateNo || "—" },
+                      { key: "invoices", label: "Invoices", render: (r) => (r.invoices?.length ? r.invoices.join(", ") : "—") },
+                    ]}
+                  />
+                </section>
+              )}
               {atomicBlocked && (
                 <ErrorNote error="This ATOMIC batch has invalid rows, so it cannot be committed. Correct the file and submit it under a new batch id." />
               )}
               <ErrorNote error={commit.error} />
-              <label className="ga-check">
-                <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} />
-                Show only rows with errors
-              </label>
+              <div className="ga-batch-tools">
+                <label className="ga-check">
+                  <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} />
+                  Show only rows with errors
+                </label>
+                <Button
+                  variant="secondary"
+                  icon={Download}
+                  onClick={() => saveTextFile(`census-results-${batch.ref}.csv`, batchResultsCsv(batch))}
+                >
+                  Download results
+                </Button>
+              </div>
               <DataTable
                 rows={rows}
                 rowKey={(r) => r.lineNo}
@@ -1025,7 +1235,7 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
   const scheme = detail.scheme;
   const [period, setPeriod] = useState(thisMonth());
   const [selected, setSelected] = useState(null);
-  const issue = useAction(notify);
+  const issue = useAction(inlineErrors(notify));
   const confirm = useConfirm();
 
   const invoice = detail.invoices.find((i) => i.ref === selected);
@@ -1086,6 +1296,7 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
               <span className={"ws-mono" + (i.ref === selected ? " ga-current" : "")}>{i.ref}</span>
             ) },
             { key: "period", label: "Period" },
+            { key: "policyYear", label: "Year", align: "right", render: (i) => i.policyYear ?? "—" },
             { key: "memberCount", label: "Members", align: "right" },
             { key: "amount", label: "Amount", align: "right", render: (i) => pula(i.amount) },
             { key: "paidAmount", label: "Paid", align: "right", render: (i) => pula(i.paidAmount) },
@@ -1113,7 +1324,19 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
 
 function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
   const [form, setForm] = useState({ amount: String(Number(invoice.outstanding)), reference: "" });
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
+  const disputes = useAction(inlineErrors(notify));
+  const [dispute, setDispute] = useState(null); // { memberKey, action, note }
+  const saveDispute = async () => {
+    const r = await disputes.run(
+      () => request(session, `/group/invoices/${invoice.ref}/disputes`, { method: "POST", body: dispute }),
+      dispute.action === "RAISE" ? `Dispute recorded for ${dispute.memberKey}` : `Dispute resolved for ${dispute.memberKey}`,
+    );
+    if (r) {
+      setDispute(null);
+      reload();
+    }
+  };
 
   const submit = async () => {
     const r = await action.run(
@@ -1167,8 +1390,48 @@ function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
               </span>
             ) },
             { key: "premium", label: "Premium", align: "right", render: (l) => pula(l.premium) },
+            { key: "dispute", label: "Sponsor dispute", render: (l) =>
+              l.disputeStatus === "OPEN" ? (
+                <span title={l.disputeNote || ""}>
+                  <Badge tone="amber">Disputed</Badge>
+                  {bill && (
+                    <Button variant="secondary" onClick={() => setDispute({ memberKey: l.memberKey, action: "RESOLVE", note: "" })}>
+                      Resolve
+                    </Button>
+                  )}
+                </span>
+              ) : (
+                <span title={l.disputeNote || ""}>
+                  {l.disputeStatus === "RESOLVED" && <span className="ga-muted">Resolved </span>}
+                  {bill && (
+                    <Button variant="secondary" onClick={() => setDispute({ memberKey: l.memberKey, action: "RAISE", note: "" })}>
+                      Dispute
+                    </Button>
+                  )}
+                </span>
+              ) },
           ]}
         />
+        {Number(invoice.disputedAmount) > 0 && (
+          <p className="subtitle">{pula(invoice.disputedAmount)} of this invoice is disputed by the sponsor; members' cover does not change until a census does.</p>
+        )}
+        {dispute && (
+          <FormGrid
+            onSubmit={saveDispute}
+            busy={disputes.busy}
+            error={disputes.error}
+            submitLabel={dispute.action === "RAISE" ? `Record dispute for ${dispute.memberKey}` : `Resolve dispute for ${dispute.memberKey}`}
+            extra={
+              <Button type="button" variant="secondary" onClick={() => setDispute(null)}>
+                Cancel
+              </Button>
+            }
+          >
+            <Field label={dispute.action === "RAISE" ? "What the sponsor disputes" : "How it was resolved"} full>
+              <textarea className="textarea" rows={2} maxLength={300} value={dispute.note} onChange={(e) => setDispute({ ...dispute, note: e.target.value })} required />
+            </Field>
+          </FormGrid>
+        )}
       </section>
       <section className="ga-drawer-section">
         <h3>Sponsor receipts</h3>
@@ -1224,3 +1487,254 @@ function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
   );
 }
 
+// ── claims ──────────────────────────────────────────────────────────────────────────────────────
+
+const CLAIM_TONES = { NOTIFIED: "amber", APPROVED: "blue", IN_PAYMENT: "blue", PAID: "green", DECLINED: "red", CEASED: "gray" };
+const CLAIM_BENEFITS = {
+  GLA: "Group life assurance",
+  LUMP_SUM_DISABILITY: "Lump-sum disability",
+  CRITICAL_ILLNESS: "Critical illness",
+  FAMILY: "Family benefits",
+  INCOME_PROTECTION: "Income protection",
+};
+
+/** Claims on members' cover: notified against the episode on the event date, decided by a second person. */
+function ClaimsTab({ session, notify, profile, detail }) {
+  const scheme = detail.scheme;
+  const claims = useResource(session, `/group/schemes/${encodeURIComponent(scheme.ref)}/claims`, []);
+  const [form, setForm] = useState(null);
+  const [deciding, setDeciding] = useState(null);
+  const action = useAction(inlineErrors(notify));
+  const me = session?.username;
+  const keys = [...new Set(detail.members.map((m) => m.memberKey))].sort();
+
+  const open = (next) => {
+    action.setError("");
+    setForm(next);
+  };
+  const notifyClaim = async () => {
+    const r = await action.run(
+      () => request(session, `/group/schemes/${encodeURIComponent(scheme.ref)}/claims`, { method: "POST", body: form }),
+      "Claim notified",
+    );
+    if (r) {
+      setForm(null);
+      claims.reload();
+    }
+  };
+  const decide = async () => {
+    const { ref, ...body } = deciding;
+    const r = await action.run(
+      () => request(session, `/group/claims/${encodeURIComponent(ref)}/decision`, { method: "POST", body }),
+      `Claim ${ref} updated`,
+    );
+    if (r) {
+      setDeciding(null);
+      claims.reload();
+    }
+  };
+  const actionsFor = (c) => {
+    if (c.status === "NOTIFIED") {
+      return [
+        ...(can(profile, "APPROVE_CLAIM") && c.notifiedBy !== me ? [["APPROVE", "Approve"]] : []),
+        ...(can(profile, "ASSESS_CLAIM") ? [["DECLINE", "Decline"]] : []),
+      ];
+    }
+    if (c.status === "APPROVED") return can(profile, "SETTLE_CLAIM") ? [["PAY", "Record payment"]] : [];
+    if (c.status === "IN_PAYMENT") return can(profile, "ASSESS_CLAIM") ? [["REVIEW", "Review"], ["CEASE", "Cease"]] : [];
+    return [];
+  };
+
+  return (
+    <>
+      <Panel
+        title="Claims"
+        subtitle="Each claim sits on the member's cover episode for the event date. Only accepted cover is claimable; income benefits are paid until review or cessation."
+        action={
+          can(profile, "CREATE_CLAIM") && keys.length > 0 ? (
+            <Button icon={Plus} onClick={() => open({ memberKey: keys[0], benefitType: "GLA", eventDate: today(), amount: "", note: "" })}>
+              Notify claim
+            </Button>
+          ) : null
+        }
+      >
+        <ErrorNote error={claims.error} />
+        <DataTable
+          rows={claims.data}
+          loading={claims.loading}
+          rowKey={(c) => c.ref}
+          empty="No claims on this scheme"
+          emptyDetail="Claims notified against members' cover show here with their decision and payment."
+          searchPlaceholder="Search claim, member, benefit…"
+          columns={[
+            { key: "ref", label: "Claim", render: (c) => <span className="ws-mono">{c.ref}</span> },
+            { key: "member", label: "Member", render: (c) => (
+              <div className="ga-person">
+                <strong>{c.member}</strong>
+                <span className="ws-mono">{c.memberKey}</span>
+              </div>
+            ) },
+            { key: "benefitType", label: "Benefit", render: (c) => CLAIM_BENEFITS[c.benefitType] || c.benefitType },
+            { key: "eventDate", label: "Event", render: (c) => day(c.eventDate) },
+            { key: "claimedAmount", label: "Claimed", align: "right", render: (c) => pula(c.claimedAmount) },
+            { key: "approvedAmount", label: "Approved", align: "right", render: (c) => (c.approvedAmount != null ? pula(c.approvedAmount) : "—") },
+            { key: "status", label: "Status", render: (c) => <Badge tone={CLAIM_TONES[c.status]}>{label(c.status)}</Badge> },
+            { key: "nextReviewDate", label: "Next review", render: (c) => (c.nextReviewDate ? day(c.nextReviewDate) : "—") },
+            {
+              key: "actions",
+              label: "",
+              render: (c) => {
+                const acts = actionsFor(c);
+                if (!acts.length) {
+                  return c.status === "NOTIFIED" && c.notifiedBy === me ? <span className="ga-muted">Needs another approver</span> : null;
+                }
+                return (
+                  <div className="ws-row-actions">
+                    {acts.map(([act, text]) => (
+                      <Button key={act} variant="secondary" onClick={() => { action.setError(""); setDeciding({ ref: c.ref, action: act, note: "", amount: "", paymentReference: "", nextReviewDate: "", claim: c }); }}>
+                        {text}
+                      </Button>
+                    ))}
+                  </div>
+                );
+              },
+            },
+          ]}
+        />
+      </Panel>
+      {form && (
+        <Drawer title="Notify a claim" description={`${scheme.name} · the member must have had cover on the event date`} onClose={() => setForm(null)}>
+          <FormGrid onSubmit={notifyClaim} busy={action.busy} error={action.error} submitLabel="Notify claim">
+            <Field label="Member">
+              <select className="select" value={form.memberKey} onChange={(e) => setForm({ ...form, memberKey: e.target.value })}>
+                {keys.map((k) => (
+                  <option key={k} value={k}>
+                    {k} · {detail.members.find((m) => m.memberKey === k)?.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Benefit">
+              <select className="select" value={form.benefitType} onChange={(e) => setForm({ ...form, benefitType: e.target.value })}>
+                {Object.entries(CLAIM_BENEFITS).map(([k, text]) => (
+                  <option key={k} value={k}>
+                    {text}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Event date">
+              <input className="input" type="date" max={today()} value={form.eventDate} onChange={(e) => setForm({ ...form, eventDate: e.target.value })} required />
+            </Field>
+            <Field label={form.benefitType === "INCOME_PROTECTION" ? "Monthly benefit (BWP)" : "Amount claimed (BWP)"} hint={form.benefitType === "INCOME_PROTECTION" ? undefined : "Up to the cover in force on the event date"}>
+              <input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
+            </Field>
+            <Field label="Note" full hint="No medical detail here: evidence stays with the claims assessor.">
+              <textarea className="textarea" rows={2} maxLength={500} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {deciding && (
+        <Drawer
+          title={`${label(deciding.action)} ${deciding.ref}`}
+          description={`${deciding.claim.member} · ${CLAIM_BENEFITS[deciding.claim.benefitType] || deciding.claim.benefitType} · claimed ${pula(deciding.claim.claimedAmount)}`}
+          onClose={() => setDeciding(null)}
+        >
+          <FormGrid onSubmit={decide} busy={action.busy} error={action.error} submitLabel={label(deciding.action)}>
+            {deciding.action === "APPROVE" && (
+              <Field label="Approved amount (BWP)" hint={`Leave blank to approve the ${pula(deciding.claim.claimedAmount)} claimed`}>
+                <input className="input" type="number" min="0.01" step="0.01" value={deciding.amount} onChange={(e) => setDeciding({ ...deciding, amount: e.target.value })} />
+              </Field>
+            )}
+            {deciding.action === "PAY" && (
+              <Field label="Payment reference">
+                <input className="input" maxLength={80} value={deciding.paymentReference} onChange={(e) => setDeciding({ ...deciding, paymentReference: e.target.value })} required />
+              </Field>
+            )}
+            {(deciding.action === "REVIEW" || (deciding.action === "APPROVE" && deciding.claim.benefitType === "INCOME_PROTECTION")) && (
+              <Field label="Next review" hint="Leave blank for 12 months on">
+                <input className="input" type="date" value={deciding.nextReviewDate} onChange={(e) => setDeciding({ ...deciding, nextReviewDate: e.target.value })} />
+              </Field>
+            )}
+            <Field label="Note" full>
+              <textarea
+                className="textarea"
+                rows={3}
+                maxLength={500}
+                value={deciding.note}
+                onChange={(e) => setDeciding({ ...deciding, note: e.target.value })}
+                required={["DECLINE", "REVIEW", "CEASE"].includes(deciding.action)}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// ── master-policy timeline and resolved rules ───────────────────────────────────────────────────
+
+/** The master policy in date order (GL01) and the rule set its categories and benefits resolve to (GL02). */
+function TimelineTab({ session, detail }) {
+  const ref = encodeURIComponent(detail.scheme.ref);
+  const timeline = useResource(session, `/group-life/schemes/${ref}/timeline`, []);
+  const rules = useResource(session, `/group-life/schemes/${ref}/resolved-rules`, null);
+  const r = rules.data;
+  return (
+    <>
+      <Panel title="Master-policy timeline" subtitle="Quote versions and decisions, activation, plan approvals, renewals, suspensions, transfers and closure.">
+        <ErrorNote error={timeline.error} />
+        <DataTable
+          rows={timeline.data}
+          loading={timeline.loading}
+          rowKey={(e) => `${e.at}-${e.title}`}
+          empty="Nothing on the timeline yet"
+          searchFrom={30}
+          columns={[
+            { key: "at", label: "When", render: (e) => when(e.at) },
+            { key: "kind", label: "Kind", render: (e) => <Badge>{label(e.kind)}</Badge> },
+            { key: "title", label: "Event" },
+            { key: "detail", label: "Detail", render: (e) => e.detail || "—" },
+            { key: "actor", label: "By", render: (e) => e.actor || "—" },
+          ]}
+        />
+      </Panel>
+      <Panel title="Resolved rules" subtitle={r?.acceptedTerms ? `From accepted terms ${r.acceptedTerms}; category terms override scheme and product defaults.` : "Category terms override scheme and product defaults."}>
+        <ErrorNote error={rules.error} />
+        <DataTable
+          rows={r?.categories || []}
+          loading={rules.loading}
+          rowKey={(c) => c.category}
+          empty="No categories"
+          searchFrom={30}
+          columns={[
+            { key: "category", label: "Category", render: (c) => `${c.category} · ${c.name}` },
+            { key: "cover", label: "Cover" },
+            { key: "freeCoverLimit", label: "Free cover", align: "right", render: (c) => pula(c.freeCoverLimit) },
+            { key: "ratePerMille", label: "Rate ‰", align: "right", render: (c) => number(c.ratePerMille, 2) },
+            { key: "entryAges", label: "Entry ages" },
+            { key: "lateEntryDays", label: "Late entry", render: (c) => (c.lateEntryDays != null ? `${c.lateEntryDays} days` : "Not configured") },
+            { key: "members", label: "Members", align: "right" },
+          ]}
+        />
+        <DataTable
+          rows={r?.benefits || []}
+          loading={rules.loading}
+          rowKey={(b) => b.benefitType}
+          empty="No scheme benefits defined (group life only)"
+          searchFrom={30}
+          columns={[
+            { key: "benefitType", label: "Benefit", render: (b) => label(b.benefitType) },
+            { key: "basis", label: "Basis", render: (b) => label(b.basis) },
+            { key: "amount", label: "Amount", align: "right", render: (b) => (b.fixedAmount != null ? pula(b.fixedAmount) : b.multiple != null ? number(b.multiple, 2) : "—") },
+            { key: "productMaximum", label: "Product maximum", align: "right", render: (b) => (b.productMaximum != null ? pula(b.productMaximum) : "—") },
+            { key: "source", label: "Source" },
+            { key: "approvalStatus", label: "Approval", render: (b) => <Badge tone={b.approvalStatus === "PENDING" ? "amber" : "green"}>{label(b.approvalStatus)}</Badge> },
+          ]}
+        />
+      </Panel>
+    </>
+  );
+}

@@ -19,6 +19,7 @@ import {
   useResource,
   when,
 } from "./ui/workspace";
+import "./group-admin.css";
 
 // Group lifecycle: scheme quotations through approval to activation, each scheme's benefits and certificates,
 // renewal, suspension and closure with their impact, and lender loan bordereaux.
@@ -46,12 +47,17 @@ const Q_STATUS = {
   DECLINED: ["Declined", "red"],
   SUPERSEDED: ["Superseded", undefined],
 };
-const EVENT = { RENEWAL: "Renewal", SUSPENSION: "Suspension", CLOSURE: "Closure", REACTIVATION: "Reactivation" };
+const EVENT = { RENEWAL: "Renewal", SUSPENSION: "Suspension", CLOSURE: "Closure", TRANSFER: "Transfer", REACTIVATION: "Reactivation" };
 const badge = (map, key) => {
   const [label, tone] = map[key] || [key];
   return <Badge tone={tone}>{label}</Badge>;
 };
 const today = () => new Date().toISOString().slice(0, 10);
+// D-41: a failed write is shown once, next to the action that failed (in the open drawer, or above the table for a
+// row button), so errors are not also raised as toasts that stack over the drawer's submit button.
+const inlineErrors = (notify) => (message, tone) => {
+  if (tone !== "error") notify?.(message, tone);
+};
 
 export default function GroupLife({ session, notify, profile }) {
   const [tab, setTab] = useState("quotes");
@@ -119,9 +125,18 @@ const blankQuote = () => ({
 });
 
 function Quotes({ session, notify, profile, resource, onChange }) {
-  const [form, setForm] = useState(null);
-  const [step, setStep] = useState(null); // {quote, kind: "decide" | "activate"}
-  const action = useAction(notify);
+  const [form, setFormState] = useState(null);
+  const [step, setStepState] = useState(null); // {quote, kind: "decide" | "activate"}
+  const action = useAction(inlineErrors(notify));
+  // A drawer opens without the error of an earlier attempt; edits inside it keep the current one.
+  const setForm = (next) => {
+    if (!form || !next) action.setError("");
+    setFormState(next);
+  };
+  const setStep = (next) => {
+    if (!step || !next) action.setError("");
+    setStepState(next);
+  };
   const me = session?.username;
   const manage = can(profile, "MANAGE_SCHEME");
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -178,7 +193,7 @@ function Quotes({ session, notify, profile, resource, onChange }) {
           )
         }
       >
-        <ErrorNote error={resource.error || action.error} />
+        <ErrorNote error={resource.error || (!form && !step ? action.error : "")} />
         <DataTable
           rows={resource.data}
           loading={resource.loading}
@@ -351,10 +366,13 @@ function SchemeDetail({ session, notify, profile, schemes }) {
   const benefits = useResource(session, base && base + "/benefits", []);
   const certificates = useResource(session, base && base + "/certificates", []);
   const loans = useResource(session, base && base + "/credit-loans", []);
+  const bordereaux = useResource(session, base && base + "/bordereaux", []);
+  const [loan, setLoan] = useState(null);
   const [form, setForm] = useState(null);
   const [certificate, setCertificate] = useState(null);
   const [result, setResult] = useState(null);
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
+  const settling = useAction(inlineErrors(notify));
   const manage = can(profile, "MANAGE_SCHEME");
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const submit = async () => {
@@ -377,11 +395,34 @@ function SchemeDetail({ session, notify, profile, schemes }) {
       setResult(done.data);
       setForm(null);
       loans.reload();
+      bordereaux.reload();
     }
   };
-  const settle = async (loan) => {
-    const done = await action.run(() => request(session, "/group-life/credit-loans/" + loan.id + "/settlement", { method: "POST", body: {} }), "Loan settled");
-    if (done) loans.reload();
+  const [settlement, setSettlement] = useState(null); // the early-settlement preview being confirmed
+  const previewSettlement = async (loan, date = today()) => {
+    const done = await settling.run(() => request(session, "/group-life/credit-loans/" + loan.id + "/settlement?settlementDate=" + date));
+    if (done) setSettlement({ ...done.data, settlementDate: date });
+  };
+  const settle = async () => {
+    const done = await settling.run(
+      () => request(session, "/group-life/credit-loans/" + settlement.id + "/settlement", { method: "POST", body: { settlementDate: settlement.settlementDate } }),
+      "Loan settled",
+    );
+    if (done) {
+      setSettlement(null);
+      loans.reload();
+    }
+  };
+  const pendingPlan = (benefits.data || []).filter((b) => b.approvalStatus === "PENDING");
+  const approvePlan = async () => {
+    const done = await action.run(
+      () => request(session, base + "/benefits/approval", { method: "POST", body: { note: form.note } }),
+      "Plan approved",
+    );
+    if (done) {
+      setForm(null);
+      benefits.reload();
+    }
   };
   if (!schemes.length) {
     return <Panel title="No schemes yet" subtitle="Activate a quotation to create the first scheme." />;
@@ -401,15 +442,20 @@ function SchemeDetail({ session, notify, profile, schemes }) {
                 </option>
               ))}
             </select>
+            {pendingPlan.length > 0 && can(profile, "UNDERWRITE_MEMBER") && !pendingPlan.some((b) => b.updatedBy === session?.username) && (
+              <Button variant="secondary" onClick={() => { action.setError(""); setForm({ kind: "approval", note: "" }); }}>
+                Approve plan changes
+              </Button>
+            )}
             {manage && (
-              <Button icon={Plus} onClick={() => setForm({ kind: "benefit", benefitType: "GLA", basis: "SALARY_MULTIPLE", multiple: "", fixedAmount: "", waitingMonths: "", terms: "" })}>
+              <Button icon={Plus} onClick={() => { action.setError(""); setForm({ kind: "benefit", benefitType: "GLA", basis: "SALARY_MULTIPLE", multiple: "", fixedAmount: "", waitingMonths: "", terms: "" }); }}>
                 Add or change a benefit
               </Button>
             )}
           </div>
         }
       >
-        <ErrorNote error={benefits.error || action.error} />
+        <ErrorNote error={benefits.error} />
         <DataTable
           rows={benefits.data}
           loading={benefits.loading}
@@ -427,8 +473,24 @@ function SchemeDetail({ session, notify, profile, schemes }) {
             },
             { key: "productMaximum", label: "Product maximum", render: (r) => (r.productMaximum ? pula(r.productMaximum) : "—") },
             { key: "terms", label: "Terms" },
+            {
+              key: "approvalStatus",
+              label: "Approval",
+              render: (r) =>
+                r.approvalStatus === "PENDING" ? (
+                  <Badge tone="amber">Awaiting approval</Badge>
+                ) : (
+                  <span className="ws-hint">Approved{r.approvedBy ? " by " + r.approvedBy : ""}</span>
+                ),
+            },
           ]}
         />
+        {pendingPlan.length > 0 && (
+          <p className="ws-hint">
+            {pendingPlan.length} benefit change(s) wait for a second person to approve the plan
+            {pendingPlan.some((b) => b.updatedBy === session?.username) ? "; you made them, so someone else approves." : "."}
+          </p>
+        )}
       </Panel>
       <Panel title="Member certificates" subtitle="Only accepted cover is certified. Cover awaiting underwriting is shown as pending and is not yet in force.">
         <DataTable
@@ -454,23 +516,45 @@ function SchemeDetail({ session, notify, profile, schemes }) {
         action={
           can(profile, "PROCESS_CENSUS") &&
           hasCredit && (
-            <Button icon={Upload} onClick={() => setForm({ kind: "bordereau", batchReference: "", rows: "" })}>
+            <Button icon={Upload} onClick={() => { action.setError(""); setForm({ kind: "bordereau", batchReference: "", rows: "" }); }}>
               Loan bordereau
             </Button>
           )
         }
       >
         {!hasCredit && <p className="ws-hint">This scheme has no Group credit benefit.</p>}
+        <ErrorNote error={loans.error || (!settlement ? settling.error : "")} />
         {result && (
           <p className="ws-hint">
             {result.batchReference}: {result.accepted} accepted · {result.referred} referred · {result.duplicates} already on the scheme · {result.rejected} rejected
             · premium {pula(result.premiumTotal)}
           </p>
         )}
+        {(bordereaux.data || []).length > 0 && (
+          <details className="gl-impact-list">
+            <summary>Bordereau history ({bordereaux.data.length} file(s))</summary>
+            <DataTable
+              rows={bordereaux.data}
+              rowKey={(b) => b.batchReference}
+              searchFrom={20}
+              columns={[
+                { key: "batchReference", label: "File" },
+                { key: "receivedAt", label: "Received", render: (b) => when(b.receivedAt) },
+                { key: "loans", label: "Loans", align: "right" },
+                { key: "active", label: "Covered", align: "right" },
+                { key: "referred", label: "Referred", align: "right" },
+                { key: "settled", label: "Settled", align: "right" },
+                { key: "coverAmount", label: "Cover", align: "right", render: (b) => pula(b.coverAmount) },
+                { key: "premium", label: "Premium", align: "right", render: (b) => pula(b.premium) },
+              ]}
+            />
+          </details>
+        )}
         <DataTable
           rows={loans.data}
           loading={loans.loading}
           rowKey={(r) => r.id}
+          onRowClick={setLoan}
           empty="No loans"
           columns={[
             { key: "certificateNo", label: "Certificate" },
@@ -491,7 +575,7 @@ function SchemeDetail({ session, notify, profile, schemes }) {
               render: (r) =>
                 r.status === "ACTIVE" &&
                 can(profile, "BILL_SCHEME") && (
-                  <Button variant="secondary" busy={action.busy} onClick={() => settle(r)}>
+                  <Button variant="secondary" busy={settling.busy} onClick={() => previewSettlement(r)}>
                     Settle early
                   </Button>
                 ),
@@ -536,7 +620,88 @@ function SchemeDetail({ session, notify, profile, schemes }) {
           </div>
         </Drawer>
       )}
-      {form && (
+      {loan && (
+        <Drawer title={"Certificate " + loan.certificateNo} description={"Borrower cover under " + current + " · lender loan " + loan.lenderLoanId} onClose={() => setLoan(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Borrower</small>
+              <strong>{loan.borrowerName}</strong>
+            </div>
+            <div>
+              <small>Loan / cover</small>
+              <strong>
+                {pula(loan.loanAmount)} / {pula(loan.coverAmount)}
+              </strong>
+            </div>
+            <div>
+              <small>Term</small>
+              <strong>{loan.termMonths} months from {loan.startDate}</strong>
+            </div>
+            <div>
+              <small>Single premium</small>
+              <strong>{pula(loan.premium)}</strong>
+            </div>
+            <div>
+              <small>Status</small>
+              <strong>{loan.status.charAt(0) + loan.status.slice(1).toLowerCase()}</strong>
+            </div>
+            <div>
+              <small>Bordereau</small>
+              <strong>{loan.batchRef}</strong>
+            </div>
+            {loan.settledOn && (
+              <div>
+                <small>Settled</small>
+                <strong>
+                  {loan.settledOn} · refund {pula(loan.refund)}
+                </strong>
+              </div>
+            )}
+          </div>
+          {loan.note && <p className="ws-hint">{loan.note}</p>}
+          <div className="ws-form-actions">
+            <Button variant="secondary" onClick={() => window.print()}>
+              Print certificate
+            </Button>
+          </div>
+        </Drawer>
+      )}
+      {settlement && (
+        <Drawer title={"Settle " + settlement.certificateNo + " early"} description={settlement.borrowerName + " · loan " + pula(settlement.loanAmount)} onClose={() => setSettlement(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Single premium</small>
+              <strong>{pula(settlement.premium)}</strong>
+            </div>
+            <div>
+              <small>Months used / unearned</small>
+              <strong>
+                {settlement.monthsUsed} / {settlement.monthsUnearned} of {settlement.termMonths}
+              </strong>
+            </div>
+            <div>
+              <small>Refund of unearned premium</small>
+              <strong>{pula(settlement.refundPreview)}</strong>
+            </div>
+          </div>
+          <p className="ws-hint">Unearned months pro rata, less 10%. Cover on this certificate ends on the settlement date.</p>
+          <FormGrid submitLabel={"Settle and refund " + pula(settlement.refundPreview)} busy={settling.busy} error={settling.error} onSubmit={settle}>
+            <Field label="Settlement date" full>
+              <input type="date" value={settlement.settlementDate} onChange={(e) => previewSettlement(settlement, e.target.value)} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {form?.kind === "approval" && (
+        <Drawer title="Approve plan changes" description={pendingPlan.map((b) => BENEFIT[b.benefitType] || b.benefitType).join(", ")} onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Approve the plan" busy={action.busy} error={action.error} onSubmit={approvePlan}>
+            <Field label="Approval note" full>
+              <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={3} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {form && form.kind !== "approval" && (
         <Drawer
           title={form.kind === "benefit" ? "Scheme benefit" : "Loan bordereau"}
           description={form.kind === "bordereau" ? "One loan per line: lender's loan id, borrower, loan amount, term in months." : undefined}
@@ -596,23 +761,157 @@ function SchemeDetail({ session, notify, profile, schemes }) {
   );
 }
 
-// ── renewals and closures ───────────────────────────────────────────────────────────────────────
+// ── renewals, suspensions, closures and transfers ──────────────────────────────────────────────
+
+const memberStatus = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase().replaceAll("_", " ") : "—");
+
+/** What a lifecycle request touches, shown before it is raised and again to the person who decides it (AT-GL01-03). */
+function ImpactSummary({ impact }) {
+  if (!impact) return null;
+  const ends = ["SUSPENSION", "CLOSURE", "TRANSFER"].includes(impact.eventType);
+  return (
+    <div className="form-label full gl-impact">
+      <span>What this affects</span>
+      <div className="ws-kv">
+        <div>
+          <small>Members affected</small>
+          <strong>{impact.affectedMembers ?? impact.activeMembers}</strong>
+        </div>
+        <div>
+          <small>Pending underwriting</small>
+          <strong>{impact.pendingUnderwriting}</strong>
+        </div>
+        <div>
+          <small>Unpaid invoices</small>
+          <strong>
+            {impact.unpaidInvoices} · {pula(impact.outstandingAmount)}
+          </strong>
+        </div>
+        {ends && (
+          <div>
+            <small>Invoiced past {impact.effectiveDate}</small>
+            <strong>{pula(impact.premiumInvoicedAfterEffective)}</strong>
+          </div>
+        )}
+        <div>
+          <small>Pending claims</small>
+          <strong>{impact.pendingClaims ?? 0}</strong>
+        </div>
+        <div>
+          <small>Income benefits in payment</small>
+          <strong>{impact.claimsInPayment ?? 0}</strong>
+        </div>
+        <div>
+          <small>Borrower certificates in force</small>
+          <strong>{impact.activeCreditLoans}</strong>
+        </div>
+        <div>
+          <small>Policy year</small>
+          <strong>
+            {impact.policyYear} (to {impact.renewalDate})
+          </strong>
+        </div>
+      </div>
+      {(impact.blockers || []).length > 0 && <ErrorNote error={impact.blockers.join(" ")} />}
+      <ul className="uw-list">
+        {impact.notes.map((n, i) => (
+          <li key={i}>{n}</li>
+        ))}
+      </ul>
+      {(impact.comparison || []).length > 0 && (
+        <details className="gl-impact-list" open>
+          <summary>Renewal comparison: expiring and proposed terms ({Number(impact.rateChangePercent || 0)}% rate change)</summary>
+          <DataTable
+            rows={impact.comparison}
+            rowKey={(r) => r.category}
+            searchFrom={20}
+            columns={[
+              { key: "category", label: "Category", render: (r) => r.category + " · " + r.name },
+              { key: "members", label: "Members", align: "right" },
+              { key: "coverInForce", label: "Cover in force", align: "right", render: (r) => pula(r.coverInForce) },
+              { key: "ratePerMille", label: "Rate ‰ now", align: "right", render: (r) => Number(r.ratePerMille) },
+              { key: "proposedRatePerMille", label: "Proposed ‰", align: "right", render: (r) => Number(r.proposedRatePerMille) },
+              { key: "monthlyPremium", label: "Premium / month now", align: "right", render: (r) => pula(r.monthlyPremium) },
+              { key: "proposedMonthlyPremium", label: "Proposed / month", align: "right", render: (r) => pula(r.proposedMonthlyPremium) },
+            ]}
+          />
+        </details>
+      )}
+      {(impact.members || []).length > 0 && (
+        <details className="gl-impact-list">
+          <summary>Members affected ({impact.members.length})</summary>
+          <DataTable
+            rows={impact.members}
+            rowKey={(r) => r.memberKey}
+            searchFrom={20}
+            columns={[
+              { key: "memberKey", label: "Member", render: (r) => r.memberKey + " · " + r.name },
+              { key: "category", label: "Category" },
+              { key: "status", label: "Status", render: (r) => memberStatus(r.status) },
+              { key: "acceptedCover", label: "Cover in force", align: "right", render: (r) => pula(r.acceptedCover) },
+              { key: "pendingCover", label: "Pending", align: "right", render: (r) => (Number(r.pendingCover) > 0 ? pula(r.pendingCover) : "—") },
+            ]}
+          />
+        </details>
+      )}
+      {(impact.invoices || []).length > 0 && (
+        <details className="gl-impact-list">
+          <summary>Unpaid invoices ({impact.invoices.length})</summary>
+          <DataTable
+            rows={impact.invoices}
+            rowKey={(r) => r.ref}
+            searchFrom={20}
+            columns={[
+              { key: "ref", label: "Invoice" },
+              { key: "period", label: "Period" },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "outstanding", label: "Outstanding", align: "right", render: (r) => pula(r.outstanding) },
+            ]}
+          />
+        </details>
+      )}
+      {[...(impact.claims || []), ...(impact.incomeClaims || [])].length > 0 && (
+        <details className="gl-impact-list" open>
+          <summary>Claims pending or in payment ({(impact.claims || []).length + (impact.incomeClaims || []).length})</summary>
+          <DataTable
+            rows={[...(impact.claims || []), ...(impact.incomeClaims || [])]}
+            rowKey={(r) => r.ref}
+            searchFrom={20}
+            columns={[
+              { key: "ref", label: "Claim" },
+              { key: "member", label: "Member", render: (r) => r.memberKey + " · " + r.member },
+              { key: "benefitType", label: "Benefit", render: (r) => BENEFIT[r.benefitType] || r.benefitType },
+              { key: "eventDate", label: "Event" },
+              { key: "status", label: "Status", render: (r) => memberStatus(r.status) },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+            ]}
+          />
+        </details>
+      )}
+    </div>
+  );
+}
 
 function SchemeEvents({ session, notify, profile, resource, schemes, onChange }) {
   const [form, setForm] = useState(null);
   const [impact, setImpact] = useState(null);
   const [deciding, setDeciding] = useState(null);
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const me = session?.username;
   const preview = async (next) => {
     setForm(next);
     setImpact(null);
-    if (!next.schemeRef) return;
-    const done = await action.run(() => request(session, "/group-life/schemes/" + next.schemeRef + "/impact?eventType=" + next.eventType));
+    if (!next.schemeRef || (next.eventType === "TRANSFER" && !next.targetSchemeRef)) return;
+    const params = new URLSearchParams({ eventType: next.eventType });
+    if (next.eventType !== "RENEWAL" && next.effectiveDate) params.set("effectiveDate", next.effectiveDate);
+    if (next.eventType === "TRANSFER") params.set("targetSchemeRef", next.targetSchemeRef);
+    if (next.eventType === "RENEWAL" && next.rateChangePercent !== "") params.set("rateChangePercent", next.rateChangePercent);
+    const done = await action.run(() => request(session, "/group-life/schemes/" + next.schemeRef + "/impact?" + params));
     if (done) setImpact(done.data);
   };
   const submit = async () => {
     const { schemeRef, ...body } = form;
+    if (body.eventType !== "TRANSFER") delete body.targetSchemeRef;
     const done = await action.run(() => request(session, "/group-life/schemes/" + schemeRef + "/events", { method: "POST", body }), "Request raised for approval");
     if (done) {
       setForm(null);
@@ -629,15 +928,17 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
       onChange();
     }
   };
+  const nameOf = (ref) => schemes.find((s) => s.ref === ref)?.name || "";
+  const targets = form ? schemes.filter((s) => s.ref !== form.schemeRef && s.status === "ACTIVE") : [];
   return (
     <>
       <Panel
-        title="Renewals, suspensions and closures"
-        subtitle="Each request shows what it affects before approval and is decided by a second person. A scheme is closed, never deleted."
+        title="Renewals, suspensions, closures and transfers"
+        subtitle="Each request shows what it affects before approval and is decided by a second person. Members keep their cover history; a scheme is closed, never deleted once it has activity."
         action={
           can(profile, "MANAGE_SCHEME") &&
           schemes.length > 0 && (
-            <Button icon={Plus} onClick={() => preview({ schemeRef: schemes[0].ref, eventType: "RENEWAL", effectiveDate: today(), rateChangePercent: "", reason: "" })}>
+            <Button icon={Plus} onClick={() => preview({ schemeRef: schemes[0].ref, eventType: "RENEWAL", effectiveDate: today(), rateChangePercent: "", targetSchemeRef: "", reason: "" })}>
               New request
             </Button>
           )
@@ -651,8 +952,8 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
           empty="No requests"
           columns={[
             { key: "ref", label: "Request" },
-            { key: "schemeRef", label: "Scheme", render: (r) => r.schemeRef + " · " + (schemes.find((s) => s.ref === r.schemeRef)?.name || "") },
-            { key: "eventType", label: "Type", render: (r) => EVENT[r.eventType] || r.eventType },
+            { key: "schemeRef", label: "Scheme", render: (r) => r.schemeRef + " · " + nameOf(r.schemeRef) },
+            { key: "eventType", label: "Type", render: (r) => (EVENT[r.eventType] || r.eventType) + (r.targetSchemeRef ? " to " + r.targetSchemeRef : "") },
             { key: "effectiveDate", label: "Effective" },
             { key: "impact", label: "Impact", render: (r) => r.impact[0] },
             {
@@ -670,7 +971,7 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
                 (r.requestedBy === me ? (
                   <small className="ws-hint">Needs another person</small>
                 ) : (
-                  <Button variant="secondary" onClick={() => setDeciding({ ...r, approve: true, note: "" })}>
+                  <Button variant="secondary" onClick={() => { action.setError(""); setDeciding({ ...r, approve: true, note: "" }); }}>
                     Decide
                   </Button>
                 )),
@@ -679,10 +980,10 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
         />
       </Panel>
       {form && (
-        <Drawer title="Renewal, suspension or closure" onClose={() => setForm(null)}>
+        <Drawer size="lg" title="Renewal, suspension, closure or transfer" onClose={() => setForm(null)}>
           <FormGrid submitLabel="Raise for approval" busy={action.busy} error={action.error} onSubmit={submit}>
             <Field label="Scheme">
-              <select value={form.schemeRef} onChange={(e) => preview({ ...form, schemeRef: e.target.value })}>
+              <select value={form.schemeRef} onChange={(e) => preview({ ...form, schemeRef: e.target.value, targetSchemeRef: "" })}>
                 {schemes.map((s) => (
                   <option key={s.ref} value={s.ref}>
                     {s.ref} · {s.name}
@@ -701,58 +1002,48 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
             </Field>
             {form.eventType === "RENEWAL" ? (
               <Field label="Rate change (%)">
-                <input type="number" step="0.01" value={form.rateChangePercent} onChange={(e) => setForm({ ...form, rateChangePercent: e.target.value })} />
+                <input type="number" step="0.01" value={form.rateChangePercent} onChange={(e) => setForm({ ...form, rateChangePercent: e.target.value })} onBlur={() => preview(form)} />
               </Field>
             ) : (
-              <Field label="Effective date">
-                <input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} required />
+              <Field label="Effective date" hint={form.eventType === "REACTIVATION" ? "First day back on cover" : "First day without cover on this scheme"}>
+                <input type="date" value={form.effectiveDate} onChange={(e) => preview({ ...form, effectiveDate: e.target.value })} required />
+              </Field>
+            )}
+            {form.eventType === "TRANSFER" && (
+              <Field label="Transfer members to" hint="An active scheme with the same category codes">
+                <select value={form.targetSchemeRef} onChange={(e) => preview({ ...form, targetSchemeRef: e.target.value })} required>
+                  <option value="">Choose a scheme</option>
+                  {targets.map((s) => (
+                    <option key={s.ref} value={s.ref}>
+                      {s.ref} · {s.name}
+                    </option>
+                  ))}
+                </select>
               </Field>
             )}
             <Field label="Reason" full>
               <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} rows={2} required />
             </Field>
-            {impact && (
-              <div className="form-label full">
-                <span>What this affects</span>
-                <div className="ws-kv">
-                  <div>
-                    <small>Active members</small>
-                    <strong>{impact.activeMembers}</strong>
-                  </div>
-                  <div>
-                    <small>Pending underwriting</small>
-                    <strong>{impact.pendingUnderwriting}</strong>
-                  </div>
-                  <div>
-                    <small>Unpaid invoices</small>
-                    <strong>
-                      {impact.unpaidInvoices} · {pula(impact.outstandingAmount)}
-                    </strong>
-                  </div>
-                  <div>
-                    <small>Policy year</small>
-                    <strong>
-                      {impact.policyYear} (to {impact.renewalDate})
-                    </strong>
-                  </div>
-                </div>
-                <ul className="uw-list">
-                  {impact.notes.map((n, i) => (
-                    <li key={i}>{n}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <ImpactSummary impact={impact} />
           </FormGrid>
         </Drawer>
       )}
       {deciding && (
-        <Drawer title={"Decide " + deciding.ref} description={(EVENT[deciding.eventType] || deciding.eventType) + " of " + deciding.schemeRef} onClose={() => setDeciding(null)}>
-          <ul className="uw-list">
-            {deciding.impact.map((n, i) => (
-              <li key={i}>{n}</li>
-            ))}
-          </ul>
+        <Drawer
+          size="lg"
+          title={"Decide " + deciding.ref}
+          description={(EVENT[deciding.eventType] || deciding.eventType) + " of " + deciding.schemeRef + (deciding.targetSchemeRef ? " to " + deciding.targetSchemeRef : "") + " from " + deciding.effectiveDate + " · requested by " + deciding.requestedBy + ": " + deciding.reason}
+          onClose={() => setDeciding(null)}
+        >
+          {deciding.impactDetail ? (
+            <ImpactSummary impact={deciding.impactDetail} />
+          ) : (
+            <ul className="uw-list">
+              {deciding.impact.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          )}
           <FormGrid submitLabel="Save decision" busy={action.busy} error={action.error} onSubmit={decide}>
             <Field label="Decision" full>
               <select value={deciding.approve ? "yes" : "no"} onChange={(e) => setDeciding({ ...deciding, approve: e.target.value === "yes" })}>
