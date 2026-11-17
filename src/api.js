@@ -31,9 +31,29 @@ function authorization(session) {
 /**
  * Signs in: exchanges the username and password for a session token. The result is the session to keep; it holds
  * no password. The token ends after idle time, at its expiry, on sign-out, or when the password changes.
+ *
+ * Staff and partner accounts get no token here: the server answers with a challenge
+ * ({ secondFactorRequired: true, challenge, attemptsAllowed, demoCode? }) and issues the session only once
+ * verifySignInCode sends the right one-time code. demoCode is set only by a dev or demo server.
  */
 export async function openSession(username, password) {
   const { data } = await request({ username, password }, "/auth/session", { method: "POST" });
+  if (data.secondFactorRequired) {
+    return {
+      secondFactorRequired: true,
+      username: data.username,
+      challenge: data.challenge,
+      expiresAt: data.expiresAt,
+      attemptsAllowed: data.attemptsAllowed,
+      demoCode: data.demoCode || null,
+    };
+  }
+  return { username: data.username, token: data.token, expiresAt: data.expiresAt };
+}
+
+/** The second sign-in step for staff and partners: the server checks the code, then issues the session token. */
+export async function verifySignInCode(challenge, code) {
+  const { data } = await request(null, "/auth/session/verify", { method: "POST", body: { challenge, code } });
   return { username: data.username, token: data.token, expiresAt: data.expiresAt };
 }
 

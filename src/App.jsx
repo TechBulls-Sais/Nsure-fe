@@ -128,7 +128,7 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { closeSession, openSession, request, setUnauthorizedHandler } from "./api";
+import { closeSession, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
 import AccessAdmin from "./AccessAdmin";
 import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
@@ -411,8 +411,6 @@ function Stat({
   );
 }
 
-const STAFF_SIGN_IN_CODE = "123456";
-
 function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
   const audience = initialAudience;
   const [email, setEmail] = useState("");
@@ -420,10 +418,16 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // Staff sign-in is two steps: the password, then a one-time code. The code step holds the opened session.
+  // Staff and partner sign-in is two steps: the password, then a one-time code the server checks. `pending` holds
+  // the server's challenge, never a session: the session token is issued only for the right code.
   const [pending, setPending] = useState(null);
   const [code, setCode] = useState("");
   const customerLogin = audience === "customer";
+  const startAgain = () => {
+    setPending(null);
+    setCode("");
+    setError("");
+  };
   return (
     <div className="login-page">
       <section className="login-story">
@@ -487,7 +491,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                 onAudienceChange("admin");
                 setEmail("");
                 setPassword("");
-                setError("");
+                startAgain();
               }}
             >
               Admin
@@ -499,7 +503,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                 onAudienceChange("customer");
                 setEmail("");
                 setPassword("");
-                setError("");
+                startAgain();
               }}
             >
               Customer
@@ -515,40 +519,43 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
             onSubmit={async (e) => {
               e.preventDefault();
               setError("");
-              if (pending) {
-                // The one-time code is fixed for this installation until an SMS provider is connected.
-                if (code.trim() !== STAFF_SIGN_IN_CODE) {
-                  setError("That code is not right. Check it and try again.");
-                  return;
-                }
-                sessionStorage.setItem("nsure-session", JSON.stringify(pending));
-                onLogin(pending);
-                return;
-              }
               setBusy(true);
               try {
-                // The password opens a session once; only the session token is kept (NS-SH11-001).
-                const next = await openSession(email.trim().toLowerCase(), password);
-                const me = await request(next, "/me");
+                if (pending) {
+                  // The server checks the code; a wrong, expired or used code is refused there.
+                  const next = await verifySignInCode(pending.challenge, code.trim());
+                  sessionStorage.setItem("nsure-session", JSON.stringify(next));
+                  onLogin(next);
+                  return;
+                }
+                // The password is sent once; only the session token is kept (NS-SH11-001).
+                const opened = await openSession(email.trim().toLowerCase(), password);
+                if (opened.secondFactorRequired) {
+                  // Only staff and partner accounts are asked for a code.
+                  if (customerLogin) {
+                    setError("This form is for customers. Use the username and password saved on the customer.");
+                    return;
+                  }
+                  setCode("");
+                  setPending(opened);
+                  return;
+                }
+                const me = await request(opened, "/me");
                 if (customerLogin && !me.data.customerPortal) {
-                  closeSession(next);
+                  closeSession(opened);
                   setError("This form is for customers. Use the username and password saved on the customer.");
                   return;
                 }
                 // Customer accounts sign in on the customer portal only, never the operations workspace.
                 if (!customerLogin && me.data.customerPortal) {
-                  closeSession(next);
+                  closeSession(opened);
                   setError("This is a customer account. Choose Customer above to sign in to the customer portal.");
                   return;
                 }
-                if (!customerLogin) {
-                  setPending(next);
-                  return;
-                }
-                sessionStorage.setItem("nsure-session", JSON.stringify(next));
-                onLogin(next);
+                sessionStorage.setItem("nsure-session", JSON.stringify(opened));
+                onLogin(opened);
               } catch (err) {
-                setError(err.status === 401 ? "Username or password is incorrect." : err.message);
+                setError(!pending && err.status === 401 ? "Username or password is incorrect." : err.message);
               } finally {
                 setBusy(false);
               }
@@ -559,6 +566,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                 className="input"
                 required
                 value={email}
+                readOnly={Boolean(pending)}
                 placeholder={customerLogin ? "customer" : "admin"}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
@@ -572,6 +580,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                   required
                   minLength={4}
                   value={password}
+                  readOnly={Boolean(pending)}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
                 />
@@ -601,16 +610,31 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                   inputMode="numeric"
                   maxLength={6}
                   value={code}
-                  placeholder="6-digit code sent to your phone"
-                  onChange={(e) => setCode(e.target.value)}
+                  placeholder="6-digit code"
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   autoComplete="one-time-code"
                 />
               </Field>
             )}
-            <Button type="submit" icon="ArrowRight" disabled={busy}>
+            {pending?.demoCode && (
+              <div className="login-hint">
+                <Icon name="Info" small />
+                <span>
+                  Demo installation: no SMS is sent. Use the code <strong>{pending.demoCode}</strong>.
+                </span>
+              </div>
+            )}
+            <Button type="submit" icon="ArrowRight" disabled={busy || (pending && code.length !== 6)}>
               {busy ? "Signing in…" : pending ? "Verify and enter" : customerLogin ? "Sign in" : "Enter workspace"}
             </Button>
           </form>
+          {pending && (
+            <div className="signup-otp-actions">
+              <button type="button" className="link-button" disabled={busy} onClick={startAgain}>
+                ← Start again with your password
+              </button>
+            </div>
+          )}
           {customerLogin && (
             <p className="signup-link">
               New to Nsure? <a href="#/signup">Create an account</a>
@@ -3350,9 +3374,6 @@ function CustomerFields({ values = {}, self = false }) {
   );
 }
 
-/** Demo build: no SMS or email gateway, so the server accepts this fixed code for every sign-up. */
-const SIGNUP_OTP_HINT = "123456";
-
 function CustomerSignup({ onLogin }) {
   const [step, setStep] = useState("details");
   const [details, setDetails] = useState({});
@@ -3380,9 +3401,10 @@ function CustomerSignup({ onLogin }) {
     setError("");
     setBusy(true);
     try {
+      // The code answers this request's challenge, for the phone it was sent to.
       const created = await request(null, "/public/signup", {
         method: "POST",
-        body: { ...details, otp },
+        body: { ...details, challenge: sentTo?.challenge, otp },
       });
       const session = await openSession(created.data.loginUsername, details.password);
       await request(session, "/me");
@@ -3450,7 +3472,9 @@ function CustomerSignup({ onLogin }) {
             <>
               <h2>Enter your code</h2>
               <p className="subtitle">
-                We sent a 6-digit code to your phone {sentTo?.sentTo} and to {sentTo?.email}.
+                {sentTo?.demoCode
+                  ? `Demo installation: no SMS is sent to ${sentTo?.sentTo || "your phone"}.`
+                  : `We sent a 6-digit code to your phone ${sentTo?.sentTo || ""}.`}
               </p>
               <form
                 onSubmit={(e) => {
@@ -3475,7 +3499,14 @@ function CustomerSignup({ onLogin }) {
                 </Field>
                 {error && <p className="form-error">{error}</p>}
                 <div className="login-hint">
-                  <Icon name="Info" small /> Enter the code sent to your phone.
+                  <Icon name="Info" small />
+                  {sentTo?.demoCode ? (
+                    <span>
+                      Demo installation: use the code <strong>{sentTo.demoCode}</strong>.
+                    </span>
+                  ) : (
+                    "Enter the code sent to your phone. It works once, for a few minutes."
+                  )}
                 </div>
                 <Button type="submit" icon="ArrowRight" disabled={busy || otp.length !== 6}>
                   {busy ? "Creating account…" : "Verify and create account"}

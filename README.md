@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5180. Dev login is username `admin` and password `password`. Staff sign-in then asks for a one-time code; no SMS or email gateway is connected, so the code is fixed at `123456` (`STAFF_SIGN_IN_CODE` in `src/App.jsx`). Partner logins `agent`, `employer` and `lender` (same password and code) open the partner portal only.
+Open http://127.0.0.1:5180. Dev login is username `admin` and password `password`. Staff sign-in then asks for a one-time code, which the backend checks before it issues the session (`POST /auth/session` answers staff and partners with a challenge, `POST /auth/session/verify` turns the right code into a session). No SMS or email gateway is connected, so a dev or demo backend accepts the fixed code `123456` and returns it with the challenge; the sign-in and sign-up screens show it. A production backend never accepts it. Partner logins `agent`, `employer` and `lender` (same password and code) open the partner portal only.
 
 ```sh
 npm run build
