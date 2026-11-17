@@ -80,7 +80,7 @@ export default function Reinsurance({ session, notify, profile }) {
       />
       {tab === "treaties" && <Treaties session={session} notify={notify} profile={profile} resource={treaties} />}
       {tab === "cessions" && <Cessions session={session} treaties={list} />}
-      {tab === "recoveries" && <Recoveries resource={recoveries} />}
+      {tab === "recoveries" && <Recoveries session={session} notify={notify} profile={profile} resource={recoveries} />}
       {tab === "bordereaux" && (
         <Bordereaux session={session} notify={notify} profile={profile} treaties={list} onChange={treaties.reload} />
       )}
@@ -355,17 +355,41 @@ function Cessions({ session, treaties }) {
 
 // ── recoveries ──────────────────────────────────────────────────────────────────────────────────
 
-function Recoveries({ resource }) {
+function Recoveries({ session, notify, profile, resource }) {
+  const [open, setOpen] = useState(null);
+  const [form, setForm] = useState({ amount: "", reference: "", note: "" });
+  const action = useAction(notify);
+  const manage = can(profile, "MANAGE_REINSURANCE");
+  const show = (r) => {
+    setForm({ amount: String(r.recoveryAmount ?? ""), reference: "", note: "" });
+    setOpen(r);
+  };
+  const receive = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/reinsurance/recoveries/" + encodeURIComponent(open.ref) + "/receipt", {
+          method: "POST",
+          body: { amount: form.amount, reference: form.reference, ...(form.note.trim() ? { note: form.note } : {}) },
+        }),
+      "Recovery receipt recorded",
+    );
+    if (done) {
+      setOpen(null);
+      resource.reload();
+    }
+  };
+  const differs = open && form.amount !== "" && Number(form.amount) !== Number(open.recoveryAmount);
   return (
     <Panel
       title="Claim recoveries"
-      subtitle="The reinsurer's share of each paid claim on a ceded policy. Recorded separately; the customer's payout never waits for it."
+      subtitle="The reinsurer's share of each paid claim on a ceded policy. Recorded separately; the customer's payout never waits for it. Open one to record the reinsurer's payment."
     >
       <ErrorNote error={resource.error} />
       <DataTable
         rows={resource.data}
         loading={resource.loading}
         rowKey={(r) => r.ref}
+        onRowClick={show}
         empty="No recoveries"
         emptyDetail="A recovery is recognised when a claim is paid on a ceded policy."
         columns={[
@@ -377,9 +401,59 @@ function Recoveries({ resource }) {
           { key: "claimAmount", label: "Claim paid", align: "right", render: (r) => pula(r.claimAmount) },
           { key: "cededShare", label: "Share", align: "right", render: (r) => share(r.cededShare) },
           { key: "recoveryAmount", label: "Recovery", align: "right", render: (r) => pula(r.recoveryAmount) },
+          {
+            key: "receivedAmount",
+            label: "Received",
+            align: "right",
+            render: (r) => (r.receivedAmount == null ? "—" : pula(r.receivedAmount)),
+          },
           { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
         ]}
       />
+      {open && (
+        <Drawer
+          title={open.ref + " · " + open.claimRef}
+          description={open.reinsurer + " owes " + pula(open.recoveryAmount) + " on claim " + open.claimRef}
+          onClose={() => setOpen(null)}
+        >
+          {open.status === "RECEIVED" ? (
+            <div className="ws-kv">
+              <div>
+                <small>Received</small>
+                <strong>{pula(open.receivedAmount)}</strong>
+              </div>
+              <div>
+                <small>Reference</small>
+                <strong>{open.receivedReference}</strong>
+              </div>
+              <div>
+                <small>Recorded</small>
+                <strong>{when(open.receivedAt) + " by " + open.receivedBy}</strong>
+              </div>
+              {open.receivedNote && (
+                <div>
+                  <small>Note</small>
+                  <strong>{open.receivedNote}</strong>
+                </div>
+              )}
+            </div>
+          ) : manage ? (
+            <FormGrid submitLabel="Record receipt" busy={action.busy} error={action.error} onSubmit={receive}>
+              <Field label="Amount received (BWP)">
+                <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
+              </Field>
+              <Field label="Reinsurer's payment reference">
+                <input value={form.reference} maxLength={60} onChange={(e) => setForm({ ...form, reference: e.target.value })} required />
+              </Field>
+              <Field label={differs ? "Why it differs from " + pula(open.recoveryAmount) : "Note (optional)"} full>
+                <textarea rows={2} maxLength={500} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} required={differs} />
+              </Field>
+            </FormGrid>
+          ) : (
+            <p className="ws-hint">Expected from the reinsurer; recording its payment needs reinsurance management access.</p>
+          )}
+        </Drawer>
+      )}
     </Panel>
   );
 }
