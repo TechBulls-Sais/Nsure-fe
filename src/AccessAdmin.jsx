@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useState } from "react";
-import { AWAITING_APPROVAL_MESSAGE, awaitingApproval, request } from "./api";
+import { AWAITING_APPROVAL_MESSAGE, awaitingApproval, fetchFile, request } from "./api";
 import { Dialog, can, pula, useConfirm } from "./ui/workspace";
 import "./access.css";
 
@@ -478,22 +478,29 @@ function describeCommand(command) {
  */
 function EvidencePanel({ session }) {
   const [rows, setRows] = useState([]);
-  const [ref, setRef] = useState("");
+  const blankFilter = { entityRef: "", entityType: "", actor: "", from: "", to: "" };
+  const [filter, setFilter] = useState(blankFilter);
   const [check, setCheck] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const load = async (record) => {
+  // The same filters drive the list and the CSV export (NS-SH11-007): record, record type, who, and a date range.
+  const query = (f) =>
+    Object.entries(f)
+      .filter(([, value]) => String(value).trim())
+      .map(([key, value]) => key + "=" + encodeURIComponent(String(value).trim()))
+      .join("&");
+  const load = async (f) => {
     setError("");
     try {
-      const query = record ? "?entityRef=" + encodeURIComponent(record) + "&limit=200" : "?limit=200";
-      const r = await request(session, "/audits/evidence" + query);
+      const q = query(f);
+      const r = await request(session, "/audits/evidence?" + (q ? q + "&" : "") + "limit=200");
       setRows((r.data || []).map((row) => ({ ...row, id: row.sequenceNo })));
     } catch (err) {
       setError(err.message);
     }
   };
   useEffect(() => {
-    load("");
+    load(blankFilter);
   }, [session]);
   const verify = async () => {
     setBusy(true);
@@ -506,6 +513,24 @@ function EvidencePanel({ session }) {
       setBusy(false);
     }
   };
+  const exportCsv = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const q = query(filter);
+      const blob = await fetchFile(session, "/audits/evidence/export" + (q ? "?" + q : ""));
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "audit-evidence-" + new Date().toISOString().slice(0, 10) + ".csv";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 500);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const set = (key) => (e) => setFilter({ ...filter, [key]: e.target.value });
   return (
     <section className="panel">
       <div className="panel-header">
@@ -516,9 +541,14 @@ function EvidencePanel({ session }) {
             deleted; each one carries the hash of the one before it.
           </p>
         </div>
-        <button className="btn secondary" disabled={busy} onClick={verify}>
-          {busy ? "Checking…" : "Check the chain"}
-        </button>
+        <div className="access-filter-actions">
+          <button className="btn secondary" disabled={busy} onClick={exportCsv}>
+            Export CSV
+          </button>
+          <button className="btn secondary" disabled={busy} onClick={verify}>
+            {busy ? "Working…" : "Check the chain"}
+          </button>
+        </div>
       </div>
       {check && (
         <p className={"notice " + (check.intact ? "" : "danger")} role="status">
@@ -536,18 +566,38 @@ function EvidencePanel({ session }) {
         className="access-filter"
         onSubmit={(e) => {
           e.preventDefault();
-          load(ref.trim());
+          load(filter);
         }}
       >
         <input
           className="input"
-          value={ref}
-          placeholder="Record reference, e.g. POL-10843 or CLM-0843"
+          value={filter.entityRef}
+          placeholder="Record reference, e.g. POL-10843"
           aria-label="Record reference"
-          onChange={(e) => setRef(e.target.value)}
+          onChange={set("entityRef")}
         />
+        <input
+          className="input"
+          value={filter.entityType}
+          placeholder="Record type, e.g. Claim"
+          aria-label="Record type"
+          onChange={set("entityType")}
+        />
+        <input className="input" value={filter.actor} placeholder="Who (username)" aria-label="Who" onChange={set("actor")} />
+        <input className="input" type="date" value={filter.from} aria-label="From date" onChange={set("from")} />
+        <input className="input" type="date" value={filter.to} aria-label="To date" onChange={set("to")} />
         <button className="btn secondary" type="submit">
           Show
+        </button>
+        <button
+          className="btn secondary"
+          type="button"
+          onClick={() => {
+            setFilter(blankFilter);
+            load(blankFilter);
+          }}
+        >
+          Clear
         </button>
       </form>
       <ResourceTable

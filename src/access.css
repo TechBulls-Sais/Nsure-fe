@@ -232,8 +232,16 @@ div.alerts-item {
   flex-wrap: wrap;
 }
 .access-filter .input {
-  flex: 1 1 240px;
-  max-width: 360px;
+  flex: 1 1 180px;
+  max-width: 300px;
+}
+.access-filter .input[type="date"] {
+  flex: 0 1 160px;
+}
+.access-filter-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .notice.danger {
   border-color: light-dark(#f0c9c4, oklch(0.42 0.09 25));
