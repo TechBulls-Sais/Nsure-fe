@@ -1192,7 +1192,9 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           <ul className="wf-evidence">
             {c.related.map((r) => (
               <li key={r.ref} className={r.possibleDuplicate ? "missing" : "optional"}>
-                {r.ref} · {r.type} · {r.coveredLife} · event {formatDate(r.eventDate)} · {r.status}
+                {[r.ref, r.type, r.coveredLife, r.eventDate ? "event " + formatDate(r.eventDate) : "event date not recorded", r.status]
+                  .filter(Boolean)
+                  .join(" · ")}
                 {r.possibleDuplicate && <small>possibly the same event</small>}
               </li>
             ))}
