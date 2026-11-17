@@ -47,6 +47,7 @@ export default function Finance({ session, notify, profile }) {
           ["manual", "Manual journals"],
           ["suspense", "Suspense"],
           ["refunds", "Refunds"],
+          ["billing", "Billing"],
           ["reconciliation", "Reconciliation"],
         ]}
       />
@@ -59,6 +60,7 @@ export default function Finance({ session, notify, profile }) {
       {tab === "manual" && <ManualJournals session={session} notify={notify} profile={profile} />}
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
       {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} />}
+      {tab === "billing" && <Billing session={session} notify={notify} profile={profile} />}
       {tab === "reconciliation" && <Reconciliation session={session} notify={notify} profile={profile} />}
     </>
   );
@@ -1603,6 +1605,154 @@ function Refunds({ session, notify, profile }) {
           <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject refund">
             <Field label="Why" full>
               <input required maxLength={500} value={rejecting.note} onChange={(e) => setRejecting({ ...rejecting, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// SH04 collection run and instalment adjustments. The run goes to the background (spec §10) and is followed through
+// GET /operations/{id}; an adjustment is a signed correction with a reason, made on the version on screen.
+function Billing({ session, notify, profile }) {
+  const action = useAction(notify);
+  const [operation, setOperation] = useState(null);
+  const [policyRef, setPolicyRef] = useState("");
+  const [account, setAccount] = useState(null);
+  const [adjusting, setAdjusting] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const follow = async (id) => {
+    for (let i = 0; i < 120; i++) {
+      const r = await request(session, "/operations/" + encodeURIComponent(id));
+      setOperation(r.data);
+      if (r.data.status === "SUCCEEDED" || r.data.status === "FAILED") return r.data;
+      await new Promise((done) => setTimeout(done, 1000));
+    }
+    return null;
+  };
+  const run = async () => {
+    const started = await action.run(() => request(session, "/collections/billing-run?async=true", { method: "POST" }));
+    if (!started) return;
+    setOperation(started.data);
+    try {
+      const done = await follow(started.data.id);
+      if (done?.status === "SUCCEEDED") notify("Billing run finished: " + (done.result?.issued ?? 0) + " instalment(s) issued", "success");
+      if (done?.status === "FAILED") notify(done.error, "error");
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  };
+  const load = async (ref) => {
+    const done = await action.run(() => request(session, "/collections/policies/" + encodeURIComponent(ref.trim())));
+    if (done) setAccount(done.data);
+  };
+  const adjust = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/instalments/" + encodeURIComponent(adjusting.ref) + "/adjustments", {
+          method: "POST",
+          version: adjusting.version,
+          body: { amount: adjusting.amount, reason: adjusting.reason },
+        }),
+      "Adjustment recorded",
+    );
+    if (done) {
+      setAdjusting(null);
+      setAccount(done.data);
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Collection run"
+        subtitle="Issues the instalment of every in-force policy whose premium falls due within the lead time. It also runs every morning; running it again issues nothing twice."
+        action={
+          manage && (
+            <Button icon={RefreshCw} busy={action.busy || operation?.status === "PROCESSING" || operation?.status === "ACCEPTED"} onClick={run}>
+              Run billing now
+            </Button>
+          )
+        }
+      >
+        {operation ? (
+          <div className="ws-kv">
+            <div>
+              <small>Operation</small>
+              <strong>{operation.id}</strong>
+            </div>
+            <div>
+              <small>Status</small>
+              <strong>
+                <Badge>{operation.status}</Badge>
+              </strong>
+            </div>
+            <div>
+              <small>Last update</small>
+              <strong>{when(operation.updatedAt)}</strong>
+            </div>
+            {operation.status === "SUCCEEDED" && (
+              <div>
+                <small>Issued</small>
+                <strong>
+                  {operation.result?.issued ?? 0}
+                  {operation.result?.instalments?.length ? " · " + operation.result.instalments.join(", ") : ""}
+                </strong>
+              </div>
+            )}
+            {operation.status === "FAILED" && (
+              <div>
+                <small>Error</small>
+                <strong>{operation.error}</strong>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="ws-hint">No run started from this screen yet.</p>
+        )}
+      </Panel>
+      <Panel title="Instalments and adjustments" subtitle="Open a policy's billing account to correct an instalment with a signed adjustment and a reason.">
+        <FormGrid submitLabel="Open account" busy={action.busy} error={!adjusting && action.error} onSubmit={() => load(policyRef)}>
+          <Field label="Policy">
+            <input required value={policyRef} placeholder="POL-…" onChange={(e) => setPolicyRef(e.target.value)} />
+          </Field>
+        </FormGrid>
+        {account && (
+          <DataTable
+            rows={account.instalments}
+            rowKey={(r) => r.ref}
+            searchFrom={99}
+            empty="No instalments issued"
+            columns={[
+              { key: "ref", label: "Instalment" },
+              { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "billed", label: "Billed", align: "right", render: (r) => pula(r.billed) },
+              { key: "adjustments", label: "Adjustments", align: "right", render: (r) => pula(r.adjustments) },
+              { key: "allocated", label: "Paid", align: "right", render: (r) => pula(r.allocated) },
+              { key: "outstanding", label: "Outstanding", align: "right", render: (r) => pula(r.outstanding) },
+              { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  manage && (
+                    <Button variant="secondary" onClick={() => setAdjusting({ ref: r.ref, version: r.version, amount: "", reason: "" })}>
+                      Adjust
+                    </Button>
+                  ),
+              },
+            ]}
+          />
+        )}
+      </Panel>
+      {adjusting && (
+        <Drawer title={"Adjust " + adjusting.ref} description="A negative amount reduces what is owed; the billed amount itself never changes." onClose={() => setAdjusting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={adjust} submitLabel="Record adjustment">
+            <Field label="Amount (BWP, signed)">
+              <input type="number" step="0.01" required value={adjusting.amount} onChange={(e) => setAdjusting({ ...adjusting, amount: e.target.value })} />
+            </Field>
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={adjusting.reason} onChange={(e) => setAdjusting({ ...adjusting, reason: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>
