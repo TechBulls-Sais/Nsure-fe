@@ -1042,27 +1042,38 @@ function Conversation({ session, customerRef }) {
 function Inbound({ session, notify, profile }) {
   const [status, setStatus] = useState("TRIAGE");
   const list = useResource(session, "/communications/inbound" + (status ? "?status=" + status : ""), []);
+  const methods = useResource(session, "/communications/inbound/verification-methods", []);
   const action = useAction(notify);
   const [assigning, setAssigning] = useState(null);
+  const manage = can(profile, "MANAGE_COMMUNICATION");
+  const me = profile?.username;
+  // AT-SH09B-03: an unverified sender is a verification task; it is linked only once someone records how they checked.
   const assign = async () => {
     const done = await action.run(
       () =>
         request(session, `/communications/inbound/${assigning.id}/assign`, {
           method: "POST",
-          body: { customerRef: assigning.customerRef },
+          body: { customerRef: assigning.customerRef, method: assigning.method, note: assigning.note || undefined },
         }),
-      "Linked to the customer's service case",
+      "Sender verified and linked to the customer's service case",
     );
     if (done) {
       setAssigning(null);
       list.reload();
     }
   };
+  const own = async (r, release) => {
+    const done = await action.run(
+      () => request(session, `/communications/inbound/${r.id}/owner`, { method: "POST", body: release ? { release: true } : {} }),
+      release ? "Task given back" : "You are verifying this sender",
+    );
+    if (done) list.reload();
+  };
   return (
     <>
       <Panel
         title="Inbound messages"
-        subtitle="Replies by Email and WhatsApp. A known sender joins their service case; others wait here for a person."
+        subtitle="Replies by Email and WhatsApp. A sender with a verified contact joins their service case; any other is a verification task: nothing about a policy is shared until someone verifies who sent it."
         action={
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter">
             <option value="TRIAGE">Needs triage</option>
@@ -1083,17 +1094,48 @@ function Inbound({ session, notify, profile }) {
             { key: "channel", label: "Channel", render: (r) => channelName(r.channel) },
             { key: "sender", label: "From" },
             { key: "body", label: "Message" },
-            { key: "status", label: "Status", render: (r) => <Badge>{label(r.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => (
+                <>
+                  <Badge>{r.status === "TRIAGE" ? "Verify sender" : label(r.status)}</Badge>
+                  {r.status === "TRIAGE" ? (
+                    <small className="com-sub">
+                      {r.taskOwner ? "Worked by " + r.taskOwner : "Nobody has taken it"}
+                      {r.taskDueAt && " · due " + when(r.taskDueAt)}
+                    </small>
+                  ) : (
+                    r.verificationMethod && <small className="com-sub">Verified: {r.verificationMethod}</small>
+                  )}
+                </>
+              ),
+            },
             { key: "caseRef", label: "Case", render: (r) => r.caseRef || r.note || "—" },
             {
               key: "act",
               label: "",
               render: (r) =>
                 r.status === "TRIAGE" &&
-                can(profile, "MANAGE_COMMUNICATION") && (
-                  <Button variant="secondary" onClick={() => setAssigning({ id: r.id, customerRef: "" })}>
-                    Assign customer
-                  </Button>
+                manage && (
+                  <span className="ws-row-actions">
+                    {!r.taskOwner && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(r, false)}>
+                        Take
+                      </Button>
+                    )}
+                    {r.taskOwner === me && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(r, true)}>
+                        Give back
+                      </Button>
+                    )}
+                    <Button
+                      variant="secondary"
+                      onClick={() => setAssigning({ id: r.id, customerRef: "", method: methods.data?.[0] || "", note: "" })}
+                    >
+                      Verify and link
+                    </Button>
+                  </span>
                 ),
             },
           ]}
@@ -1102,10 +1144,10 @@ function Inbound({ session, notify, profile }) {
       {assigning && (
         <Drawer
           title="Who sent this?"
-          description="Check the sender against the customer record before linking it; never guess."
+          description="Verify the sender against the customer record before linking it; never guess, and share nothing about the policy until then."
           onClose={() => setAssigning(null)}
         >
-          <FormGrid busy={action.busy} error={action.error} onSubmit={assign} submitLabel="Link to customer">
+          <FormGrid busy={action.busy} error={action.error} onSubmit={assign} submitLabel="Verified: link to customer">
             <Field label="Customer reference" full>
               <input
                 required
@@ -1113,6 +1155,16 @@ function Inbound({ session, notify, profile }) {
                 value={assigning.customerRef}
                 onChange={(e) => setAssigning({ ...assigning, customerRef: e.target.value })}
               />
+            </Field>
+            <Field label="How you verified the sender" full>
+              <select required value={assigning.method} onChange={(e) => setAssigning({ ...assigning, method: e.target.value })}>
+                {(methods.data || []).map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Note (optional)" full>
+              <input value={assigning.note} maxLength={500} onChange={(e) => setAssigning({ ...assigning, note: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>
