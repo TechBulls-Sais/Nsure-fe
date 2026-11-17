@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Plus } from "lucide-react";
-import { request } from "./api";
+import { newIdempotencyKey, request } from "./api";
 import { money } from "./data";
 import {
   Badge,
@@ -325,7 +325,12 @@ function Events({ session, notify, profile, resource }) {
   const [payee, setPayee] = useState(null);
   const me = session?.username;
   const post = async (suffix, body, message) => {
-    const done = await action.run(() => request(session, "/care-cash/events/" + open.ref + suffix, { method: "POST", body }), message);
+    // Payments carry an Idempotency-Key, so a double click or a retried request never sends two instructions.
+    const idempotencyKey = suffix.startsWith("/payment") ? newIdempotencyKey() : undefined;
+    const done = await action.run(
+      () => request(session, "/care-cash/events/" + open.ref + suffix, { method: "POST", body, idempotencyKey }),
+      message,
+    );
     if (done) {
       setOpen(null);
       setNote("");

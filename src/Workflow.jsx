@@ -17,7 +17,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { fetchFile, request, uploadFile } from "./api";
+import { fetchFile, newIdempotencyKey, request, uploadFile } from "./api";
 import { money } from "./data";
 import { useConfirm } from "./ui/overlay";
 import { can as holds } from "./ui/workspace";
@@ -1127,6 +1127,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         const result = await request(session, "/portfolio/claims/" + c.id + "/approve", {
           method: "POST",
           version: c.version,
+          idempotencyKey: newIdempotencyKey(),
           body: {
             ...(payout ? { payoutAmount: Number(payout) } : {}),
             ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
@@ -1501,7 +1502,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               if (ok)
                 call(
                   "/pay",
-                  { method: "POST" },
+                  { method: "POST", idempotencyKey: newIdempotencyKey() },
                   "Payout sent for " + c.id + ". Waiting for the provider to confirm settlement.",
                 );
             }}
@@ -1527,7 +1528,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               if (ok)
                 call(
                   "/confirm-payout",
-                  { method: "POST", body: { providerReference: c.payoutReference } },
+                  { method: "POST", body: { providerReference: c.payoutReference }, idempotencyKey: newIdempotencyKey() },
                   c.id + " is paid.",
                 );
             }}
