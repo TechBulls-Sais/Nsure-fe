@@ -18,12 +18,12 @@ run("landing: skip link, sign-in routes, flip cards, FAQ, reduced motion, respon
   const header = page.locator("header.lp-header");
   await header.getByRole("link", { name: /Admin login/ }).click();
   await expect(page.getByRole("heading", { name: "Admin sign-in" })).toBeVisible();
-  await expect(page.locator('input[autocomplete="username"]')).toHaveAttribute("placeholder", "admin");
+  await expect(page.locator('input[autocomplete="username"]')).toHaveAttribute("placeholder", "Your username"); // D-42: never advertises "admin"
   await page.reload();
   await expect(page.getByRole("heading", { name: "Admin sign-in" })).toBeVisible();
   await page.locator(".login-switch").getByRole("button", { name: "Customer", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Customer sign-in" })).toBeVisible();
-  await expect(page.locator('input[autocomplete="username"]')).toHaveAttribute("placeholder", "customer");
+  await expect(page.locator('input[autocomplete="username"]')).toHaveAttribute("placeholder", "Your username");
   await page.getByRole("link", { name: /Back to Nsure/ }).click();
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Life happens.");
   await header.getByRole("link", { name: /Customer login/ }).click();

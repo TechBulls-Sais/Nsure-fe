@@ -29,8 +29,12 @@ run("dropdown: open, selected state, keyboard and mouse choice, Escape and focus
   await customer.press("ArrowDown");
   await expect(page.getByRole("listbox")).toBeVisible();
   const second = (await page.getByRole("listbox").getByRole("option").nth(1).textContent()).trim();
+  // The menu moves focus to an option as it opens; let it settle before the keys, or a key can be lost.
+  await expect(page.getByRole("listbox").locator('[role="option"]:focus')).toHaveCount(1);
   await page.keyboard.press("Home");
+  await expect(page.getByRole("listbox").getByRole("option").first()).toBeFocused();
   await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("listbox").getByRole("option").nth(1)).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await expect(customer).toHaveText(second);
@@ -58,7 +62,13 @@ run("dropdown: open, selected state, keyboard and mouse choice, Escape and focus
   assert(box.x >= 0 && box.x + box.width <= 390, "Menu fits the phone's width");
   assert(box.y >= 0 && box.y + box.height <= 844, "Menu fits the phone's height");
   await screenshot(page, "nsure-dropdown-mobile.png");
+  // A full-page screenshot resizes the page for the capture, and the menu closes itself on any resize; open it again
+  // so the Escape below closes the menu (not the dialog) at phone width.
+  if (!(await page.getByRole("listbox").count())) await product.click();
+  await expect(page.getByRole("listbox")).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(dialog).toHaveCount(1);
   await dialog.getByRole("button", { name: "Back", exact: true }).click();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
