@@ -298,7 +298,13 @@ export function PolicyDocuments({ policy, ...props }) {
 const WAIT_TRIES = 8;
 const WAIT_MS = 2000;
 const sameDocuments = (a, b) =>
-  a.length === b.length && a.every((doc, i) => doc.id === b[i]?.id && doc.status === b[i]?.status);
+  a.length === b.length &&
+  a.every((doc, i) => doc.id === b[i]?.id && doc.uploadId === b[i]?.uploadId && doc.status === b[i]?.status);
+// AT-SH09A-02: an upload waits in quarantine until a reviewer releases it. Until then it has no document id: it cannot
+// be opened here and does not count as evidence. A refused upload stays listed with the reason.
+const HELD = ["QUARANTINED", "REJECTED"];
+const isHeld = (doc) => HELD.includes(doc.status);
+const docKey = (doc) => (doc.id != null ? "d" + doc.id : "u" + doc.uploadId);
 
 function DocumentsPanel({
   session,
@@ -396,7 +402,7 @@ function DocumentsPanel({
     try {
       const result = await uploadFile(session, basePath, file, { type });
       onUploaded(result.data);
-      notify(file.name + " uploaded.");
+      notify(file.name + " uploaded. It is checked before it can be opened or count as evidence.");
       setFile(null);
       setInputKey((k) => k + 1);
     } catch (error) {
@@ -474,12 +480,17 @@ function DocumentsPanel({
       ) : (
         <ul className="wf-doc-list">
           {documents.map((doc) => (
-            <li key={doc.id} className={doc.status === "SUPERSEDED" ? "wf-doc-superseded" : undefined}>
+            <li
+              key={docKey(doc)}
+              className={doc.status === "SUPERSEDED" || doc.status === "REJECTED" ? "wf-doc-superseded" : undefined}
+            >
               <FileText size={18} aria-hidden="true" />
               <div>
                 <strong>
                   {doc.type}
                   {doc.status === "SUPERSEDED" && <em className="wf-tag">Superseded</em>}
+                  {doc.status === "QUARANTINED" && <em className="wf-tag is-held">Being checked</em>}
+                  {doc.status === "REJECTED" && <em className="wf-tag is-refused">Not accepted</em>}
                 </strong>
                 <small>
                   {doc.fileName} · {fileSize(doc.size)} · {doc.uploadedBy}, {formatDate(doc.uploadedAt)}
@@ -493,6 +504,7 @@ function DocumentsPanel({
                     {doc.supersededReason ? ": " + doc.supersededReason : ""}
                   </small>
                 )}
+                {doc.note && <small className="wf-doc-reason">{doc.note}</small>}
                 {reissuing === doc.id && (
                   <span className="wf-doc-reissue">
                     <input
@@ -513,12 +525,21 @@ function DocumentsPanel({
                 )}
               </div>
               <span className="wf-doc-actions">
-                <Btn variant="secondary" icon={Eye} onClick={() => view(doc)} aria-label={"View " + doc.fileName}>
-                  View
-                </Btn>
-                <Btn variant="secondary" icon={Download} onClick={() => download(doc)} aria-label={"Download " + doc.fileName}>
-                  Download
-                </Btn>
+                {!isHeld(doc) && (
+                  <>
+                    <Btn variant="secondary" icon={Eye} onClick={() => view(doc)} aria-label={"View " + doc.fileName}>
+                      View
+                    </Btn>
+                    <Btn
+                      variant="secondary"
+                      icon={Download}
+                      onClick={() => download(doc)}
+                      aria-label={"Download " + doc.fileName}
+                    >
+                      Download
+                    </Btn>
+                  </>
+                )}
                 {mayReissue(doc) && reissuing !== doc.id && (
                   <Btn variant="secondary" icon={FileText} onClick={() => { setReissuing(doc.id); setReason(""); }}>
                     Reissue
@@ -540,7 +561,9 @@ function DocumentsPanel({
           <Btn icon={Upload} disabled={!file || busy} onClick={upload}>
             {busy ? "Uploading…" : "Upload"}
           </Btn>
-          <small className="muted">PDF, JPG or PNG, up to 10 MB.</small>
+          <small className="muted">
+            PDF, JPG or PNG, up to 10 MB. Each file is checked before it can be opened or count as evidence.
+          </small>
         </div>
       )}
       {canUpload && !open && <p className="muted small">This claim is closed, so no more documents can be added.</p>}
