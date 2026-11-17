@@ -37,6 +37,8 @@ import "./group-admin.css";
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
 
 const CENSUS_HEADER = "memberKey,firstName,lastName,dateOfBirth,category,salary,action,effectiveDate";
+// Optional trailing columns: the actively-at-work declaration (Y/N) and the date the member became eligible.
+const CENSUS_OPTIONAL = "activelyAtWork,eligibleDate";
 
 const MEMBER_TONES = {
   ACTIVE: "green",
@@ -44,6 +46,7 @@ const MEMBER_TONES = {
   PARTIALLY_ACCEPTED: "blue",
   DECLINED: "red",
   CEASED: "gray",
+  SUSPENDED: "amber",
 };
 const ROW_TONES = { VALID: "green", APPLIED: "green", INVALID: "red", REJECTED: "red" };
 const INVOICE_TONES = { ISSUED: "blue", PARTIALLY_PAID: "amber", PAID: "green" };
@@ -411,6 +414,7 @@ const EMPTY_CATEGORY = {
   ratePerMille: "0.45",
   minEntryAge: "18",
   maxEntryAge: "64",
+  lateEntryDays: "",
 };
 
 function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
@@ -437,6 +441,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
       ratePerMille: String(Number(category.ratePerMille)),
       minEntryAge: String(category.minEntryAge),
       maxEntryAge: String(category.maxEntryAge),
+      lateEntryDays: category.lateEntryDays != null ? String(category.lateEntryDays) : "",
     });
     setEditing(category.code);
   };
@@ -447,6 +452,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
       ...form,
       salaryMultiple: form.benefitBasis === "SALARY_MULTIPLE" ? form.salaryMultiple : null,
       fixedCover: form.benefitBasis === "FIXED" ? form.fixedCover : null,
+      lateEntryDays: form.lateEntryDays === "" ? null : form.lateEntryDays,
     };
     const path = `/group/schemes/${scheme.ref}/categories` + (editing ? `/${encodeURIComponent(editing)}` : "");
     const r = await action.run(
@@ -466,6 +472,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
     { key: "freeCoverLimit", label: "Free cover limit", align: "right", render: (c) => pula(c.freeCoverLimit) },
     { key: "ratePerMille", label: "Rate ‰ / month", align: "right", render: (c) => number(c.ratePerMille, 2) },
     { key: "ages", label: "Entry ages", render: (c) => `${c.minEntryAge}–${c.maxEntryAge}`, sortValue: (c) => c.minEntryAge },
+    { key: "lateEntryDays", label: "Late entry", render: (c) => (c.lateEntryDays != null ? `${c.lateEntryDays} days` : "—") },
     { key: "activeMembers", label: "Members", align: "right" },
   ];
   if (manage) {
@@ -561,6 +568,9 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
             <Field label="Maximum entry age">
               <input className="input" type="number" min="0" max="100" value={form.maxEntryAge} onChange={set("maxEntryAge")} required />
             </Field>
+            <Field label="Late-entry window (days)" hint="Optional. A joiner more than this many days after their eligibleDate gets no free cover; blank: no late-entry rule.">
+              <input className="input" type="number" min="0" max="3650" value={form.lateEntryDays} onChange={set("lateEntryDays")} />
+            </Field>
           </FormGrid>
         </Drawer>
       )}
@@ -594,7 +604,12 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
     ) },
     { key: "category", label: "Category", render: (m) => <span title={m.categoryName}>{m.category}</span> },
     { key: "salary", label: "Salary", align: "right", render: (m) => (m.salary != null ? pula(m.salary) : "—") },
-    { key: "status", label: "Status", render: (m) => <Badge tone={MEMBER_TONES[m.status]}>{label(m.status)}</Badge> },
+    { key: "status", label: "Status", render: (m) => (
+      <>
+        <Badge tone={MEMBER_TONES[m.status]}>{label(m.status)}</Badge>
+        {m.activelyAtWork === false && <span className="ga-muted"> · not at work when declared</span>}
+      </>
+    ) },
     { key: "joinDate", label: "Cover dates", render: (m) => (
       <span className="ga-nowrap">{day(m.joinDate)}{m.exitDate ? ` – ${day(m.exitDate)}` : ""}</span>
     ) },
@@ -653,6 +668,7 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
               <option value="UNDERWRITING_PENDING">Underwriting pending</option>
               <option value="PARTIALLY_ACCEPTED">Partially accepted</option>
               <option value="ACTIVE">Active</option>
+              <option value="SUSPENDED">Suspended</option>
               <option value="CEASED">Ceased</option>
               <option value="DECLINED">Declined</option>
               <option value="ALL">All</option>
@@ -824,11 +840,11 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     const codes = detail.categories.map((c) => c.code);
     const first = codes[0] || "STAFF";
     const lines = [
-      CENSUS_HEADER,
-      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()}`,
-      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()}`,
-      `EMP-0999,,,,,,LEAVE,${today()}`,
-      `EMP-0998,,,,,210000,SALARY,${today()}`,
+      `${CENSUS_HEADER},${CENSUS_OPTIONAL}`,
+      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()},Y,${today()}`,
+      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()},Y,`,
+      `EMP-0999,,,,,,LEAVE,${today()},,`,
+      `EMP-0998,,,,,210000,SALARY,${today()},Y,`,
     ];
     saveTextFile(`census-template-${scheme.ref}.csv`, lines.join("\n") + "\n");
   };
@@ -937,7 +953,7 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                 <option value="ATOMIC">Atomic — all or nothing</option>
               </select>
             </Field>
-            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}`}>
+            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}, optionally followed by ${CENSUS_OPTIONAL}. A joiner declared not actively at work (N) has all cover referred to underwriting.`}>
               <label className="btn secondary ga-file">
                 <FileSpreadsheet className="icon icon-sm" aria-hidden="true" />
                 Choose .csv file
@@ -1188,6 +1204,18 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
 function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
   const [form, setForm] = useState({ amount: String(Number(invoice.outstanding)), reference: "" });
   const action = useAction(inlineErrors(notify));
+  const disputes = useAction(inlineErrors(notify));
+  const [dispute, setDispute] = useState(null); // { memberKey, action, note }
+  const saveDispute = async () => {
+    const r = await disputes.run(
+      () => request(session, `/group/invoices/${invoice.ref}/disputes`, { method: "POST", body: dispute }),
+      dispute.action === "RAISE" ? `Dispute recorded for ${dispute.memberKey}` : `Dispute resolved for ${dispute.memberKey}`,
+    );
+    if (r) {
+      setDispute(null);
+      reload();
+    }
+  };
 
   const submit = async () => {
     const r = await action.run(
@@ -1241,8 +1269,48 @@ function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
               </span>
             ) },
             { key: "premium", label: "Premium", align: "right", render: (l) => pula(l.premium) },
+            { key: "dispute", label: "Sponsor dispute", render: (l) =>
+              l.disputeStatus === "OPEN" ? (
+                <span title={l.disputeNote || ""}>
+                  <Badge tone="amber">Disputed</Badge>
+                  {bill && (
+                    <Button variant="secondary" onClick={() => setDispute({ memberKey: l.memberKey, action: "RESOLVE", note: "" })}>
+                      Resolve
+                    </Button>
+                  )}
+                </span>
+              ) : (
+                <span title={l.disputeNote || ""}>
+                  {l.disputeStatus === "RESOLVED" && <span className="ga-muted">Resolved </span>}
+                  {bill && (
+                    <Button variant="secondary" onClick={() => setDispute({ memberKey: l.memberKey, action: "RAISE", note: "" })}>
+                      Dispute
+                    </Button>
+                  )}
+                </span>
+              ) },
           ]}
         />
+        {Number(invoice.disputedAmount) > 0 && (
+          <p className="subtitle">{pula(invoice.disputedAmount)} of this invoice is disputed by the sponsor; members' cover does not change until a census does.</p>
+        )}
+        {dispute && (
+          <FormGrid
+            onSubmit={saveDispute}
+            busy={disputes.busy}
+            error={disputes.error}
+            submitLabel={dispute.action === "RAISE" ? `Record dispute for ${dispute.memberKey}` : `Resolve dispute for ${dispute.memberKey}`}
+            extra={
+              <Button type="button" variant="secondary" onClick={() => setDispute(null)}>
+                Cancel
+              </Button>
+            }
+          >
+            <Field label={dispute.action === "RAISE" ? "What the sponsor disputes" : "How it was resolved"} full>
+              <textarea className="textarea" rows={2} maxLength={300} value={dispute.note} onChange={(e) => setDispute({ ...dispute, note: e.target.value })} required />
+            </Field>
+          </FormGrid>
+        )}
       </section>
       <section className="ga-drawer-section">
         <h3>Sponsor receipts</h3>
