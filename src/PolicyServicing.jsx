@@ -53,6 +53,15 @@ const BENEFIT = {
   SURRENDER: "Surrender",
   PAID_UP: "Paid-up",
 };
+// Why a contract ended (IL03: death, cancellation, expiry and other approved causes).
+const END_CAUSE = {
+  DEATH: "Death",
+  CANCELLATION: "Cancellation",
+  EXPIRY: "Expiry",
+  LAPSE: "Lapse",
+  OTHER: "Other",
+  LOAN_SETTLED: "Loan settled",
+};
 const FREQ = { MONTHLY: "Monthly", QUARTERLY: "Quarterly", SEMI_ANNUAL: "Half-yearly", ANNUAL: "Annually", PAID_UP: "Paid-up" };
 const badge = (map, key) => {
   const [label, tone] = map[key] || [key];
@@ -199,7 +208,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
     } else {
       done = await action.run(
         () => request(session, base + "/termination", { method: "POST", body: { reason: form.cause, note: form.reason } }),
-        "Policy terminated",
+        form.cause === "CANCELLATION" ? "Policy cancelled" : "Policy terminated",
       );
     }
     if (done) {
@@ -257,7 +266,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             </div>
             <div>
               <small>Next premium due</small>
-              <strong>{p.nextPremiumDue || "—"}</strong>
+              <strong>{p.nextPremiumDue || (p.coverStatus === "Ended" ? "None: the policy has ended" : "—")}</strong>
             </div>
             <div>
               <small>Payer</small>
@@ -273,7 +282,10 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               <div>
                 <small>Ended</small>
                 <strong>
-                  {BENEFIT[p.terminationReason] || p.terminationReason.charAt(0) + p.terminationReason.slice(1).toLowerCase()} ·{" "}
+                  {END_CAUSE[p.terminationReason] ||
+                    BENEFIT[p.terminationReason] ||
+                    p.terminationReason.charAt(0) + p.terminationReason.slice(1).toLowerCase()}{" "}
+                  ·{" "}
                   {p.terminatedOn}
                 </strong>
               </div>
@@ -665,8 +677,16 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 <select value={form.cause} onChange={(e) => setForm({ ...form, cause: e.target.value })}>
                   <option value="OTHER">Other</option>
                   <option value="DEATH">Death of the life insured</option>
+                  <option value="CANCELLATION">Cancellation</option>
+                  <option value="EXPIRY">Expiry (the contract term ended)</option>
                   <option value="MATURITY">Maturity</option>
                 </select>
+                {form.cause === "CANCELLATION" && (
+                  <small className="ws-hint">
+                    Runs the cancellation process: cover continues to the end of today, and within the cooling-off period the
+                    premiums are flagged as refundable.
+                  </small>
+                )}
               </Field>
             )}
             {form.kind !== "endorsement" && (

@@ -32,6 +32,19 @@ const STATUS = {
   SETTLED: ["Settled", "blue"],
   CLAIMED: ["Claimed", "blue"],
   CANCELLED: ["Cancelled", undefined],
+  EXPIRED: ["Term ended", undefined],
+};
+// Benefits a credit claim can be for; the loan must carry the one claimed.
+const CLAIM_CAUSES = [
+  ["DEATH", "Death", () => true],
+  ["PERMANENT_DISABILITY", "Permanent disability", (l) => l.permanentDisability],
+  ["TEMPORARY_DISABILITY", "Temporary disability", (l) => l.temporaryDisability],
+  ["CRITICAL_ILLNESS", "Critical illness", (l) => l.criticalIllness],
+];
+const addMonths = (iso, months) => {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d.toISOString().slice(0, 10);
 };
 const statusBadge = (s) => {
   const [label, tone] = STATUS[s] || [s];
@@ -296,7 +309,19 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
       refinance: ["/refinance", "Loan refinanced"],
     };
     const [suffix, message] = paths[kind];
-    const done = await action.run(() => request(session, base + suffix, { method: "POST", body }), message);
+    // A balance message sent before, or one that is held, is not "recorded": say what happened (test C-44).
+    const seen = kind === "balance" && (d?.balances || []).some((b) => b.sourceReference === body.sourceReference);
+    const done = await action.run(
+      () => request(session, base + suffix, { method: "POST", body }),
+      kind === "balance" ? null : message,
+    );
+    if (done && kind === "balance") {
+      const row = (done.data?.balances || []).find((b) => b.sourceReference === body.sourceReference);
+      if (seen) notify("Already received: balance " + body.sourceReference + " was recorded before, so nothing changed.", "info");
+      else if (row && row.status !== "APPLIED")
+        notify("Balance held, not applied: " + (row.note || "it conflicts with the balance on record") + " It shows as an exception on the loan.", "error");
+      else notify(message, "success");
+    }
     if (done) {
       setForm(null);
       if (kind === "refinance") {
@@ -506,7 +531,10 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
                       Resolve exception
                     </Button>
                   )}
-                  <Button variant="secondary" onClick={() => setForm({ kind: "claim", eventDate: today(), claimRef: "", payeeVerified: false })}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setForm({ kind: "claim", eventDate: today(), claimRef: "", cause: "DEATH", accidental: false, payeeVerified: false })}
+                  >
                     Record claim
                   </Button>
                   <Button
@@ -567,12 +595,35 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
             )}
             {form.kind === "claim" && (
               <>
+                <p className="ws-hint" style={{ gridColumn: "1 / -1" }}>
+                  Recording the claim closes the loan's cover and terminates policy {l.policyRef}, so no further premium is due.
+                </p>
                 <Field label="Date of the event">
                   <input type="date" max={today()} value={form.eventDate} onChange={set("eventDate")} required />
                 </Field>
                 <Field label="Claim reference">
                   <input value={form.claimRef} onChange={set("claimRef")} placeholder="e.g. CLM-10021" />
                 </Field>
+                <Field label="Benefit claimed">
+                  <select value={form.cause} onChange={set("cause")}>
+                    {CLAIM_CAUSES.filter(([, , carried]) => carried(l)).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {l.coverStart && form.eventDate && form.eventDate < addMonths(l.coverStart, l.waitingMonths) && (
+                  <Field label="Waiting period" full>
+                    <label className="ri-product">
+                      <input type="checkbox" checked={form.accidental} onChange={set("accidental")} />
+                      <span>
+                        The event was accidental. It falls within the {l.waitingMonths}-month waiting period (to{" "}
+                        {addMonths(l.coverStart, l.waitingMonths)}), when only accidental events are covered.
+                      </span>
+                    </label>
+                  </Field>
+                )}
                 <Field label="Payee" full>
                   <label className="ri-product">
                     <input type="checkbox" checked={form.payeeVerified} onChange={set("payeeVerified")} />
