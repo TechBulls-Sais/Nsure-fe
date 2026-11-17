@@ -27,9 +27,19 @@ const REQUESTS = {
 };
 const label = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase().replaceAll("_", " ") : "—");
 
+const BENEFIT = {
+  GLA: "Group life assurance",
+  LUMP_SUM_DISABILITY: "Lump-sum disability",
+  CRITICAL_ILLNESS: "Critical illness",
+  FAMILY: "Family benefits",
+  INCOME_PROTECTION: "Income protection",
+  CREDIT: "Group credit",
+};
+
 export default function PartnerPortal({ session, notify }) {
   const portal = useResource(session, "/ops/portal", null);
   const [form, setForm] = useState(null);
+  const [certificate, setCertificate] = useState(null);
   const action = useAction(notify);
   const p = portal.data;
   const submit = async () => {
@@ -114,7 +124,7 @@ export default function PartnerPortal({ session, notify }) {
       {type === "EMPLOYER" && (
         <>
           <div className="stat-grid">
-            <Stat label="Members" value={p.members.length} />
+            <Stat label="Members" value={p.members.length} note={(p.certificates || []).length + " certificate(s)"} />
             <Stat label="Invoices outstanding" value={pula(p.invoices.reduce((s, i) => s + Number(i.outstanding || 0), 0))} tone="amber" />
             <Stat label="Policy year" value={p.partner?.policyYear ?? 1} note={"Renews " + (p.partner?.renewal || "")} tone="blue" />
           </div>
@@ -130,6 +140,23 @@ export default function PartnerPortal({ session, notify }) {
                 { key: "acceptedCover", label: "Cover in force", align: "right", render: (r) => pula(r.acceptedCover) },
                 { key: "pendingCover", label: "Pending", align: "right", render: (r) => (Number(r.pendingCover) > 0 ? pula(r.pendingCover) : "—") },
                 { key: "memberStatus", label: "Status", render: (r) => <Badge tone={r.memberStatus === "ACTIVE" ? "green" : "amber"}>{label(r.memberStatus)}</Badge> },
+              ]}
+            />
+          </Panel>
+          <Panel title="Member certificates" subtitle="Only accepted cover is certified. Cover awaiting underwriting is shown as pending and is not yet in force.">
+            <DataTable
+              rows={p.certificates || []}
+              rowKey={(r) => r.certificateNo}
+              onRowClick={setCertificate}
+              empty="No certificates yet"
+              emptyDetail="Certificates appear once members are on cover."
+              columns={[
+                { key: "certificateNo", label: "Certificate" },
+                { key: "member", label: "Member" },
+                { key: "category", label: "Category", render: (r) => r.category || "—" },
+                { key: "acceptedCover", label: "Cover in force", align: "right", render: (r) => pula(r.acceptedCover) },
+                { key: "pendingCover", label: "Pending", align: "right", render: (r) => (Number(r.pendingCover) > 0 ? pula(r.pendingCover) : "—") },
+                { key: "coverTo", label: "To" },
               ]}
             />
           </Panel>
@@ -203,6 +230,43 @@ export default function PartnerPortal({ session, notify }) {
           ]}
         />
       </Panel>
+      {certificate && (
+        <Drawer title={"Certificate " + certificate.certificateNo} description={certificate.scheme + " · policy year " + certificate.policyYear} onClose={() => setCertificate(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Member</small>
+              <strong>{certificate.member}</strong>
+            </div>
+            <div>
+              <small>Category</small>
+              <strong>{certificate.category || "—"}</strong>
+            </div>
+            <div>
+              <small>Cover in force</small>
+              <strong>{pula(certificate.acceptedCover)}</strong>
+            </div>
+            <div>
+              <small>Pending underwriting</small>
+              <strong>{Number(certificate.pendingCover) > 0 ? pula(certificate.pendingCover) + " (not in force)" : "None"}</strong>
+            </div>
+            <div>
+              <small>Cover period</small>
+              <strong>
+                {certificate.coverFrom} → {certificate.coverTo}
+              </strong>
+            </div>
+            <div>
+              <small>Benefits</small>
+              <strong>{(certificate.benefits || []).map((b) => BENEFIT[b] || b).join(", ")}</strong>
+            </div>
+          </div>
+          <div className="ws-form-actions">
+            <Button variant="secondary" onClick={() => window.print()}>
+              Print certificate
+            </Button>
+          </div>
+        </Drawer>
+      )}
       {form && (
         <Drawer title="New request" description="Our team actions it and answers under the reference you receive." onClose={() => setForm(null)}>
           <FormGrid submitLabel="Send request" busy={action.busy} error={action.error} onSubmit={submit}>
