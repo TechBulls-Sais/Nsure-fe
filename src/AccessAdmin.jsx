@@ -59,6 +59,7 @@ export default function AccessAdmin({ session, notify, profile }) {
     check: CHECKER_CODES.some((code) => can(profile, code)),
     grantEmergency: can(profile, "GRANT_EMERGENCY_ACCESS"),
     reviewEmergency: can(profile, "REVIEW_EMERGENCY_ACCESS"),
+    reviewAccess: can(profile, "REVIEW_ACCESS"),
   };
   const readEmergency = allow.grantEmergency || allow.reviewEmergency || allow.readAudit;
   const tabs = [
@@ -69,6 +70,7 @@ export default function AccessAdmin({ session, notify, profile }) {
     allow.readAudit && ["approvals", "Approvals"],
     allow.readAudit && ["evidence", "Audit evidence"],
     readEmergency && ["emergency", "Emergency access"],
+    (allow.reviewAccess || allow.readAudit) && ["review", "Access review"],
   ].filter(Boolean);
   const [tab, setTab] = useState(() => tabs[0]?.[0] || "roles");
   const [roles, setRoles] = useState([]);
@@ -396,6 +398,10 @@ export default function AccessAdmin({ session, notify, profile }) {
           run={run}
           session={session}
         />
+      )}
+
+      {tab === "review" && (allow.reviewAccess || allow.readAudit) && (
+        <AccessReviewPanel session={session} notify={notify} profile={profile} allow={allow} />
       )}
 
       {tabs.length === 0 && (
@@ -930,6 +936,224 @@ function EmergencyPanel({ grants, users, rolesById, profile, allow, busy, error,
                 required
                 minLength={5}
                 maxLength={1000}
+                autoFocus
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </label>
+          </form>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+/**
+ * Access recertification (NS-SH11-007): a reviewer keeps or flags every login that holds access, never their own.
+ * Closing the review alerts the identity administrators about each flagged login; they remove the access through the
+ * usual four-eyes change, so the reviewer changes nobody's access.
+ */
+function AccessReviewPanel({ session, notify, profile, allow }) {
+  const [reviews, setReviews] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [revoking, setRevoking] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const reviewId = useId();
+
+  const show = async (id) => setOpen((await request(session, "/admin/access-reviews/" + id)).data);
+  const load = async () => {
+    const list = (await request(session, "/admin/access-reviews")).data || [];
+    setReviews(list);
+    const current = list.find((r) => r.status === "OPEN") || list[0];
+    if (current) await show(current.id);
+    else setOpen(null);
+  };
+  useEffect(() => {
+    load().catch((err) => setError(err.message));
+  }, [session]);
+
+  const act = async (work, message) => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await work();
+      if (result?.data?.id) setOpen(result.data);
+      setReviews((await request(session, "/admin/access-reviews")).data || []);
+      notify(message, "success");
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const decide = (item, decision, why = "") =>
+    act(
+      () =>
+        request(session, "/admin/access-reviews/" + open.id + "/items/" + item.id + "/decision", {
+          method: "POST",
+          body: { decision, note: why },
+        }),
+      decision === "KEEP" ? item.username + "'s access confirmed." : item.username + " flagged for removal.",
+    );
+
+  const items = (open?.items || []).map((item) => ({ ...item, id: item.id }));
+  const pending = items.filter((item) => !item.decision).length;
+  const reviewing = open?.status === "OPEN" && allow.reviewAccess;
+  const own = (item) => item.username === profile?.username;
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Access reviews</h2>
+            <p className="subtitle">
+              Recertify who holds access: keep or flag every login with a role. Nobody reviews their own access.
+              Flagged access goes to the identity administrators, who remove it with a second person&apos;s approval.
+            </p>
+          </div>
+          {allow.reviewAccess && !reviews.some((r) => r.status === "OPEN") && (
+            <button
+              className="btn secondary"
+              disabled={busy}
+              onClick={() => act(() => request(session, "/admin/access-reviews", { method: "POST" }), "Access review started.")}
+            >
+              Start a review
+            </button>
+          )}
+        </div>
+        {error && !revoking && <p className="form-error">{error}</p>}
+        <ResourceTable
+          columns={["Review", "Status", "Started", "Decided", "Flagged", "Outcome"]}
+          rows={reviews}
+          render={(r) => (
+            <>
+              <td>{r.recordRef}</td>
+              <td>{r.status === "OPEN" ? "Open" : "Closed"}</td>
+              <td>
+                {r.startedBy}
+                <br />
+                <small>{when(r.startedAt)}</small>
+              </td>
+              <td>
+                {r.decided} of {r.items}
+              </td>
+              <td>{r.revokes}</td>
+              <td>{r.summary || "—"}</td>
+            </>
+          )}
+          editable={(r) => r.id !== open?.id}
+          editLabel={() => "Open"}
+          onEdit={(r) => show(r.id).catch((err) => setError(err.message))}
+        />
+      </section>
+
+      {open && (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2>
+                {open.recordRef} · {open.status === "OPEN" ? pending + " left to decide" : "closed " + when(open.closedAt)}
+              </h2>
+              <p className="subtitle">
+                Started by {open.startedBy} on {when(open.startedAt)}. Roles are as they were when the review started.
+              </p>
+            </div>
+            {reviewing && (
+              <button
+                className="btn primary"
+                disabled={busy || pending > 0}
+                title={pending > 0 ? "Decide every login first" : undefined}
+                onClick={() =>
+                  act(
+                    () => request(session, "/admin/access-reviews/" + open.id + "/close", { method: "POST" }),
+                    open.recordRef + " closed.",
+                  )
+                }
+              >
+                Close review
+              </button>
+            )}
+          </div>
+          <ResourceTable
+            columns={["User", "Roles", "Permissions", "Desk access", "Decision", "Note"]}
+            rows={items}
+            render={(item) => (
+              <>
+                <td>{item.username}</td>
+                <td>{item.roles}</td>
+                <td>{item.permissionCount}</td>
+                <td>{item.deskAccess ? "Yes" : "No"}</td>
+                <td>
+                  {item.decision ? (
+                    <>
+                      {item.decision === "KEEP" ? "Keep" : "Revoke"}
+                      <br />
+                      <small>
+                        {item.decidedBy} · {when(item.decidedAt)}
+                      </small>
+                    </>
+                  ) : (
+                    "To decide"
+                  )}
+                </td>
+                <td>{item.note || "—"}</td>
+              </>
+            )}
+            editable={(item) => reviewing && !own(item) && item.decision !== "KEEP"}
+            editLabel={() => (busy ? "Working…" : "Keep")}
+            onEdit={(item) => decide(item, "KEEP")}
+            removable={(item) => reviewing && !own(item) && item.decision !== "REVOKE"}
+            removeLabel="Revoke"
+            onDelete={(item) => {
+              setRevoking(item);
+              setNote("");
+              setError("");
+            }}
+            note={(item) => (reviewing && own(item) ? "Your own access: another reviewer decides it." : null)}
+          />
+        </section>
+      )}
+
+      {revoking && (
+        <Dialog
+          title={"Flag " + revoking.username + "'s access"}
+          eyebrow="Access review"
+          onClose={() => setRevoking(null)}
+          footer={
+            <>
+              <button type="button" className="btn secondary" onClick={() => setRevoking(null)}>
+                Cancel
+              </button>
+              <button className="btn primary" form={reviewId} disabled={busy}>
+                {busy ? "Saving…" : "Flag for removal"}
+              </button>
+            </>
+          }
+        >
+          <form
+            id={reviewId}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (await decide(revoking, "REVOKE", note)) setRevoking(null);
+            }}
+          >
+            {error && <p className="form-error">{error}</p>}
+            <p className="subtitle">
+              {revoking.username} holds {revoking.roles}. The identity administrators are told when the review closes;
+              their change still needs a second person.
+            </p>
+            <label className="form-label">
+              Why should this access go?
+              <textarea
+                className="input"
+                rows={3}
+                required
+                minLength={5}
+                maxLength={500}
                 autoFocus
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
