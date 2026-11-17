@@ -90,12 +90,14 @@ export default function CreditLife({ session, notify, profile }) {
         }}
         tabs={[
           ["loans", "Loans"],
+          ["queue", "Lender submissions"],
           ["lenders", "Lenders"],
           ["refunds", "Refunds"],
           ["rule", "Product rule"],
         ]}
       />
       {tab === "loans" && <Loans session={session} notify={notify} profile={profile} resource={loans} onOpen={setOpen} onChange={reload} />}
+      {tab === "queue" && <SubmissionsQueue loans={loans} onOpen={setOpen} />}
       {tab === "lenders" && <Lenders session={session} notify={notify} profile={profile} onChange={reload} />}
       {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} onChange={reload} />}
       {tab === "rule" && <Rule session={session} notify={notify} profile={profile} />}
@@ -113,6 +115,53 @@ export default function CreditLife({ session, notify, profile }) {
         />
       )}
     </>
+  );
+}
+
+// ── lender submissions queue (IL05 workspace) ───────────────────────────────────────────────────
+
+// What a lender has sent that still needs an answer: registrations waiting for the disbursement notice or the first
+// premium, messages held as balance exceptions (or claims waiting for a confirmed balance), and stale balances.
+function submissionsFor(l) {
+  const items = [];
+  if (l.status === "QUOTED") items.push(["Loan registration", "Awaiting the lender's disbursement notice and the first premium."]);
+  if (l.status === "AWAITING_DISBURSEMENT") items.push(["Loan registration", "First premium received; awaiting the lender's disbursement notice."]);
+  if (l.status === "AWAITING_PREMIUM") items.push(["Disbursement notice", "Disbursed on " + l.disbursementDate + "; cover waits for the first premium."]);
+  if (l.balanceException)
+    items.push([
+      l.balanceException.startsWith("Claim for") ? "Claim needs a confirmed balance" : "Held balance message",
+      l.balanceException,
+    ]);
+  else if (l.balanceStale && ["COVER_ACTIVE", "COVER_OFF"].includes(l.status))
+    items.push(["Stale balance", "Last balance from the lender is dated " + l.balanceAsOf + ": ask for a current statement."]);
+  return items;
+}
+
+function SubmissionsQueue({ loans, onOpen }) {
+  const rows = (loans.data || []).flatMap((l) =>
+    submissionsFor(l).map(([kind, detail], i) => ({ key: l.ref + ":" + i, kind, detail, loan: l })),
+  );
+  return (
+    <Panel
+      title="Lender submissions awaiting action"
+      subtitle="Loan registrations, disbursement notices and balance or settlement messages that cannot go further without an answer. Open a loan to act on it."
+    >
+      <ErrorNote error={loans.error} />
+      <DataTable
+        rows={rows}
+        rowKey={(r) => r.key}
+        loading={loans.loading && !loans.data?.length}
+        empty="Nothing awaiting action"
+        onRowClick={(r) => onOpen(r.loan.ref)}
+        columns={[
+          { key: "kind", label: "Submission", render: (r) => <Badge tone="amber">{r.kind}</Badge> },
+          { key: "lender", label: "Lender", render: (r) => r.loan.lenderName + " · " + r.loan.lenderLoanId },
+          { key: "borrower", label: "Borrower", render: (r) => r.loan.borrowerName },
+          { key: "detail", label: "What it needs" },
+          { key: "received", label: "Registered", render: (r) => when(r.loan.createdAt) },
+        ]}
+      />
+    </Panel>
   );
 }
 
@@ -287,6 +336,40 @@ function Loans({ session, notify, profile, resource, onOpen, onChange }) {
   );
 }
 
+/** Repayment / closure preview for a chosen date (the server accepts any date; "today" is shown below). */
+function ClosurePreview({ session, base, loan }) {
+  const [date, setDate] = useState("");
+  const preview = useResource(session, date ? base + "/settlement-preview?date=" + date : null, null);
+  const p = date ? preview.data : null;
+  return (
+    <Panel title="Closure preview for a date" subtitle="What an early settlement on a chosen date would refund. Nothing changes until the lender's settlement is recorded.">
+      <div className="field-grid">
+        <Field label="Settlement date">
+          <input type="date" min={loan.disbursementDate} value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+      </div>
+      <ErrorNote error={date ? preview.error : ""} />
+      {p && (
+        <>
+          <div className="ws-kv">
+            <div>
+              <small>Months of cover used</small>
+              <strong>
+                {p.monthsElapsed} of {loan.termMonths}
+              </strong>
+            </div>
+            <div>
+              <small>Premium refund</small>
+              <strong>{pula(p.refund)}</strong>
+            </div>
+          </div>
+          <p className="ws-hint">{p.blocked ? "Blocked: " + p.blockedBecause : p.formula}</p>
+        </>
+      )}
+    </Panel>
+  );
+}
+
 function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
   const base = "/credit/loans/" + encodeURIComponent(loanRef);
   const detail = useResource(session, base, null);
@@ -419,21 +502,53 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
             </p>
           )}
           {l.status === "CLAIMED" && (
-            <Panel title="Claim allocation">
+            <Panel title="Claim allocation" subtitle="Who the claim pays, and who verified the lender's payment details.">
               <div className="ws-kv">
                 <div>
                   <small>Claim</small>
                   <strong>{l.claimRef || "—"}</strong>
                 </div>
                 <div>
-                  <small>Paid to the lender</small>
-                  <strong>{pula(l.lenderAmount)}</strong>
+                  <small>Benefit</small>
+                  <strong>
+                    {(CLAIM_CAUSES.find(([value]) => value === l.claimCause) || [null, l.claimCause || "Death"])[1]}
+                    {l.claimEventDate ? " · event " + l.claimEventDate : ""}
+                    {l.claimAccidental ? " · accidental" : ""}
+                  </strong>
                 </div>
                 <div>
-                  <small>Paid to the estate or beneficiary</small>
-                  <strong>{pula(l.estateAmount)}</strong>
+                  <small>Policy</small>
+                  <strong>
+                    {l.policyRef} · {l.policyStatus}
+                  </strong>
                 </div>
               </div>
+              <DataTable
+                rows={[
+                  {
+                    key: "lender",
+                    payee: l.lenderName,
+                    basis: "Lender · outstanding balance on loan " + l.lenderLoanId,
+                    amount: l.lenderAmount,
+                    verified: l.payeeVerifiedBy ? "Payment details verified by " + l.payeeVerifiedBy + " · " + when(l.payeeVerifiedAt) : "—",
+                  },
+                  {
+                    key: "estate",
+                    payee: "Estate or beneficiary of " + l.borrowerName,
+                    basis: "Any surplus of the sum assured over the balance",
+                    amount: l.estateAmount,
+                    verified: "Paid through the claim's beneficiary process",
+                  },
+                ]}
+                rowKey={(r) => r.key}
+                searchFrom={99}
+                columns={[
+                  { key: "payee", label: "Payee" },
+                  { key: "basis", label: "Basis" },
+                  { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+                  { key: "verified", label: "Verification" },
+                ]}
+              />
             </Panel>
           )}
           {open && d.claimToday && l.disbursementDate && (
@@ -466,6 +581,7 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
               )}
             </Panel>
           )}
+          {open && l.disbursementDate && <ClosurePreview session={session} base={base} loan={l} />}
           {open && d.settlementToday && l.disbursementDate && (
             <Panel title="If the loan were settled today">
               <div className="ws-kv">
