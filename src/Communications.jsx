@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Ban, CheckCheck, FilePlus2, MessageSquarePlus, RefreshCw, Search, Send } from "lucide-react";
 import { request } from "./api";
 import {
@@ -37,7 +37,8 @@ const EVENT_FIELDS = {
   OperationalNotice: ["customerName"],
 };
 const COMMON_FIELDS = ["customerRef", "portalLink"];
-const STATUSES = ["QUEUED", "SUBMITTED", "DELIVERED", "READ", "FAILED", "SUPPRESSED"];
+// NS-SH09B-004: accepted by the provider is not delivered; delivery comes only from the provider's report.
+const STATUSES = ["QUEUED", "SUBMITTED", "ACCEPTED", "DELIVERED", "READ", "FAILED", "SUPPRESSED"];
 
 const label = (value) => String(value || "").replaceAll("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
 const channelName = (c) => (c === "WHATSAPP" ? "WhatsApp" : "Email");
@@ -53,7 +54,10 @@ export default function Communications({ session, notify, profile }) {
     const r = await action.run(() => request(session, "/communications/dispatch", { method: "POST" }));
     if (r) {
       const d = r.data;
-      notify(`Sent ${d.processed}: ${d.delivered} delivered, ${d.retrying} will retry, ${d.failed} failed`);
+      notify(
+        `Handed ${d.processed} to the provider: ${d.accepted} accepted, ${d.retrying} will retry, ${d.failed} failed. ` +
+          `${d.delivered} delivery report(s) received.`,
+      );
       all.reload();
       setRefresh((n) => n + 1);
     }
@@ -89,7 +93,14 @@ export default function Communications({ session, notify, profile }) {
         )}
       </Heading>
       <div className="stat-grid">
-        <Stat label="Queued" value={counts.QUEUED || 0} tone="amber" note="Waiting for the provider" loading={loading} />
+        <Stat label="Queued" value={counts.QUEUED || 0} tone="amber" note="Waiting to be sent" loading={loading} />
+        <Stat
+          label="With the provider"
+          value={(counts.SUBMITTED || 0) + (counts.ACCEPTED || 0)}
+          tone="blue"
+          note="Accepted, not yet reported delivered"
+          loading={loading}
+        />
         <Stat
           label="Delivered"
           value={(counts.DELIVERED || 0) + (counts.READ || 0)}
@@ -112,6 +123,7 @@ export default function Communications({ session, notify, profile }) {
         onChange={setTab}
         tabs={[
           ["messages", "Messages"],
+          ["delivery", "Delivery"],
           ["templates", "Templates"],
           ["preferences", "Preferences"],
           ["inbound", "Inbound"],
@@ -121,6 +133,7 @@ export default function Communications({ session, notify, profile }) {
       {tab === "messages" && (
         <Messages key={refresh} session={session} notify={notify} profile={profile} onChange={changed} />
       )}
+      {tab === "delivery" && <Delivery key={refresh} session={session} />}
       {tab === "templates" && <Templates session={session} notify={notify} profile={profile} />}
       {tab === "preferences" && <Preferences session={session} notify={notify} profile={profile} onChange={changed} />}
       {tab === "inbound" && <Inbound session={session} notify={notify} profile={profile} />}
@@ -141,6 +154,15 @@ function Messages({ session, notify, profile, onChange }) {
   const action = useAction(notify);
   const confirm = useConfirm();
   const manage = can(profile, "MANAGE_COMMUNICATION");
+  const me = profile?.username;
+  // SH09B failed-message queue: one person takes a failed message to work it.
+  const own = async (m, release) => {
+    const r = await action.run(
+      () => request(session, `/communications/messages/${m.id}/owner`, { method: "POST", body: release ? { release: true } : {} }),
+      release ? m.ref + " is back in the queue" : "You are working " + m.ref,
+    );
+    if (r) messages.reload();
+  };
   const retry = async (m) => {
     const ok = await confirm({
       title: "Retry " + m.ref + "?",
@@ -230,7 +252,16 @@ function Messages({ session, notify, profile, onChange }) {
               render: (m) => (m.templateCode ? `${m.templateCode} v${m.templateVersion}` : "Manual"),
             },
             { key: "attempts", label: "Tries", align: "right" },
-            { key: "status", label: "Status", render: (m) => <Badge>{label(m.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (m) => (
+                <>
+                  <Badge>{label(m.status)}</Badge>
+                  {m.owner && <small className="com-sub">Worked by {m.owner}</small>}
+                </>
+              ),
+            },
             {
               key: "act",
               label: "",
@@ -238,6 +269,16 @@ function Messages({ session, notify, profile, onChange }) {
                 m.status === "FAILED" &&
                 manage && (
                   <div className="ws-row-actions" onClick={(e) => e.stopPropagation()}>
+                    {!m.owner && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(m, false)}>
+                        Take
+                      </Button>
+                    )}
+                    {m.owner === me && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(m, true)}>
+                        Give back
+                      </Button>
+                    )}
                     <Button variant="secondary" icon={RefreshCw} busy={action.busy} onClick={() => retry(m)}>
                       Retry
                     </Button>
@@ -259,6 +300,7 @@ function Messages({ session, notify, profile, onChange }) {
           onClose={() => setOpen(null)}
         >
           <MessagePreview message={open} />
+          <MessageTrail session={session} id={open.id} key={open.id + ":" + open.status} />
         </Drawer>
       )}
       {composing && (
@@ -299,7 +341,16 @@ function MessagePreview({ message: m }) {
           <small>Last update</small>
           <strong>{when(m.updatedAt)}</strong>
         </div>
+        <div>
+          <small>Purpose</small>
+          <strong>{m.purpose ? label(m.purpose) : "—"}</strong>
+        </div>
+        <div>
+          <small>Recipient</small>
+          <strong>{m.recipientRole ? label(m.recipientRole) : "Customer"}</strong>
+        </div>
       </div>
+      {m.recipientBasis && <p className="com-sub">Why this recipient: {m.recipientBasis}</p>}
       {m.lastError && (
         <p className={"com-reason " + (m.status === "SUPPRESSED" ? "is-info" : "is-error")}>
           {m.status === "SUPPRESSED" ? "Not sent: " : "Provider error: "}
@@ -319,13 +370,107 @@ function MessagePreview({ message: m }) {
   );
 }
 
+/** NS-SH09B-007: every state of the message, who or what moved it, and the provider's own report as evidence. */
+function MessageTrail({ session, id }) {
+  const trail = useResource(session, "/communications/messages/" + id, null);
+  const steps = trail.data?.trail || [];
+  return (
+    <div className="com-trail">
+      <strong>Trail</strong>
+      <ErrorNote error={trail.error} />
+      {trail.loading && !steps.length && <p className="com-sub">Loading…</p>}
+      <ol>
+        {steps.map((e, i) => (
+          <li key={i}>
+            <Badge>{label(e.status)}</Badge> <span className="com-sub-inline">{when(e.occurredAt)}</span>
+            <small className="com-sub">
+              {e.detail}
+              {" · "}
+              {e.source === "PROVIDER" ? "provider" : e.source === "STAFF" ? e.actor : "system"}
+            </small>
+            {e.rawPayload && (
+              <details>
+                <summary>Provider report</summary>
+                <code className="ws-mono">{e.rawPayload}</code>
+              </details>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** SH09B delivery dashboard: per channel and per day over a period, from the message log. */
+function Delivery({ session }) {
+  const [days, setDays] = useState("30");
+  const metrics = useResource(session, "/communications/metrics?days=" + days, null);
+  const d = metrics.data;
+  return (
+    <Panel
+      title="Delivery"
+      subtitle="Messages raised in the period, by channel and state. Delivered counts only what the provider reported delivered."
+      action={
+        <select className="input" value={days} onChange={(e) => setDays(e.target.value)} aria-label="Period">
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      }
+    >
+      <ErrorNote error={metrics.error} />
+      <DataTable
+        rows={d?.channels}
+        loading={metrics.loading}
+        rowKey={(c) => c.channel}
+        empty="No messages in the period"
+        columns={[
+          { key: "channel", label: "Channel", render: (c) => channelName(c.channel) },
+          { key: "total", label: "Raised", align: "right" },
+          { key: "queued", label: "Queued", align: "right" },
+          { key: "inFlight", label: "With provider", align: "right" },
+          { key: "delivered", label: "Delivered", align: "right" },
+          { key: "read", label: "Read", align: "right" },
+          { key: "failed", label: "Failed", align: "right" },
+          { key: "suppressed", label: "Suppressed", align: "right" },
+          {
+            key: "deliveryRate",
+            label: "Delivered of sent",
+            align: "right",
+            render: (c) => (c.deliveryRate == null ? "—" : c.deliveryRate + "%"),
+          },
+        ]}
+      />
+      {d && (
+        <p className="com-sub">
+          {d.failedUnowned} failed message(s) nobody has taken yet. From {d.from}.
+        </p>
+      )}
+      <DataTable
+        rows={(d?.byDay || []).filter((x) => x.raised > 0).reverse()}
+        loading={metrics.loading}
+        rowKey={(x) => x.day}
+        empty="Nothing raised on any day in the period"
+        columns={[
+          { key: "day", label: "Day" },
+          { key: "raised", label: "Raised", align: "right" },
+          { key: "delivered", label: "Delivered", align: "right" },
+          { key: "failed", label: "Failed", align: "right" },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 function ManualMessage({ session, notify, onClose, onSent }) {
-  const empty = { customerRef: "", channel: "EMAIL", subject: "", body: "" };
+  const empty = { customerRef: "", channel: "EMAIL", subject: "", body: "", caseRef: "" };
   const [form, setForm] = useState(empty);
   const action = useAction(notify);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const submit = async () => {
-    const r = await action.run(() => request(session, "/communications/messages", { method: "POST", body: form }));
+    const { caseRef, ...rest } = form;
+    const body = caseRef.trim() ? { ...rest, caseRef: caseRef.trim() } : rest;
+    const r = await action.run(() => request(session, "/communications/messages", { method: "POST", body }));
     if (r) {
       notify(
         r.data.status === "SUPPRESSED"
@@ -351,6 +496,9 @@ function ManualMessage({ session, notify, onClose, onSent }) {
             <option value="EMAIL">Email</option>
             <option value="WHATSAPP">WhatsApp</option>
           </select>
+        </Field>
+        <Field label="Service case (optional)" hint="Joins the case's conversation">
+          <input value={form.caseRef} onChange={set("caseRef")} placeholder="SR-000123" />
         </Field>
         {form.channel === "EMAIL" && (
           <Field label="Subject" full>
@@ -555,7 +703,8 @@ function Templates({ session, notify, profile }) {
               <Badge>{label(open.status)}</Badge>
             </p>
             <p className="com-sub">
-              Merge fields used: {open.placeholders.length ? open.placeholders.map((f) => `{{${f}}}`).join(", ") : "none"}
+              Purpose: {label(open.purpose)} (a service notice, never promotional) · Merge fields used:{" "}
+              {open.placeholders.length ? open.placeholders.map((f) => `{{${f}}}`).join(", ") : "none"}
               {open.status === "DRAFT" && open.createdBy === profile?.username &&
                 " · You drafted this, so another user approves it."}
             </p>
@@ -616,7 +765,34 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
   const [form, setForm] = useState(draft);
   const action = useAction(notify);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const fields = [...(EVENT_FIELDS[form.eventType] || []), ...COMMON_FIELDS];
+  // Template designer preview: rendered on the server with sample values, flagging fields the audience may not use.
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!form.body.trim()) {
+      setPreview(null);
+      return undefined;
+    }
+    let live = true;
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await request(session, "/communications/templates/preview", {
+          method: "POST",
+          body: { eventType: form.eventType, audience: form.audience, subject: form.subject, body: form.body },
+        });
+        if (live) setPreview(data);
+      } catch {
+        if (live) setPreview(null);
+      }
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [session, form.eventType, form.audience, form.subject, form.body]);
+  const fields =
+    preview?.knownFields ||
+    (form.audience === "INTERMEDIARY" ? ["policyRef", "product", "customerName", "intermediaryName", "portalLink"]
+      : [...(EVENT_FIELDS[form.eventType] || []), ...COMMON_FIELDS]);
   const submit = async () => {
     const { locked, ...body } = form;
     const r = await action.run(
@@ -666,6 +842,22 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
           <textarea rows={5} value={form.body} onChange={set("body")} maxLength={2000} required />
         </Field>
       </FormGrid>
+      {preview && (
+        <div className="com-preview">
+          <small className="com-sub">Preview with sample values · purpose {label(preview.purpose)}</small>
+          {preview.unknownFields.length > 0 && (
+            <p className="com-reason is-error">
+              {preview.unknownFields.map((f) => `{{${f}}}`).join(", ")}{" "}
+              {preview.unknownFields.length === 1 ? "is" : "are"} not available for this event and audience; approval will
+              be refused.
+            </p>
+          )}
+          <div className={"com-message " + (form.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
+            {preview.subject && <strong>{preview.subject}</strong>}
+            <p>{preview.body}</p>
+          </div>
+        </div>
+      )}
     </Drawer>
   );
 }
@@ -775,6 +967,7 @@ function Preferences({ session, notify, profile, onChange }) {
           </>
         )}
       </Panel>
+      {data && <Conversation session={session} customerRef={data.customerRef} key={data.customerRef + JSON.stringify(data.channels)} />}
       {data && can(profile, "MANAGE_COMMUNICATION") && (
         <Panel title="Change a channel" subtitle="Record the customer's own instruction. A new contact is unverified unless it matches their registered one.">
           <FormGrid submitLabel="Save preference" busy={save.busy} error={save.error} onSubmit={submit}>
@@ -805,6 +998,40 @@ function Preferences({ session, notify, profile, onChange }) {
         </Panel>
       )}
     </>
+  );
+}
+
+/** SH09B case conversation timeline: what we sent the customer and what they sent us, with the service case. */
+function Conversation({ session, customerRef }) {
+  const items = useResource(session, "/communications/conversations/" + encodeURIComponent(customerRef), []);
+  return (
+    <Panel title="Conversation" subtitle="Messages sent and replies received, oldest first, with the service case each belongs to.">
+      <ErrorNote error={items.error} />
+      <DataTable
+        rows={items.data}
+        loading={items.loading}
+        rowKey={(i) => i.direction + i.ref}
+        empty="No messages with this customer yet"
+        columns={[
+          { key: "at", label: "When", render: (i) => when(i.at) },
+          { key: "direction", label: "", render: (i) => (i.direction === "IN" ? "Received" : "Sent") },
+          { key: "channel", label: "Channel", render: (i) => channelName(i.channel) },
+          {
+            key: "body",
+            label: "Message",
+            render: (i) => (
+              <>
+                {i.subject && <strong>{i.subject} </strong>}
+                {i.body}
+              </>
+            ),
+          },
+          { key: "caseRef", label: "Case", render: (i) => i.caseRef || "—" },
+          { key: "status", label: "Status", render: (i) => <Badge>{label(i.status)}</Badge> },
+          { key: "by", label: "By" },
+        ]}
+      />
+    </Panel>
   );
 }
 
