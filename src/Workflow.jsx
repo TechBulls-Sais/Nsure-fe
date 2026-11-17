@@ -1055,6 +1055,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const [overrideReason, setOverrideReason] = useState("");
   const [fourEyesReason, setFourEyesReason] = useState("");
   const [evidenceReason, setEvidenceReason] = useState("");
+  const [closing, setClosing] = useState(null);
   const [approveError, setApproveError] = useState("");
   // Reserve history, benefit limits and decisions (GET .../financials), for the approval summary and the panel.
   const [financials, setFinancials] = useState(null);
@@ -1153,7 +1154,14 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         <Item label="Date of event" value={formatDate(c.eventDate)} />
         <Item label="Processing" value={c.processingType} />
         <Item label="Policy cover" value={money(c.amount)} />
-        <Item label="Payout" value={c.payoutAmount != null ? money(c.payoutAmount) : "Not decided"} />
+        <Item
+          label="Payout"
+          value={
+            c.payoutAmount != null
+              ? money(c.payoutAmount) + (Number(c.payoutAmount) < Number(c.amount) ? " · partially approved" : "")
+              : "Not decided"
+          }
+        />
         <Item label="Case reserve" value={money(c.reserve)} />
       </div>
       {c.description && (
@@ -1364,6 +1372,15 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           </p>
         </div>
       )}
+      {c.closedAt && (
+        <div className="notice">
+          <CircleCheck size={18} aria-hidden="true" />
+          <p>
+            Closed on {formatDate(c.closedAt)} by {c.closedBy}
+            {c.closeNote ? ": " + c.closeNote : ""}. The settlement and its financial tasks are complete.
+          </p>
+        </div>
+      )}
       {c.status === "Payout Sent" && (
         <div className="notice">
           <Clock3 size={18} aria-hidden="true" />
@@ -1551,9 +1568,53 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             }
           />
         )}
+        {can("close") && holds(profile, "SETTLE_CLAIM") && !closing && (
+          <Btn variant="secondary" icon={CircleCheck} disabled={busy} onClick={() => setClosing({ note: "", retain: false })}>
+            Close claim
+          </Btn>
+        )}
+        {closing && (
+          <div className="wf-reason">
+            <textarea
+              className="textarea"
+              rows={2}
+              maxLength={500}
+              placeholder="Note (needed when a reinsurance recovery stays open on its own)"
+              value={closing.note}
+              onChange={(e) => setClosing({ ...closing, note: e.target.value })}
+            />
+            <label className="wf-check-label">
+              <input
+                type="checkbox"
+                checked={closing.retain}
+                onChange={(e) => setClosing({ ...closing, retain: e.target.checked })}
+              />{" "}
+              Keep any expected reinsurance recovery open on its own
+            </label>
+            <div className="detail-actions">
+              <Btn variant="secondary" onClick={() => setClosing(null)}>
+                Back
+              </Btn>
+              <Btn
+                icon={CircleCheck}
+                disabled={busy || (closing.retain && !closing.note.trim())}
+                onClick={async () => {
+                  const ok = await call(
+                    "/close",
+                    { method: "POST", body: { note: closing.note.trim(), retainRecovery: closing.retain } },
+                    c.id + " is closed.",
+                  );
+                  if (ok) setClosing(null);
+                }}
+              >
+                Confirm close
+              </Btn>
+            </div>
+          </div>
+        )}
         {can("reopen") && holds(profile, "APPROVE_CLAIM") && (
           <ReasonAction
-            label="Reopen"
+            label={c.status === "Approved" ? "Reopen before payment" : "Reopen"}
             icon={RotateCcw}
             busy={busy}
             placeholder="Why the decision is being reviewed, e.g. the death certificate has now arrived"
