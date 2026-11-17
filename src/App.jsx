@@ -3980,9 +3980,17 @@ function Detail({
   onResume,
 }) {
   const [tab, setTab] = useState("Overview");
-  // Policies, claims and customer reviews have a real workflow log; the other records keep the sample timeline.
+  // Policies, claims, applications and customer reviews have a real workflow log; the rest show only their own dates.
   const historyType =
-    entity === "policy" ? "policy" : entity === "claim" ? "claim" : entity === "customer" ? ["kyc", "edd"] : null;
+    entity === "policy"
+      ? "policy"
+      : entity === "claim"
+        ? "claim"
+        : entity === "application"
+          ? "application"
+          : entity === "customer"
+            ? ["kyc", "edd"]
+            : null;
   const workflowRecord = entity === "policy" || entity === "claim";
   // Records belong to a customer by reference, never by name: two customers can share a name (AT-SH11-01).
   const linkedPolicies = entity === "customer" ? policies.filter((p) => p.customerRef && p.customerRef === r.id) : [];
