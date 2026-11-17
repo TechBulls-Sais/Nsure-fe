@@ -395,9 +395,31 @@ function SchemeDetail({ session, notify, profile, schemes }) {
       loans.reload();
     }
   };
-  const settle = async (loan) => {
-    const done = await settling.run(() => request(session, "/group-life/credit-loans/" + loan.id + "/settlement", { method: "POST", body: {} }), "Loan settled");
-    if (done) loans.reload();
+  const [settlement, setSettlement] = useState(null); // the early-settlement preview being confirmed
+  const previewSettlement = async (loan, date = today()) => {
+    const done = await settling.run(() => request(session, "/group-life/credit-loans/" + loan.id + "/settlement?settlementDate=" + date));
+    if (done) setSettlement({ ...done.data, settlementDate: date });
+  };
+  const settle = async () => {
+    const done = await settling.run(
+      () => request(session, "/group-life/credit-loans/" + settlement.id + "/settlement", { method: "POST", body: { settlementDate: settlement.settlementDate } }),
+      "Loan settled",
+    );
+    if (done) {
+      setSettlement(null);
+      loans.reload();
+    }
+  };
+  const pendingPlan = (benefits.data || []).filter((b) => b.approvalStatus === "PENDING");
+  const approvePlan = async () => {
+    const done = await action.run(
+      () => request(session, base + "/benefits/approval", { method: "POST", body: { note: form.note } }),
+      "Plan approved",
+    );
+    if (done) {
+      setForm(null);
+      benefits.reload();
+    }
   };
   if (!schemes.length) {
     return <Panel title="No schemes yet" subtitle="Activate a quotation to create the first scheme." />;
@@ -417,6 +439,11 @@ function SchemeDetail({ session, notify, profile, schemes }) {
                 </option>
               ))}
             </select>
+            {pendingPlan.length > 0 && can(profile, "UNDERWRITE_MEMBER") && !pendingPlan.some((b) => b.updatedBy === session?.username) && (
+              <Button variant="secondary" onClick={() => { action.setError(""); setForm({ kind: "approval", note: "" }); }}>
+                Approve plan changes
+              </Button>
+            )}
             {manage && (
               <Button icon={Plus} onClick={() => { action.setError(""); setForm({ kind: "benefit", benefitType: "GLA", basis: "SALARY_MULTIPLE", multiple: "", fixedAmount: "", waitingMonths: "", terms: "" }); }}>
                 Add or change a benefit
@@ -443,8 +470,24 @@ function SchemeDetail({ session, notify, profile, schemes }) {
             },
             { key: "productMaximum", label: "Product maximum", render: (r) => (r.productMaximum ? pula(r.productMaximum) : "—") },
             { key: "terms", label: "Terms" },
+            {
+              key: "approvalStatus",
+              label: "Approval",
+              render: (r) =>
+                r.approvalStatus === "PENDING" ? (
+                  <Badge tone="amber">Awaiting approval</Badge>
+                ) : (
+                  <span className="ws-hint">Approved{r.approvedBy ? " by " + r.approvedBy : ""}</span>
+                ),
+            },
           ]}
         />
+        {pendingPlan.length > 0 && (
+          <p className="ws-hint">
+            {pendingPlan.length} benefit change(s) wait for a second person to approve the plan
+            {pendingPlan.some((b) => b.updatedBy === session?.username) ? "; you made them, so someone else approves." : "."}
+          </p>
+        )}
       </Panel>
       <Panel title="Member certificates" subtitle="Only accepted cover is certified. Cover awaiting underwriting is shown as pending and is not yet in force.">
         <DataTable
@@ -477,7 +520,7 @@ function SchemeDetail({ session, notify, profile, schemes }) {
         }
       >
         {!hasCredit && <p className="ws-hint">This scheme has no Group credit benefit.</p>}
-        <ErrorNote error={loans.error || settling.error} />
+        <ErrorNote error={loans.error || (!settlement ? settling.error : "")} />
         {result && (
           <p className="ws-hint">
             {result.batchReference}: {result.accepted} accepted · {result.referred} referred · {result.duplicates} already on the scheme · {result.rejected} rejected
@@ -508,7 +551,7 @@ function SchemeDetail({ session, notify, profile, schemes }) {
               render: (r) =>
                 r.status === "ACTIVE" &&
                 can(profile, "BILL_SCHEME") && (
-                  <Button variant="secondary" busy={settling.busy} onClick={() => settle(r)}>
+                  <Button variant="secondary" busy={settling.busy} onClick={() => previewSettlement(r)}>
                     Settle early
                   </Button>
                 ),
@@ -553,7 +596,42 @@ function SchemeDetail({ session, notify, profile, schemes }) {
           </div>
         </Drawer>
       )}
-      {form && (
+      {settlement && (
+        <Drawer title={"Settle " + settlement.certificateNo + " early"} description={settlement.borrowerName + " · loan " + pula(settlement.loanAmount)} onClose={() => setSettlement(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Single premium</small>
+              <strong>{pula(settlement.premium)}</strong>
+            </div>
+            <div>
+              <small>Months used / unearned</small>
+              <strong>
+                {settlement.monthsUsed} / {settlement.monthsUnearned} of {settlement.termMonths}
+              </strong>
+            </div>
+            <div>
+              <small>Refund of unearned premium</small>
+              <strong>{pula(settlement.refundPreview)}</strong>
+            </div>
+          </div>
+          <p className="ws-hint">Unearned months pro rata, less 10%. Cover on this certificate ends on the settlement date.</p>
+          <FormGrid submitLabel={"Settle and refund " + pula(settlement.refundPreview)} busy={settling.busy} error={settling.error} onSubmit={settle}>
+            <Field label="Settlement date" full>
+              <input type="date" value={settlement.settlementDate} onChange={(e) => previewSettlement(settlement, e.target.value)} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {form?.kind === "approval" && (
+        <Drawer title="Approve plan changes" description={pendingPlan.map((b) => BENEFIT[b.benefitType] || b.benefitType).join(", ")} onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Approve the plan" busy={action.busy} error={action.error} onSubmit={approvePlan}>
+            <Field label="Approval note" full>
+              <textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={3} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {form && form.kind !== "approval" && (
         <Drawer
           title={form.kind === "benefit" ? "Scheme benefit" : "Loan bordereau"}
           description={form.kind === "bordereau" ? "One loan per line: lender's loan id, borrower, loan amount, term in months." : undefined}
