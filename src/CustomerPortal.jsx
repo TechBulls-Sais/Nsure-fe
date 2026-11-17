@@ -15,7 +15,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { request } from "./api";
+import { request, uploadFile } from "./api";
 import { money } from "./data";
 import "./customer-policies.css";
 import CoveredLives, { LifeCoverList, completeLives, livesBody, useLifeQuote } from "./CoveredLives";
@@ -37,6 +37,103 @@ import { ThemeSwitch } from "./ui/workspace";
 
 // Beneficiaries can be changed while the purchase is pending and while the policy is in force (with or without cover).
 const BENEFICIARY_STATES = ["Pending Payment", ...IN_FORCE_STATES];
+
+const IDENTITY_TYPES = ["Omang", "Passport", "Proof of address"];
+
+/**
+ * KYC self-service (A-27, NS-SH01-004): while their identity is not verified, the customer sends a copy of their
+ * Omang or passport (and proof of address). Our team reviews it; sending it does not verify anyone by itself.
+ */
+function IdentityEvidence({ session, customer, notify, onChanged }) {
+  const [documents, setDocuments] = useState([]);
+  const [type, setType] = useState(customer?.poiType === "Passport" ? "Passport" : "Omang");
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [inputKey, setInputKey] = useState(0);
+  useEffect(() => {
+    let live = true;
+    request(session, "/portfolio/shop/identity-documents")
+      .then((r) => live && setDocuments(r.data || []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [session]);
+  const send = async (e) => {
+    e.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await uploadFile(session, "/portfolio/shop/identity-documents", file, { type });
+      setDocuments(result.data || []);
+      setFile(null);
+      setInputKey((k) => k + 1);
+      notify?.(type + " sent. Our team will review it.");
+      onChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="customer-requests" id="your-identity" aria-labelledby="customer-identity-heading">
+      <div className="customer-requests-head">
+        <h2 id="customer-identity-heading">
+          Verify your identity <span>{documents.length}</span>
+        </h2>
+        <p>
+          Send a clear copy of your {customer?.poiType || "Omang or passport"} (PDF, JPG or PNG, up to 10 MB). Our team
+          checks it against your details; you can buy cover once your identity is verified.
+        </p>
+      </div>
+      <form className="customer-identity-form" onSubmit={send}>
+        <label className="form-label">
+          <span>Document</span>
+          <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+            {IDENTITY_TYPES.map((t) => (
+              <option key={t}>{t}</option>
+            ))}
+          </select>
+        </label>
+        <label className="form-label">
+          <span>File</span>
+          <input
+            key={inputKey}
+            className="input"
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+          />
+        </label>
+        <button className="btn primary" type="submit" disabled={busy || !file}>
+          {busy ? "Sending…" : "Send document"}
+        </button>
+      </form>
+      {error && <p className="form-error">{error}</p>}
+      {documents.length > 0 && (
+        <ul>
+          {documents.map((d) => (
+            <li key={d.id} className="is-pending">
+              <span className="customer-request-icon" aria-hidden="true">
+                <Clock3 size={15} />
+              </span>
+              <div>
+                <strong>{d.documentType}</strong>
+                <small>
+                  {d.fileName} · sent {formatDate(d.uploadedAt)}
+                </small>
+              </div>
+              <span className="customer-request-status">Received</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 /** The status chip's look: in force, paused (no cover, still payable), or closed. */
 function statusClass(status) {
@@ -91,6 +188,9 @@ export default function CustomerPortal({
   const [message, setMessage] = useState("");
   const customer = shop?.customer;
   const verified = customer?.kycStatus === "VERIFIED";
+  // NS-UX-001: when a policy, request or claim last changed, from its own record.
+  const updatedOn = (ref) =>
+    shop?.lastUpdated?.[ref] ? " · updated " + formatDate(shop.lastUpdated[ref]) : "";
   const products = shop?.products || [];
   const policies = shop?.policies || [];
   const requests = shop?.requests || [];
@@ -420,6 +520,19 @@ export default function CustomerPortal({
           </div>
         </section>
 
+        {!verified && (
+          <IdentityEvidence
+            session={session}
+            customer={customer}
+            notify={notify}
+            onChanged={() =>
+              request(session, "/portfolio/shop")
+                .then((r) => onShop?.(r.data))
+                .catch(() => {})
+            }
+          />
+        )}
+
         {message && (
           <div className="customer-flash" role="status">
             {message}
@@ -539,7 +652,10 @@ export default function CustomerPortal({
                               {policy.product}
                               {policy.tier ? " · " + policy.tier : ""}
                             </h3>
-                            <p className="customer-policy-reference">{policy.id}</p>
+                            <p className="customer-policy-reference">
+                              {policy.id}
+                              {updatedOn(policy.id)}
+                            </p>
                           </div>
                           <span className={"customer-policy-status" + chip}>
                             {(isActive || noCover) && <span aria-hidden="true" />}
@@ -682,6 +798,7 @@ export default function CustomerPortal({
                       </strong>
                       <small>
                         {item.id} · chosen {item.date} · {money(item.premium)} / month
+                        {updatedOn(item.id)}
                       </small>
                       {pending && (
                         <p>
@@ -762,6 +879,7 @@ export default function CustomerPortal({
                     <small>
                       Policy {item.policy} · {item.claimant}
                       {item.eventDate ? " · event " + formatDate(item.eventDate) : ""}
+                      {updatedOn(item.id)}
                     </small>
                     {item.status === "Rejected" && <p>Not approved: {item.rejectionReason}</p>}
                     {item.status === "Approved" && (

@@ -25,10 +25,10 @@ npm run preview
 3. Applications → New application. Choose the customer and product, review, then submit (or save a draft).
 4. Open the application → Simulate underwriting acceptance → Simulate policy issue. See the new record in Policies.
 5. Claims → Register claim. Open Documents and simulate evidence received; return to Overview to simulate approval and settlement.
-6. Group schemes → Explore scheme or Demo census import. Load four sample rows and download validation results.
+6. Group schemes → with the scheme permission, the group administration (members, census imports, billing); without it, an overview of the scheme records and their totals.
 7. Products → select a product arrow to begin its application journey.
 8. Collections → open an unpaid invoice and record a demo receipt.
-9. Settings → change table density, notification indicator, or reset sample data.
+9. Settings → change table density or the notification indicator, or reload the records from the server.
 
 Tables support search/status filters and CSV export where shown. Details include overview, sample documents, and an illustrative activity timeline. The navigation is responsive and supports browser history via hash routes.
 

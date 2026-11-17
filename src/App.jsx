@@ -128,7 +128,7 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { closeSession, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
+import { closeSession, fetchFile, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
 import AccessAdmin from "./AccessAdmin";
 import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
@@ -567,7 +567,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                 required
                 value={email}
                 readOnly={Boolean(pending)}
-                placeholder={customerLogin ? "customer" : "admin"}
+                placeholder="Your username"
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
               />
@@ -933,6 +933,8 @@ export default function App() {
       const updated = await request(session, "/portfolio/customers/" + customer.id + "/" + review, {
         method: "POST",
         body: { decision, reason },
+        // The record as this screen showed it: a decision on a customer changed meanwhile is refused (NS-TXN-001).
+        version: customer.version,
       });
       setCustomers((rows) => rows.map((row) => (row.id === customer.id ? updated.data : row)));
       notify(
@@ -960,6 +962,27 @@ export default function App() {
       }
     }
   };
+  // An application changed on its checklist (evidence, submission): keep it an application, and read it again so its
+  // status, premium and row version (If-Match on issue) are the server's.
+  const applicationUpdated = (record) => {
+    setApplications((rows) => rows.map((row) => (row.id === record.id ? { ...row, ...record } : row)));
+    setModal((current) =>
+      current?.type === "detail" && current.record?.id === record.id
+        ? { ...current, entity: "application", record: { ...current.record, ...record } }
+        : current,
+    );
+    request(session, "/portfolio/applications")
+      .then((r) => {
+        setApplications(r.data);
+        const fresh = r.data.find((row) => row.id === record.id);
+        if (fresh) {
+          setModal((current) =>
+            current?.type === "detail" && current.record?.id === record.id ? { ...current, record: fresh } : current,
+          );
+        }
+      })
+      .catch(() => {});
+  };
   const claimUpdated = (record) => {
     setClaims((rows) => rows.map((row) => (row.id === record.id ? record : row)));
     setModal({ type: "detail", entity: "claim", record });
@@ -974,6 +997,7 @@ export default function App() {
       created = await request(session, "/portfolio/policies", {
         method: "POST",
         idempotencyKey: "issue-" + record.id,
+        version: record.version,
         body: {
           applicationRef: record.id,
           product: record.product,
@@ -1426,7 +1450,7 @@ export default function App() {
         canReviewEdd={can(profile, "EDD_CUSTOMER")}
         onEdd={reviewEdd}
         onAddCustomer={canDo(profile, "newCustomer") ? () => setModal({ type: "customer" }) : null}
-        onAddPolicy={canDo(profile, "newPolicy") ? (c) => setModal({ type: "policy", customer: c.name }) : null}
+        onAddPolicy={canDo(profile, "newPolicy") ? (c) => setModal({ type: "policy", customer: c.id }) : null}
         onView={(c) => detail("customer", c)}
         onKyc={reviewKyc}
         onExport={(rows) => {
@@ -1672,36 +1696,31 @@ export default function App() {
     );
   }
   function Schemes() {
+    // Figures are the scheme records' own (D-29): active by status, members and premium summed over active schemes.
+    const active = schemes.filter((s) => /^active$/i.test(s.status || "ACTIVE"));
     return (
       <>
         <Heading
           title="Stronger, together."
           subtitle="One connected home for employers, schemes, and their people."
-        >
-          <Button icon="Upload" onClick={() => setModal({ type: "census" })}>
-            Census import
-          </Button>
-        </Heading>
+        />
         <div className="stat-grid three">
           <Stat
             label="Active schemes"
-            value="3"
-            change="Growing"
-            note="together"
+            value={active.length}
+            change={schemes.length !== active.length ? schemes.length + " in total" : undefined}
+            note=""
             icon="Building2"
           />
           <Stat
             label="Covered members"
-            value="758"
-            change="12 new"
-            note="this week"
+            value={active.reduce((sum, s) => sum + Number(s.members || 0), 0).toLocaleString("en-GB")}
             icon="Users"
             color="purple"
           />
           <Stat
             label="Monthly scheme premium"
-            value="BWP 263,400"
-            change="6.8%"
+            value={money(active.reduce((sum, s) => sum + Number(s.premium || 0), 0))}
             icon="Wallet"
             color="blue"
           />
@@ -1711,7 +1730,7 @@ export default function App() {
             <article className="scheme-card panel" key={s.id}>
               <div className="scheme-card-top">
                 <span className={"avatar " + s.color}>{s.initials}</span>
-                <Badge>Active</Badge>
+                <Badge>{schemeStatus(s)}</Badge>
               </div>
               <h2>{s.name}</h2>
               <p className="subtitle">{s.sector}</p>
@@ -1739,11 +1758,10 @@ export default function App() {
           ))}
         </div>
         <div className="notice">
-          <Icon name="Lightbulb" />
+          <Icon name="Info" />
           <p>
-            <strong>A quick walkthrough:</strong> open a scheme to view its
-            members, then use the census import to explore row
-            validation.
+            Members, census imports and billing are managed in group scheme administration, which needs the
+            scheme permission (READ_SCHEME). This overview shows each scheme's record only.
           </p>
         </div>
       </>
@@ -1809,15 +1827,15 @@ export default function App() {
             </div>
           </Panel>
           <Panel
-            title="Start fresh"
-            subtitle="Reloading restores the original records."
+            title="Refresh"
+            subtitle="Records are kept on the server; reloading shows the latest of them."
           >
             <Button
               variant="secondary"
               icon="RotateCcw"
               onClick={() => setModal({ type: "reset" })}
             >
-              Reset data
+              Reload data
             </Button>
           </Panel>
         </div>
@@ -2037,7 +2055,7 @@ export default function App() {
             <Icon name="Menu" />
           </button>
           <div className="breadcrumb">
-            Workspace <Icon name="ChevronRight" small />
+            <span>Workspace</span> <Icon name="ChevronRight" small />
             <strong>{activeName}</strong>
           </div>
           <div className="topbar-actions">
@@ -2226,7 +2244,9 @@ export default function App() {
         <Modal
           title={
             modal.type === "application"
-              ? "Start a new application"
+              ? modal.draft
+                ? "Continue application " + modal.draft.id
+                : "Start a new application"
               : modal.type === "policy"
                 ? "Add a policy"
               : modal.type === "customer"
@@ -2235,16 +2255,13 @@ export default function App() {
                   ? "Register a claim"
                   : modal.type === "detail"
                     ? modal.record.name
-                    : modal.type === "census"
-                      ? "Explore a census import"
-                      : modal.type === "reset"
-                          ? "Reset this workspace?"
+                    : modal.type === "reset"
+                          ? "Reload the workspace?"
                           : modal.type === "command"
                             ? "Your workspace, one shortcut away."
                             : "Nsure"
           }
           onClose={close}
-          wide={modal.type === "census"}
         >
           {modal.type === "command" && (
             <ActionSearch
@@ -2284,7 +2301,45 @@ export default function App() {
               }
             />
           )}
-          {modal.type === "application" && (
+          {modal.type === "application" && modal.draft && (
+            <ApplicationForm
+              session={session}
+              customers={customers}
+              products={products}
+              draft={modal.draft}
+              onCancel={close}
+              onSave={async ({ status, ...body }) => {
+                // A resumed draft (NS-UX-001): save what was completed, then submit it when asked to.
+                const ref = modal.draft.id;
+                try {
+                  const saved = (
+                    await request(session, "/portfolio/applications/" + ref + "/details", {
+                      method: "PUT",
+                      body,
+                      version: modal.draft.version,
+                    })
+                  ).data;
+                  let checklist = null;
+                  if (status !== "Draft") {
+                    checklist = (
+                      await request(session, "/portfolio/applications/" + ref + "/submit", {
+                        method: "POST",
+                        version: saved.version,
+                      })
+                    ).data;
+                  }
+                  const fresh = await request(session, "/portfolio/applications").catch(() => null);
+                  if (fresh) setApplications(fresh.data);
+                  close();
+                  go("applications");
+                  notify(checklist ? ref + " submitted: " + checklist.status + "." : ref + " saved as a draft.");
+                } catch (error) {
+                  notify(error.message, "error");
+                }
+              }}
+            />
+          )}
+          {modal.type === "application" && !modal.draft && (
             <ApplicationForm
               session={session}
               defaultProduct={modal.product}
@@ -2346,11 +2401,14 @@ export default function App() {
                   close();
                   go("customers");
                   notify(
-                    "Customer saved. Sign in as " +
+                    (created.data.duplicateReview ? "Customer saved and referred for duplicate review. " : "Customer saved. ") +
+                      "Sign in as " +
                       created.data.loginUsername +
                       " after KYC is successful.",
                   );
                 } catch (error) {
+                  // A possible duplicate (409) is answered on the form itself.
+                  if (error.status === 409) throw error;
                   notify(error.message, "error");
                 }
               }}
@@ -2380,28 +2438,18 @@ export default function App() {
               }}
             />
           )}
-          {modal.type === "census" && (
-            <Census
-              onDone={() => {
-                close();
-                notify(
-                  "Preview completed: 3 accepted rows, 1 rejected. Live membership is unchanged.",
-                );
-              }}
-            />
-          )}
           {modal.type === "reset" && (
             <>
               <p>
-                This restores the original records and clears your
-                session changes. You stay signed in.
+                This reloads every record from the server. Saved changes stay as they are; nothing is reset or
+                deleted. Anything typed into a form and not yet saved is lost. You stay signed in.
               </p>
               <div className="modal-footer">
                 <Button variant="secondary" onClick={close}>
-                  Keep exploring
+                  Cancel
                 </Button>
                 <Button icon="RotateCcw" onClick={() => location.reload()}>
-                  Reset
+                  Reload
                 </Button>
               </div>
             </>
@@ -2418,6 +2466,7 @@ export default function App() {
               session={session}
               profile={profile}
               onPolicyUpdated={policyUpdated}
+              onApplicationUpdated={applicationUpdated}
               onClaimUpdated={claimUpdated}
               canReviewKyc={can(profile, "KYC_CUSTOMER")}
               canReviewEdd={can(profile, "EDD_CUSTOMER")}
@@ -2437,7 +2486,12 @@ export default function App() {
                 return Boolean(updated);
               }}
               onAddPolicy={
-                canDo(profile, "newPolicy") ? (record) => setModal({ type: "policy", customer: record.name }) : null
+                canDo(profile, "newPolicy") ? (record) => setModal({ type: "policy", customer: record.id }) : null
+              }
+              onResume={
+                can(profile, "UPDATE_APPLICATION")
+                  ? (record) => setModal({ type: "application", draft: record })
+                  : null
               }
               notify={notify}
             />
@@ -2448,9 +2502,21 @@ export default function App() {
   );
 }
 
-function ApplicationForm({ session, defaultProduct, customers, products = [], onSave, onCancel }) {
-  const [step, setStep] = useState(0);
+// draft: a saved draft application to resume (NS-UX-001). Its customer and priced cover are fixed by its quote; the
+// form reopens on the details step so the payer, disclosures and declaration can be completed and submitted.
+function ApplicationForm({ session, defaultProduct, customers, products = [], draft = null, onSave, onCancel }) {
+  const [step, setStep] = useState(draft ? 2 : 0);
   const [data, setData] = useState(() => {
+    if (draft) {
+      return {
+        customerRef: draft.customerRef || "",
+        name: draft.name,
+        product: draft.product,
+        tier: draft.tier || "",
+        amount: draft.amount,
+        premium: draft.premium,
+      };
+    }
     const p = products.find((item) => item.name === defaultProduct) ||
       popularProduct(products) || { name: "", cover: "0", premium: "0" };
     const tier = defaultTier(p);
@@ -2482,6 +2548,35 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
     disclosures: {},
   });
   const [questions, setQuestions] = useState([]);
+  // Resuming: what the draft already captured, read back from its checklist.
+  const [resumed, setResumed] = useState(draft ? null : {});
+  const [resumeError, setResumeError] = useState("");
+  useEffect(() => {
+    if (!draft) return undefined;
+    let live = true;
+    request(session, "/portfolio/applications/" + draft.id + "/checklist")
+      .then(({ data: c }) => {
+        if (!live) return;
+        setDetails({
+          payerName: c.payerName || "",
+          payerRelationship: c.payerRelationship || "",
+          mandateMethod: c.mandateMethod || "",
+          mandateInstitution: c.mandateInstitution || "",
+          // The account comes back masked; left blank, the one on record is kept.
+          mandateAccount: "",
+          mandateDebitDay: c.mandateDebitDay || "",
+          channel: c.channel || "DIRECT",
+          intermediaryCode: c.intermediaryCode || "",
+          disclosures: Object.fromEntries((c.disclosures || []).filter((d) => d.answer).map((d) => [d.code, d.answer])),
+        });
+        setConsent(Boolean(c.declaredAt));
+        setResumed(c);
+      })
+      .catch((error) => live && setResumeError(error.message));
+    return () => {
+      live = false;
+    };
+  }, [session, draft]);
   useEffect(() => {
     let live = true;
     if (!data.product) return undefined;
@@ -2496,10 +2591,22 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
     session,
     "/portfolio/quote",
     { customerRef: data.customerRef, product: data.product, tier: data.tier, lives: livesBody(completeLives(lives)) },
-    Boolean(ratedTier && data.customerRef),
+    Boolean(ratedTier && data.customerRef && !draft),
   );
   const save = (status) =>
-    onSave({
+    draft
+      ? onSave({
+          status,
+          ...details,
+          // Bank details left blank on a debit order keep the ones on record.
+          ...(details.mandateMethod === "DEBIT_ORDER" && !details.mandateAccount.trim() ? { mandateAccount: undefined } : {}),
+          ...(details.mandateMethod === "DEBIT_ORDER" && !details.mandateInstitution.trim()
+            ? { mandateInstitution: undefined }
+            : {}),
+          mandateDebitDay: details.mandateDebitDay || undefined,
+          declarationAccepted: consent,
+        })
+      : onSave({
       ...data,
       status,
       ...details,
@@ -2529,7 +2636,47 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
           else save("Under review");
         }}
       >
-        {step === 0 ? (
+        {draft && (
+          <div className="notice">
+            <Icon name="Info" />
+            <p>
+              <strong>Continuing draft {draft.id}.</strong> The customer and cover were priced on quote{" "}
+              {draft.quoteRef || "for this application"} and stay as saved. Complete the details and the declaration,
+              then submit.
+              {resumeError && " The saved details could not be loaded: " + resumeError}
+            </p>
+          </div>
+        )}
+        {step === 0 && draft ? (
+          <div className="detail-grid">
+            {[
+              ["Customer", data.name],
+              ["Customer reference", data.customerRef || "Not linked"],
+            ].map(([k, v]) => (
+              <div className="detail-item" key={k}>
+                <small>{k}</small>
+                <strong>{v}</strong>
+              </div>
+            ))}
+          </div>
+        ) : step === 1 && draft ? (
+          <>
+            <div className="detail-grid">
+              {[
+                ["Product", data.product],
+                ...(data.tier ? [["Tier", data.tier]] : []),
+                ["Cover", money(data.amount)],
+                ["Monthly premium", money(data.premium)],
+              ].map(([k, v]) => (
+                <div className="detail-item" key={k}>
+                  <small>{k}</small>
+                  <strong>{v}</strong>
+                </div>
+              ))}
+            </div>
+            {draft.lives?.length > 0 && <LifeCoverList lives={draft.lives} />}
+          </>
+        ) : step === 0 ? (
           <>
             <h3>Who are we looking after?</h3>
             <p className="subtitle">
@@ -2703,6 +2850,9 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
                     <span>Account number</span>
                     <input
                       className="input"
+                      placeholder={
+                        draft && resumed?.mandateAccount ? "On record " + resumed.mandateAccount + ": blank keeps it" : undefined
+                      }
                       value={details.mandateAccount}
                       onChange={(e) => setDetails({ ...details, mandateAccount: e.target.value })}
                     />
@@ -2790,7 +2940,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
                 ["Cover", money(data.amount)],
                 [
                   "Monthly premium",
-                  ratedTier
+                  ratedTier && !draft
                     ? priced.quote
                       ? money(priced.quote.premium)
                       : "Set when you submit"
@@ -2803,12 +2953,12 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
                 </div>
               ))}
             </div>
-            {ratedTier && priced.error && (
+            {ratedTier && !draft && priced.error && (
               <p className="covered-lives-error" role="alert">
                 {priced.error}
               </p>
             )}
-            {ratedTier && <LifeCoverList lives={priced.quote?.lives} />}
+            {ratedTier && <LifeCoverList lives={draft ? draft.lives : priced.quote?.lives} />}
             <label className="checkbox-label">
               <input
                 type="checkbox"
@@ -2833,12 +2983,14 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], on
             <Button
               type="button"
               variant="secondary"
+              disabled={Boolean(draft) && !resumed}
               onClick={() => save("Draft")}
             >
               Save draft
             </Button>
           )}
-          <Button type="submit" icon={step === 3 ? "Check" : "ArrowRight"}>
+          {/* A resumed draft waits for its saved details, so nothing on record is overwritten with blanks. */}
+          <Button type="submit" icon={step === 3 ? "Check" : "ArrowRight"} disabled={Boolean(draft) && !resumed}>
             {step === 3 ? "Submit application" : "Continue"}
           </Button>
         </div>
@@ -2932,6 +3084,11 @@ function todayLabel(timeZone) {
     // An unknown timezone name: fall back to the browser's own.
     return new Date().toLocaleDateString("en-GB", options);
   }
+}
+// A scheme's status as a label: its record's own, e.g. ACTIVE → Active.
+function schemeStatus(s) {
+  const status = s.status || "ACTIVE";
+  return status.charAt(0) + status.slice(1).toLowerCase();
 }
 function kycLabel(c) {
   if (c.kycStatus === "VERIFIED") return "Verified";
@@ -3296,8 +3453,22 @@ function BotswanaPhoneInput({ defaultValue = "", autoComplete }) {
   );
 }
 
+// Identity number formats by document type (NS-SH01-001). The server checks the same rule (spaces are ignored); an
+// Omang is taken as 9 digits until the insurer confirms its rule.
+const POI_FORMATS = {
+  Omang: { pattern: "\\s*(\\d\\s*){9}", title: "An Omang number is 9 digits", placeholder: "9 digits", inputMode: "numeric" },
+  Passport: {
+    pattern: "\\s*([A-Za-z0-9]\\s*){6,20}",
+    title: "A passport number is 6 to 20 letters and digits",
+    placeholder: "e.g. BW0123456",
+    inputMode: "text",
+  },
+};
+
 /** The customer details staff enter on Add customer; customer self sign-up asks for exactly the same. */
 function CustomerFields({ values = {}, self = false }) {
+  const [poiType, setPoiType] = useState(values.poiType || "Omang");
+  const poiFormat = POI_FORMATS[poiType] || POI_FORMATS.Omang;
   return (
     <div className="field-grid">
       <Field label="Full name" full>
@@ -3326,7 +3497,13 @@ function CustomerFields({ values = {}, self = false }) {
         <BotswanaPhoneInput defaultValue={values.phone} autoComplete={self ? "tel-national" : "off"} />
       </Field>
       <Field label="Proof of identity type">
-        <select name="poiType" className="input" defaultValue={values.poiType || "Omang"} required>
+        <select
+          name="poiType"
+          className="input"
+          value={poiType}
+          onChange={(e) => setPoiType(e.target.value)}
+          required
+        >
           <option value="Omang">Omang</option>
           <option value="Passport">Passport</option>
         </select>
@@ -3335,9 +3512,11 @@ function CustomerFields({ values = {}, self = false }) {
         <input
           name="poiNumber"
           className="input"
-          placeholder="e.g. 880618404"
+          placeholder={poiFormat.placeholder}
           required
-          minLength={5}
+          pattern={poiFormat.pattern}
+          title={poiFormat.title}
+          inputMode={poiFormat.inputMode}
           maxLength={40}
           defaultValue={values.poiNumber}
         />
@@ -3554,30 +3733,85 @@ function CustomerSignup({ onLogin }) {
 }
 
 function CustomerForm({ onSave, onCancel }) {
+  // A 409 means another customer already holds this identity number (NS-SH01-002). Staff either open that record
+  // or say why this is a different person; the new record is then created referred for duplicate review.
+  const [duplicate, setDuplicate] = useState(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (data) => {
+    setBusy(true);
+    try {
+      await onSave(data);
+    } catch (error) {
+      if (error.status === 409) {
+        setDuplicate({ data, message: error.message });
+        setReason("");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
+        if (duplicate) {
+          save({ ...duplicate.data, duplicateReason: reason.trim() });
+          return;
+        }
         const f = Object.fromEntries(new FormData(e.currentTarget));
-        onSave({ ...f, pep: f.pep === "on" });
+        save({ ...f, pep: f.pep === "on" });
       }}
     >
       <p className="subtitle">
         The username and password are what this customer uses on the Customer sign-in.
       </p>
-      <CustomerFields />
-      <div className="notice">
-        <Icon name="Info" />
-        <p>
-          New profiles start with pending verification.
-        </p>
+      <div hidden={Boolean(duplicate)}>
+        <CustomerFields />
       </div>
+      {duplicate ? (
+        <>
+          <div className="notice" role="alert">
+            <Icon name="ShieldAlert" />
+            <p>
+              <strong>Possible duplicate.</strong> {duplicate.message}
+            </p>
+          </div>
+          <Field label="Why is this a different person?" full>
+            <textarea
+              className="input"
+              required
+              minLength={10}
+              maxLength={400}
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Omang card checked at the branch: the other record has a mistyped number"
+            />
+          </Field>
+          <p className="muted small">
+            The new record is created referred for duplicate review. A data steward reviews it in Data &amp;
+            assistants → Duplicate parties, and merges the two records if they are the same person.
+          </p>
+        </>
+      ) : (
+        <div className="notice">
+          <Icon name="Info" />
+          <p>
+            New profiles start with pending verification.
+          </p>
+        </div>
+      )}
       <div className="modal-footer">
-        <Button type="button" variant="secondary" onClick={onCancel}>
-          Cancel
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => (duplicate ? setDuplicate(null) : onCancel())}
+        >
+          {duplicate ? "Back to the details" : "Cancel"}
         </Button>
-        <Button type="submit" icon="UserPlus">
-          Add customer
+        <Button type="submit" icon="UserPlus" disabled={busy}>
+          {duplicate ? "Create and refer for review" : "Add customer"}
         </Button>
       </div>
     </form>
@@ -3585,7 +3819,8 @@ function CustomerForm({ onSave, onCancel }) {
 }
 function PolicyForm({ session, customers, products = [], defaultCustomer, onSave, onCancel }) {
   const ready = customers.filter((customer) => customer.kycStatus === "VERIFIED");
-  const first = ready.find((customer) => customer.name === defaultCustomer || customer.id === defaultCustomer) || ready[0];
+  // The customer to start with is given by reference, never by name.
+  const first = ready.find((customer) => customer.id === defaultCustomer) || ready[0];
   const initialProduct = products[0] || { name: "", cover: "0", premium: "0" };
   // The customer is chosen by reference: two customers can share a name (NS-SH01-001).
   const [customerRef, setCustomerRef] = useState(first?.id || "");
@@ -3735,21 +3970,48 @@ function Detail({
   session,
   profile,
   onPolicyUpdated,
+  onApplicationUpdated,
   onClaimUpdated,
   canReviewKyc,
   onKyc,
   onAddPolicy,
   canReviewEdd,
   onEdd,
+  onResume,
 }) {
   const [tab, setTab] = useState("Overview");
-  const [evidence, setEvidence] = useState(false);
-  // Policies, claims and customer reviews have a real workflow log; the other records keep the sample timeline.
+  // Policies, claims, applications and customer reviews have a real workflow log; the rest show only their own dates.
   const historyType =
-    entity === "policy" ? "policy" : entity === "claim" ? "claim" : entity === "customer" ? ["kyc", "edd"] : null;
+    entity === "policy"
+      ? "policy"
+      : entity === "claim"
+        ? "claim"
+        : entity === "application"
+          ? "application"
+          : entity === "customer"
+            ? ["kyc", "edd"]
+            : null;
   const workflowRecord = entity === "policy" || entity === "claim";
+  // Records belong to a customer by reference, never by name: two customers can share a name (AT-SH11-01).
+  const linkedPolicies = entity === "customer" ? policies.filter((p) => p.customerRef && p.customerRef === r.id) : [];
+  const linkedClaims = linkedPolicies.length
+    ? (claims || []).filter((c) => linkedPolicies.some((p) => p.id === c.policy))
+    : [];
+  // Interactions and complaints (NS-SH01-006): the customer's service cases, by reference, for those who read cases.
+  const [cases, setCases] = useState([]);
+  useEffect(() => {
+    if (entity !== "customer" || !can(profile, "READ_SERVICE_CASE")) return undefined;
+    let live = true;
+    request(session, "/service/cases")
+      .then((res) => live && setCases((res.data || []).filter((c) => c.customerRef === r.id)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [entity, session, profile, r.id]);
   // An application's identity check is its customer's KYC; a policy can only be issued once it is verified.
-  const applicant = entity === "application" ? customers.find((c) => c.name === r.name) : null;
+  const applicant =
+    entity === "application" && r.customerRef ? customers.find((c) => c.id === r.customerRef) : null;
   const identityStatus = applicant ? kycLabel(applicant) : "Verified";
   // The server refuses cover while a PEP customer's enhanced due diligence is open or rejected (BR-25), so issue
   // waits for it here too: the reason is shown, and a reviewer can clear it without leaving the application.
@@ -3780,7 +4042,8 @@ function Detail({
         </div>
       </div>
       <div className="tabs">
-        {["Overview", "Documents", "Activity"].map((t) => (
+        {/* Documents only where the record has real documents; an application's evidence is on its overview. */}
+        {["Overview", ...(["customer", "policy", "claim"].includes(entity) ? ["Documents"] : []), "Activity"].map((t) => (
           <button
             key={t}
             className={"filter-tab " + (tab === t ? "active" : "")}
@@ -3803,10 +4066,16 @@ function Detail({
                   ...(r.kycRejectionReason ? [["KYC rejected because", r.kycRejectionReason]] : []),
                   ...(r.eddRejectionReason ? [["EDD rejected because", r.eddRejectionReason]] : []),
                   ["Sign-in", r.loginUsername || "No login yet"],
+                  ["Linked policies", linkedPolicies.length],
                   [
-                    "Linked policies",
-                    r.policies ?? policies.filter((p) => p.name === r.name).length,
+                    "Premium in force",
+                    money(
+                      linkedPolicies
+                        .filter((p) => p.status === "Active")
+                        .reduce((sum, p) => sum + Number(p.premium || 0), 0),
+                    ) + " / month",
                   ],
+                  ...(r.duplicateReview ? [["Referred for duplicate review", r.duplicateReview]] : []),
                 ].map(([k, v]) => (
                   <div className="detail-item" key={k}>
                     <small>{k}</small>
@@ -3815,8 +4084,7 @@ function Detail({
                 ))}
               </div>
               <h3 className="section-title">Their protection</h3>
-              {policies
-                .filter((p) => p.name === r.name)
+              {linkedPolicies
                 .map((p) => (
                   <div className="linked-record" key={p.id}>
                     <Icon name="ShieldCheck" />
@@ -3832,11 +4100,46 @@ function Detail({
                     <Badge>{p.status}</Badge>
                   </div>
                 ))}
-              {!policies.some((p) => p.name === r.name) && (
+              {linkedPolicies.length === 0 && (
                 <Empty
                   text="A fresh start"
                   detail="This customer has no policies yet."
                 />
+              )}
+              {cases.length > 0 && (
+                <>
+                  <h3 className="section-title">Service requests and complaints</h3>
+                  {cases.map((c) => (
+                    <div className="linked-record" key={c.ref}>
+                      <Icon name="Headset" />
+                      <div>
+                        <strong>{c.subject || c.category}</strong>
+                        <small>
+                          {c.ref} · {String(c.caseType || "").toLowerCase()} · opened{" "}
+                          {String(c.openedAt || "").slice(0, 10)}
+                        </small>
+                      </div>
+                      <Badge>{c.status}</Badge>
+                    </div>
+                  ))}
+                </>
+              )}
+              {linkedClaims.length > 0 && (
+                <>
+                  <h3 className="section-title">Their claims</h3>
+                  {linkedClaims.map((c) => (
+                    <div className="linked-record" key={c.id}>
+                      <Icon name="HeartHandshake" />
+                      <div>
+                        <strong>{c.type || c.product}</strong>
+                        <small>
+                          {c.id} · {c.policy} · {money(c.amount)}
+                        </small>
+                      </div>
+                      <Badge>{c.status}</Badge>
+                    </div>
+                  ))}
+                </>
               )}
               <div className="detail-actions">
                 {canReviewKyc && r.kycStatus !== "VERIFIED" && (
@@ -3873,7 +4176,7 @@ function Detail({
                   ["Members", r.members],
                   ["Monthly premium", money(r.premium)],
                   ["Renewal", r.renewal],
-                  ["Benefit", "Group Life Assurance"],
+                  ["Sector", r.sector || "Not recorded"],
                 ].map(([k, v]) => (
                   <div className="detail-item" key={k}>
                     <small>{k}</small>
@@ -3881,15 +4184,8 @@ function Detail({
                   </div>
                 ))}
               </div>
-              <h3 className="section-title">Member preview</h3>
-              {customers.slice(0, 3).map((c, i) => (
-                <div className="linked-record" key={c.id}>
-                  <Person name={c.name} sub={"MEM-00" + (i + 1)} />
-                  <Badge>{i === 2 ? "Under review" : "Active"}</Badge>
-                </div>
-              ))}
               <p className="muted">
-                Showing 3 of {r.members} members.
+                Members are listed in group scheme administration, for those who hold the scheme permission.
               </p>
             </>
           ) : (
@@ -3925,7 +4221,7 @@ function Detail({
                   application={r}
                   profile={profile}
                   notify={notify}
-                  onChanged={onPolicyUpdated}
+                  onChanged={onApplicationUpdated}
                 />
               )}
               {(entity === "application" || entity === "policy") && r.quoteRef && (
@@ -3958,26 +4254,6 @@ function Detail({
                   notify={notify}
                 />
               )}
-              {!workflowRecord && <h3 className="section-title">Evidence checklist</h3>}
-              {!workflowRecord && [
-                "Identity verification",
-                "Application / claim declaration",
-                "Supporting documentation",
-              ].map((t, i) => {
-                const state =
-                  i === 0
-                    ? identityStatus
-                    : i === 2 && !evidence && r.status === "Evidence needed"
-                      ? "Pending"
-                      : "Verified";
-                return (
-                  <div className="checklist-item" key={t}>
-                    <Icon name={state === "Verified" ? "CircleCheck" : "Clock3"} />
-                    <span>{t}</span>
-                    <Badge>{state}</Badge>
-                  </div>
-                );
-              })}
               {issuing && (
                 <>
                   <CustomFieldInputs form={issueForm} values={issueValues} onChange={setIssueValues} />
@@ -4018,6 +4294,11 @@ function Detail({
                     }
                   >
                     Issue policy
+                  </Button>
+                )}
+                {entity === "application" && r.status === "Draft" && onResume && (
+                  <Button icon="FilePlus2" onClick={() => onResume(r)}>
+                    Continue application
                   </Button>
                 )}
                 {entity === "application" && r.status !== "Draft" && can(profile, "READ_UNDERWRITING") && (
@@ -4068,58 +4349,16 @@ function Detail({
           onUploaded={(documents) => onPolicyUpdated({ ...r, documents })}
           notify={notify}
         />
-      ) : tab === "Documents" ? (
-        <>
-          <p className="subtitle">
-            Evidence checklist for this record.
-          </p>
-          {[
-            "Identity document",
-            "Signed declaration",
-            "Supporting evidence",
-          ].map((d, i) => (
-            <div className="linked-record" key={d}>
-              <span className="stat-icon blue">
-                <Icon name="FileText" />
-              </span>
-              <div>
-                <strong>{d}</strong>
-                <small>Document · PDF</small>
-              </div>
-              <Badge>{i === 2 && !evidence ? "Pending" : "Available"}</Badge>
-            </div>
-          ))}
-          <Button
-            variant="secondary"
-            icon="Upload"
-            onClick={() => {
-              setEvidence(true);
-              notify("Supporting evidence marked received.");
-            }}
-          >
-            Mark evidence received
-          </Button>
-        </>
+      ) : tab === "Documents" && entity === "customer" ? (
+        <CustomerDocuments session={session} customer={r} policies={linkedPolicies} notify={notify} />
       ) : historyType ? (
         <WorkflowTimeline session={session} type={historyType} refId={r.id} version={JSON.stringify(r)} />
       ) : (
         <div className="timeline">
+          {/* Only what the record itself holds: when it was created and where it stands now. */}
           {[
-            [
-              "Record created",
-              r.date || "24 Sep 2026",
-              "Record entered into the workspace.",
-            ],
-            [
-              "Information reviewed",
-              "28 Sep 2026",
-              "Customer and product information checked.",
-            ],
-            [
-              "Current state",
-              r.status || "Active",
-              "Latest position.",
-            ],
+            ["Record created", r.date || "Date not recorded", "Record entered into the workspace."],
+            ["Current state", r.status || "Active", "Latest position."],
           ].map(([t, d, s]) => (
             <div className="timeline-item" key={t}>
               <span />
@@ -4135,92 +4374,81 @@ function Detail({
     </>
   );
 }
-function Census({ onDone }) {
-  const [loaded, setLoaded] = useState(false);
+// Customer 360 documents (NS-SH01-006): the identity evidence the customer sent for KYC, and the documents filed on
+// this customer's own policies, found by reference.
+function CustomerDocuments({ session, customer, policies, notify }) {
+  const rows = policies.flatMap((p) =>
+    (p.documents || []).map((d) => ({ ...d, policyRef: p.id, product: p.product })),
+  );
+  const [identity, setIdentity] = useState([]);
+  useEffect(() => {
+    let live = true;
+    request(session, "/portfolio/customers/" + customer.id + "/identity-documents")
+      .then((r) => live && setIdentity(r.data || []))
+      .catch(() => live && setIdentity([]));
+    return () => {
+      live = false;
+    };
+  }, [session, customer.id]);
+  const open = async (d) => {
+    try {
+      const url = URL.createObjectURL(
+        await fetchFile(session, "/portfolio/customers/" + customer.id + "/identity-documents/" + d.id),
+      );
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      notify?.(error.message, "error");
+    }
+  };
   return (
     <>
-      <p className="subtitle">
-        Import members for Okavango Holdings.
-      </p>
-      {!loaded ? (
-        <button className="file-drop" onClick={() => setLoaded(true)}>
-          <span className="stat-icon green">
-            <Icon name="Upload" />
-          </span>
-          <h3>Load the census file</h3>
-          <p>4 members</p>
-          <span className="btn primary">
-            Load members <Icon name="ArrowRight" small />
-          </span>
-        </button>
+      <h3 className="section-title">Identity evidence</h3>
+      {identity.length ? (
+        identity.map((d) => (
+          <div className="linked-record" key={"id-" + d.id}>
+            <span className="stat-icon green">
+              <Icon name="BadgeCheck" />
+            </span>
+            <div>
+              <strong>{d.documentType}</strong>
+              <small>
+                {d.fileName} · sent {String(d.uploadedAt || "").slice(0, 10)} by {d.uploadedBy}
+              </small>
+            </div>
+            <Button variant="secondary" icon="Eye" onClick={() => open(d)}>
+              Open
+            </Button>
+          </div>
+        ))
       ) : (
-        <>
-          <div className="notice">
-            <Icon name="CircleCheck" />
-            <p>
-              <strong>Validation complete.</strong> 3 rows accepted · 1 row
-              needs correction. This is a preview only.
-            </p>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Row</th>
-                  <th>Member</th>
-                  <th>Category</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ["1", "Dineo Motsumi", "Staff", "Accepted"],
-                  ["2", "Tshepo Dube", "Management", "Accepted"],
-                  ["3", "Boitumelo Sechele", "Staff", "Accepted"],
-                  ["4", "Onalenna Tlhagale", "Unknown", "Invalid category"],
-                ].map((row) => (
-                  <tr key={row[0]}>
-                    {row.map((v, i) => (
-                      <td key={i}>
-                        {i === 3 ? (
-                          <Badge>
-                            {v === "Accepted" ? "Verified" : "Rejected"}
-                          </Badge>
-                        ) : (
-                          v
-                        )}
-                        {i === 3 && v !== "Accepted" && (
-                          <div className="person-sub">Unknown category</div>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="modal-footer">
-            <Button
-              variant="secondary"
-              icon="Download"
-              onClick={() =>
-                downloadCSV("census-results.csv", [
-                  ["Row", "Name", "Result", "Reason"],
-                  ["1", "Dineo Motsumi", "Accepted", ""],
-                  ["2", "Tshepo Dube", "Accepted", ""],
-                  ["3", "Boitumelo Sechele", "Accepted", ""],
-                  ["4", "Onalenna Tlhagale", "Rejected", "Unknown category"],
-                ])
-              }
-            >
-              Download results
-            </Button>
-            <Button icon="Check" onClick={onDone}>
-              Finish preview
-            </Button>
-          </div>
-        </>
+        <p className="muted small">The customer has not sent identity evidence through the portal.</p>
       )}
+      <h3 className="section-title">Policy documents</h3>
+      <p className="subtitle">
+        Documents filed on {customer.name}'s policies. The KYC review (now {kycLabel(customer).toLowerCase()}) and
+        each upload are on the Activity tab.
+      </p>
+      {rows.length ? (
+        rows.map((d) => (
+          <div className="linked-record" key={d.policyRef + "-" + d.id}>
+            <span className="stat-icon blue">
+              <Icon name="FileText" />
+            </span>
+            <div>
+              <strong>{String(d.type || "Document").replaceAll("_", " ").toLowerCase()}</strong>
+              <small>
+                {d.policyRef} · {d.fileName}
+                {d.uploadedAt ? " · " + String(d.uploadedAt).slice(0, 10) : ""}
+              </small>
+            </div>
+            <Badge>{d.status || "Filed"}</Badge>
+          </div>
+        ))
+      ) : (
+        <Empty text="No documents yet" detail="Documents appear here once they are filed on this customer's policies." />
+      )}
+      {rows.length > 0 && <p className="muted small">Open the policy to view or download a document.</p>}
     </>
   );
 }

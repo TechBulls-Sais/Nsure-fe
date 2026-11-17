@@ -327,3 +327,34 @@
   border-radius: 14px;
   background: var(--surface, light-dark(#fff, oklch(0.225 0.006 90)));
 }
+
+/* Phone widths: the customer nav wraps onto a second line instead of pushing the page sideways (390px). */
+@media (max-width: 760px) {
+  .customer-top .customer-nav {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    row-gap: 2px;
+    min-width: 0;
+  }
+}
+@media (max-width: 420px) {
+  .customer-top .customer-nav a {
+    padding: 7px 8px;
+  }
+}
+
+/* Identity evidence upload (KYC self-service). */
+.customer-identity-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 8px 0 12px;
+}
+.customer-identity-form .form-label {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.customer-identity-form input[type="file"] {
+  max-width: 100%;
+}

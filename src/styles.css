@@ -5316,3 +5316,24 @@ p {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Phone widths (390px): the page title gives way so the header actions stay on screen (no page-wide scroll). */
+@media (max-width: 440px) {
+  .topbar .breadcrumb {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .topbar .breadcrumb > .icon {
+    display: none;
+  }
+  .topbar .breadcrumb strong {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .topbar-actions {
+    flex-shrink: 0;
+  }
+}
