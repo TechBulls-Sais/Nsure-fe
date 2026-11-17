@@ -85,6 +85,26 @@ function basisText(category) {
     : `Fixed ${pula(category.fixedCover)}`;
 }
 
+const csvCell = (value) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  // Quote cells with separators, and neutralise spreadsheet formulas in values that came from the uploaded file.
+  const safe = /^[=+\-@\t\r]/.test(text) ? "'" + text : text;
+  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+};
+
+/** The batch's results file (NS-UX-002): every row of the file with its outcome, error and resulting member. */
+function batchResultsCsv(batch) {
+  const head = [
+    "batch", "externalBatchId", "lineNo", "memberKey", "firstName", "lastName", "dateOfBirth", "category", "salary",
+    "action", "effectiveDate", "outcome", "errors", "memberId",
+  ];
+  const lines = batch.rows.map((r) =>
+    [batch.ref, batch.externalBatchId, r.lineNo, r.memberKey, r.firstName, r.lastName, r.dateOfBirth, r.category,
+      r.salary, r.action, r.effectiveDate, r.status, r.error, r.memberId].map(csvCell).join(","),
+  );
+  return [head.join(","), ...lines].join("\n") + "\n";
+}
+
 function saveTextFile(name, text, type = "text/csv") {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const link = document.createElement("a");
@@ -986,10 +1006,19 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                 <ErrorNote error="This ATOMIC batch has invalid rows, so it cannot be committed. Correct the file and submit it under a new batch id." />
               )}
               <ErrorNote error={commit.error} />
-              <label className="ga-check">
-                <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} />
-                Show only rows with errors
-              </label>
+              <div className="ga-batch-tools">
+                <label className="ga-check">
+                  <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} />
+                  Show only rows with errors
+                </label>
+                <Button
+                  variant="secondary"
+                  icon={Download}
+                  onClick={() => saveTextFile(`census-results-${batch.ref}.csv`, batchResultsCsv(batch))}
+                >
+                  Download results
+                </Button>
+              </div>
               <DataTable
                 rows={rows}
                 rowKey={(r) => r.lineNo}
