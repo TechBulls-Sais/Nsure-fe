@@ -13,7 +13,8 @@
     "test:products": "node scripts/product-config-smoke.cjs",
     "test:intelligence": "node scripts/intelligence-smoke.cjs",
     "test:select": "node scripts/select-smoke.cjs",
-    "test:landing": "node scripts/landing-smoke.cjs"
+    "test:landing": "node scripts/landing-smoke.cjs",
+    "test:all": "node scripts/landing-smoke.cjs && node scripts/smoke.cjs && node scripts/intelligence-smoke.cjs && node scripts/select-smoke.cjs && node scripts/product-config-smoke.cjs"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",

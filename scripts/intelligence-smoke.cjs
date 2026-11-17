@@ -1,69 +1,49 @@
-const { chromium } = require("@playwright/test");
+// Workspace interaction check against the running app (backend with demo data on 8091, `npm run dev` on 5180):
+// the ⌘K / Ctrl+K command palette (keyboard and button), the colour theme switch, the reduced-motion preference and
+// the mobile layout. It only reads.
 const assert = require("node:assert/strict");
-const path = require("node:path");
-const os = require("node:os");
-(async () => {
-  const browser = await chromium.launch({
-    channel: process.env.PLAYWRIGHT_CHANNEL || "chrome",
-    headless: true,
-  });
-  try {
-    const page = await browser.newPage({
-      viewport: { width: 1440, height: 1000 },
-    });
-    const errors = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(process.env.NSURE_BASE_URL || "http://127.0.0.1:5173");
-    await page.getByRole("button", { name: "Enter workspace" }).click();
-    await page
-      .getByRole("button", { name: "Pause interface animations" })
-      .click();
-    assert.equal(await page.locator("html").getAttribute("data-motion"), "off");
-    await page.screenshot({
-      path: path.join(os.tmpdir(), "nsure-intelligence-dashboard.png"),
-      fullPage: true,
-    });
-    await page.keyboard.press("Control+k");
-    await page
-      .getByRole("combobox", { name: "Search workspace actions" })
-      .fill("product studio");
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
-    await page.getByText("From an idea to a ready-to-review product.").waitFor();
-    await page
-      .getByRole("button", { name: "Enable interface animations" })
-      .click();
-    assert.equal(await page.locator("html").getAttribute("data-motion"), "on");
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.waitForFunction(
-      () => document.documentElement.dataset.motion === "off",
-    );
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-      "Workspace fits mobile",
-    );
-    await page.screenshot({
-      path: path.join(os.tmpdir(), "nsure-intelligence-mobile.png"),
-      fullPage: true,
-    });
-    await page.getByRole("button", { name: "Open command palette" }).click();
-    await page
-      .getByRole("combobox", { name: "Search workspace actions" })
-      .fill("impossible match");
-    await page.getByText(/No matching actions/).waitFor();
-    await page.keyboard.press("Escape");
-    assert.equal(await page.getByRole("dialog").count(), 0);
-    assert.deepEqual(errors, []);
-    console.log(
-      "PASS: keyboard command palette, motion toggle, reduced-motion preference, mobile layout, and no runtime errors.",
-    );
-  } finally {
-    await browser.close();
-  }
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
+const { assertFits, assertNoErrors, expect, openPage, run, screenshot, signInStaff } = require("./smoke-support.cjs");
+
+run("command palette (keyboard and button), theme switch, reduced motion, mobile layout", async (browser) => {
+  const page = await openPage(browser);
+  await signInStaff(page, "admin");
+  await expect(page.getByRole("heading", { level: 1, name: /A good day to make a difference/ })).toBeVisible();
+
+  // Ctrl+K opens the palette; typing filters it and Enter opens the first match.
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("combobox", { name: "Search workspace actions" });
+  await expect(palette).toBeFocused();
+  await palette.fill("work queue");
+  await expect(page.getByRole("option", { name: /Work queue/ }).first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "Work queue" })).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // The launcher button opens it too; nothing matches nonsense, and Escape closes it.
+  await page.getByRole("button", { name: "Open command palette" }).click();
+  await page.getByRole("combobox", { name: "Search workspace actions" }).fill("impossible match");
+  await expect(page.getByText(/No matching actions/)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  // Colour theme: the switch sets data-theme on <html>.
+  const themes = page.getByRole("radiogroup", { name: "Colour theme" });
+  await themes.getByRole("radio", { name: "Dark theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await screenshot(page, "nsure-intelligence-dark.png");
+  await themes.getByRole("radio", { name: "Light theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+  // Animation follows the operating system's reduced-motion setting, also when it changes while the app is open.
+  await expect(page.locator("html")).toHaveAttribute("data-motion", "on");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.locator("html")).toHaveAttribute("data-motion", "off");
+
+  await assertFits(page, 390, "Work queue");
+  await page.getByRole("button", { name: "Open command palette" }).click();
+  const box = await page.getByRole("dialog").boundingBox();
+  assert(box.x >= 0 && box.x + box.width <= 390, "The command palette fits a phone");
+  await page.keyboard.press("Escape");
+  await screenshot(page, "nsure-intelligence-mobile.png");
+  assertNoErrors(page);
 });

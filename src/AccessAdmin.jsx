@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useState } from "react";
-import { AWAITING_APPROVAL_MESSAGE, awaitingApproval, request } from "./api";
+import { AWAITING_APPROVAL_MESSAGE, awaitingApproval, fetchFile, request } from "./api";
 import { Dialog, can, pula, useConfirm } from "./ui/workspace";
 import "./access.css";
 
@@ -8,8 +8,9 @@ import "./access.css";
 // (nsure-be ApiAccessRules). A write may come back 202 AWAITING_APPROVAL when maker-checker applies: it is then
 // waiting for a second person, not failed.
 
-// Identity changes always need a second person (Nsure Life NS-UX-004): their checker cannot be switched off.
-const FOUR_EYES_LOCKED = new Set(["UPDATE_USER", "UPDATE_ROLE", "PERMISSIONS_ROLE"]);
+// Identity changes always need a second person (Nsure Life NS-UX-004): their checker cannot be switched off. Creating
+// or deleting a user who has access is one of them (D-03); a login with no access is applied at once.
+const FOUR_EYES_LOCKED = new Set(["CREATE_USER", "UPDATE_USER", "DELETE_USER", "UPDATE_ROLE", "PERMISSIONS_ROLE"]);
 
 // The Super Admin role keeps these so a mistaken edit cannot lock every administrator out of role grants.
 const ADMIN_LIFELINE = new Set(["PERMISSIONS_ROLE", "CHECKER_PERMISSIONS_ROLE"]);
@@ -22,10 +23,20 @@ const BREAK_GLASS = [
 ];
 const MAX_EMERGENCY_HOURS = 8;
 
-const CHECKER_CODES = ["CHECKER_UPDATE_USER", "CHECKER_UPDATE_ROLE", "CHECKER_PERMISSIONS_ROLE"];
+const CHECKER_CODES = [
+  "CHECKER_CREATE_USER",
+  "CHECKER_UPDATE_USER",
+  "CHECKER_DELETE_USER",
+  "CHECKER_UPDATE_ROLE",
+  "CHECKER_PERMISSIONS_ROLE",
+];
 
 // There is exactly one Super Admin role, recognised by its reserved name, as the server does (RoleCommandHandler).
 const isSuperAdminRole = (role) => String(role?.name || "").trim().toLowerCase() === "super admin";
+
+// A role that gives access (desk access, any permission, or Super Admin): creating or deleting its holder needs a
+// second person, as the server decides (UserCommandHandler). An unknown role is treated as giving access.
+const givesAccess = (role) => !role || role.deskAccess || (role.permissions || []).length > 0 || isSuperAdminRole(role);
 
 const PROTECTED_ROLE_NOTE =
   "A protected role is held by portal customers, so it can never be given permissions or desk access, and it " +
@@ -48,6 +59,7 @@ export default function AccessAdmin({ session, notify, profile }) {
     check: CHECKER_CODES.some((code) => can(profile, code)),
     grantEmergency: can(profile, "GRANT_EMERGENCY_ACCESS"),
     reviewEmergency: can(profile, "REVIEW_EMERGENCY_ACCESS"),
+    reviewAccess: can(profile, "REVIEW_ACCESS"),
   };
   const readEmergency = allow.grantEmergency || allow.reviewEmergency || allow.readAudit;
   const tabs = [
@@ -58,6 +70,8 @@ export default function AccessAdmin({ session, notify, profile }) {
     allow.readAudit && ["approvals", "Approvals"],
     allow.readAudit && ["evidence", "Audit evidence"],
     readEmergency && ["emergency", "Emergency access"],
+    (allow.reviewAccess || allow.readAudit) && ["review", "Access review"],
+    allow.readAudit && ["security", "Security events"],
   ].filter(Boolean);
   const [tab, setTab] = useState(() => tabs[0]?.[0] || "roles");
   const [roles, setRoles] = useState([]);
@@ -387,6 +401,14 @@ export default function AccessAdmin({ session, notify, profile }) {
         />
       )}
 
+      {tab === "review" && (allow.reviewAccess || allow.readAudit) && (
+        <AccessReviewPanel session={session} notify={notify} profile={profile} allow={allow} />
+      )}
+
+      {tab === "security" && allow.readAudit && (
+        <SecurityEventsPanel session={session} notify={notify} profile={profile} />
+      )}
+
       {tabs.length === 0 && (
         <section className="panel">
           <p className="subtitle">
@@ -450,7 +472,7 @@ function describeCommand(command) {
   }
   return (
     Object.entries(body)
-      .filter(([key]) => key !== "password")
+      .filter(([key]) => key !== "password" && key !== "passwordHash")
       .map(([key, value]) => key + ": " + (Array.isArray(value) ? value.join(", ") : String(value)))
       .join(" · ") || "—"
   );
@@ -467,22 +489,29 @@ function describeCommand(command) {
  */
 function EvidencePanel({ session }) {
   const [rows, setRows] = useState([]);
-  const [ref, setRef] = useState("");
+  const blankFilter = { entityRef: "", entityType: "", actor: "", from: "", to: "" };
+  const [filter, setFilter] = useState(blankFilter);
   const [check, setCheck] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const load = async (record) => {
+  // The same filters drive the list and the CSV export (NS-SH11-007): record, record type, who, and a date range.
+  const query = (f) =>
+    Object.entries(f)
+      .filter(([, value]) => String(value).trim())
+      .map(([key, value]) => key + "=" + encodeURIComponent(String(value).trim()))
+      .join("&");
+  const load = async (f) => {
     setError("");
     try {
-      const query = record ? "?entityRef=" + encodeURIComponent(record) + "&limit=200" : "?limit=200";
-      const r = await request(session, "/audits/evidence" + query);
+      const q = query(f);
+      const r = await request(session, "/audits/evidence?" + (q ? q + "&" : "") + "limit=200");
       setRows((r.data || []).map((row) => ({ ...row, id: row.sequenceNo })));
     } catch (err) {
       setError(err.message);
     }
   };
   useEffect(() => {
-    load("");
+    load(blankFilter);
   }, [session]);
   const verify = async () => {
     setBusy(true);
@@ -495,6 +524,24 @@ function EvidencePanel({ session }) {
       setBusy(false);
     }
   };
+  const exportCsv = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const q = query(filter);
+      const blob = await fetchFile(session, "/audits/evidence/export" + (q ? "?" + q : ""));
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "audit-evidence-" + new Date().toISOString().slice(0, 10) + ".csv";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 500);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const set = (key) => (e) => setFilter({ ...filter, [key]: e.target.value });
   return (
     <section className="panel">
       <div className="panel-header">
@@ -505,9 +552,14 @@ function EvidencePanel({ session }) {
             deleted; each one carries the hash of the one before it.
           </p>
         </div>
-        <button className="btn secondary" disabled={busy} onClick={verify}>
-          {busy ? "Checking…" : "Check the chain"}
-        </button>
+        <div className="access-filter-actions">
+          <button className="btn secondary" disabled={busy} onClick={exportCsv}>
+            Export CSV
+          </button>
+          <button className="btn secondary" disabled={busy} onClick={verify}>
+            {busy ? "Working…" : "Check the chain"}
+          </button>
+        </div>
       </div>
       {check && (
         <p className={"notice " + (check.intact ? "" : "danger")} role="status">
@@ -525,18 +577,38 @@ function EvidencePanel({ session }) {
         className="access-filter"
         onSubmit={(e) => {
           e.preventDefault();
-          load(ref.trim());
+          load(filter);
         }}
       >
         <input
           className="input"
-          value={ref}
-          placeholder="Record reference, e.g. POL-10843 or CLM-0843"
+          value={filter.entityRef}
+          placeholder="Record reference, e.g. POL-10843"
           aria-label="Record reference"
-          onChange={(e) => setRef(e.target.value)}
+          onChange={set("entityRef")}
         />
+        <input
+          className="input"
+          value={filter.entityType}
+          placeholder="Record type, e.g. Claim"
+          aria-label="Record type"
+          onChange={set("entityType")}
+        />
+        <input className="input" value={filter.actor} placeholder="Who (username)" aria-label="Who" onChange={set("actor")} />
+        <input className="input" type="date" value={filter.from} aria-label="From date" onChange={set("from")} />
+        <input className="input" type="date" value={filter.to} aria-label="To date" onChange={set("to")} />
         <button className="btn secondary" type="submit">
           Show
+        </button>
+        <button
+          className="btn secondary"
+          type="button"
+          onClick={() => {
+            setFilter(blankFilter);
+            load(blankFilter);
+          }}
+        >
+          Clear
         </button>
       </form>
       <ResourceTable
@@ -627,7 +699,17 @@ function EmergencyPanel({ grants, users, rolesById, profile, allow, busy, error,
   const isStaff = (user) =>
     rolesById.size === 0 ||
     (user.roleIds || []).some((id) => rolesById.get(id)?.deskAccess && !rolesById.get(id)?.disabled);
-  const candidates = users.filter((user) => user.enabled && user.username !== profile?.username && isStaff(user));
+  // A partner login (agent, employer, lender) holds only the partner portal: it is not the insurer's staff (D-07).
+  const isPartner = (user) => {
+    const codes = (user.roleIds || [])
+      .map((id) => rolesById.get(id))
+      .filter((role) => role && !role.disabled)
+      .flatMap((role) => role.permissions || []);
+    return codes.length > 0 && codes.every((code) => code === "USE_PARTNER_PORTAL");
+  };
+  const candidates = users.filter(
+    (user) => user.enabled && user.username !== profile?.username && isStaff(user) && !isPartner(user),
+  );
   const label = (code) => BREAK_GLASS.find(([key]) => key === code)?.[1] || code;
   const tone = { ACTIVE: "amber", EXPIRED: "gray", REVOKED: "gray" };
   const needsReview = (grant) =>
@@ -693,7 +775,8 @@ function EmergencyPanel({ grants, users, rolesById, profile, allow, busy, error,
               <h2>Grant emergency access</h2>
               <p className="subtitle">
                 No role holds these permissions. Give one to one staff member for up to {MAX_EMERGENCY_HOURS} hours,
-                with a reason. Everyone who reads the audit log is alerted, and it is reviewed once it ends.
+                with a reason. Everyone who reads the audit log is alerted, and it is reviewed once it ends. Partner
+                portal logins (agents, employers, lenders) can never receive it.
               </p>
             </div>
           </div>
@@ -867,6 +950,351 @@ function EmergencyPanel({ grants, users, rolesById, profile, allow, busy, error,
         </Dialog>
       )}
     </>
+  );
+}
+
+/**
+ * Access recertification (NS-SH11-007): a reviewer keeps or flags every login that holds access, never their own.
+ * Closing the review alerts the identity administrators about each flagged login; they remove the access through the
+ * usual four-eyes change, so the reviewer changes nobody's access.
+ */
+function AccessReviewPanel({ session, notify, profile, allow }) {
+  const [reviews, setReviews] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [revoking, setRevoking] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const reviewId = useId();
+
+  const show = async (id) => setOpen((await request(session, "/admin/access-reviews/" + id)).data);
+  const load = async () => {
+    const list = (await request(session, "/admin/access-reviews")).data || [];
+    setReviews(list);
+    const current = list.find((r) => r.status === "OPEN") || list[0];
+    if (current) await show(current.id);
+    else setOpen(null);
+  };
+  useEffect(() => {
+    load().catch((err) => setError(err.message));
+  }, [session]);
+
+  const act = async (work, message) => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await work();
+      if (result?.data?.id) setOpen(result.data);
+      setReviews((await request(session, "/admin/access-reviews")).data || []);
+      notify(message, "success");
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const decide = (item, decision, why = "") =>
+    act(
+      () =>
+        request(session, "/admin/access-reviews/" + open.id + "/items/" + item.id + "/decision", {
+          method: "POST",
+          body: { decision, note: why },
+        }),
+      decision === "KEEP" ? item.username + "'s access confirmed." : item.username + " flagged for removal.",
+    );
+
+  const items = (open?.items || []).map((item) => ({ ...item, id: item.id }));
+  const pending = items.filter((item) => !item.decision).length;
+  const reviewing = open?.status === "OPEN" && allow.reviewAccess;
+  const own = (item) => item.username === profile?.username;
+  return (
+    <>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Access reviews</h2>
+            <p className="subtitle">
+              Recertify who holds access: keep or flag every login with a role. Nobody reviews their own access.
+              Flagged access goes to the identity administrators, who remove it with a second person&apos;s approval.
+            </p>
+          </div>
+          {allow.reviewAccess && !reviews.some((r) => r.status === "OPEN") && (
+            <button
+              className="btn secondary"
+              disabled={busy}
+              onClick={() => act(() => request(session, "/admin/access-reviews", { method: "POST" }), "Access review started.")}
+            >
+              Start a review
+            </button>
+          )}
+        </div>
+        {error && !revoking && <p className="form-error">{error}</p>}
+        <ResourceTable
+          columns={["Review", "Status", "Started", "Decided", "Flagged", "Outcome"]}
+          rows={reviews}
+          render={(r) => (
+            <>
+              <td>{r.recordRef}</td>
+              <td>{r.status === "OPEN" ? "Open" : "Closed"}</td>
+              <td>
+                {r.startedBy}
+                <br />
+                <small>{when(r.startedAt)}</small>
+              </td>
+              <td>
+                {r.decided} of {r.items}
+              </td>
+              <td>{r.revokes}</td>
+              <td>{r.summary || "—"}</td>
+            </>
+          )}
+          editable={(r) => r.id !== open?.id}
+          editLabel={() => "Open"}
+          onEdit={(r) => show(r.id).catch((err) => setError(err.message))}
+        />
+      </section>
+
+      {open && (
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <h2>
+                {open.recordRef} · {open.status === "OPEN" ? pending + " left to decide" : "closed " + when(open.closedAt)}
+              </h2>
+              <p className="subtitle">
+                Started by {open.startedBy} on {when(open.startedAt)}. Roles are as they were when the review started.
+              </p>
+            </div>
+            {reviewing && (
+              <button
+                className="btn primary"
+                disabled={busy || pending > 0}
+                title={pending > 0 ? "Decide every login first" : undefined}
+                onClick={() =>
+                  act(
+                    () => request(session, "/admin/access-reviews/" + open.id + "/close", { method: "POST" }),
+                    open.recordRef + " closed.",
+                  )
+                }
+              >
+                Close review
+              </button>
+            )}
+          </div>
+          <ResourceTable
+            columns={["User", "Roles", "Permissions", "Desk access", "Decision", "Note"]}
+            rows={items}
+            render={(item) => (
+              <>
+                <td>{item.username}</td>
+                <td>{item.roles}</td>
+                <td>{item.permissionCount}</td>
+                <td>{item.deskAccess ? "Yes" : "No"}</td>
+                <td>
+                  {item.decision ? (
+                    <>
+                      {item.decision === "KEEP" ? "Keep" : "Revoke"}
+                      <br />
+                      <small>
+                        {item.decidedBy} · {when(item.decidedAt)}
+                      </small>
+                    </>
+                  ) : (
+                    "To decide"
+                  )}
+                </td>
+                <td>{item.note || "—"}</td>
+              </>
+            )}
+            editable={(item) => reviewing && !own(item) && item.decision !== "KEEP"}
+            editLabel={() => (busy ? "Working…" : "Keep")}
+            onEdit={(item) => decide(item, "KEEP")}
+            removable={(item) => reviewing && !own(item) && item.decision !== "REVOKE"}
+            removeLabel="Revoke"
+            onDelete={(item) => {
+              setRevoking(item);
+              setNote("");
+              setError("");
+            }}
+            note={(item) => (reviewing && own(item) ? "Your own access: another reviewer decides it." : null)}
+          />
+        </section>
+      )}
+
+      {revoking && (
+        <Dialog
+          title={"Flag " + revoking.username + "'s access"}
+          eyebrow="Access review"
+          onClose={() => setRevoking(null)}
+          footer={
+            <>
+              <button type="button" className="btn secondary" onClick={() => setRevoking(null)}>
+                Cancel
+              </button>
+              <button className="btn primary" form={reviewId} disabled={busy}>
+                {busy ? "Saving…" : "Flag for removal"}
+              </button>
+            </>
+          }
+        >
+          <form
+            id={reviewId}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (await decide(revoking, "REVOKE", note)) setRevoking(null);
+            }}
+          >
+            {error && <p className="form-error">{error}</p>}
+            <p className="subtitle">
+              {revoking.username} holds {revoking.roles}. The identity administrators are told when the review closes;
+              their change still needs a second person.
+            </p>
+            <label className="form-label">
+              Why should this access go?
+              <textarea
+                className="input"
+                rows={3}
+                required
+                minLength={5}
+                maxLength={500}
+                autoFocus
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </label>
+          </form>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
+/**
+ * Security events with an owner and an escalation route (SH11): someone who may act on an event takes it and alone
+ * resolves it with a written outcome; an event nobody takes in time is escalated to the security administrators.
+ */
+function SecurityEventsPanel({ session, notify, profile }) {
+  const [events, setEvents] = useState([]);
+  const [resolving, setResolving] = useState(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const formId = useId();
+  const load = async () => setEvents(((await request(session, "/admin/security-events")).data || []).map((e) => ({ ...e })));
+  useEffect(() => {
+    load().catch((err) => setError(err.message));
+  }, [session]);
+  const act = async (path, body, message) => {
+    setBusy(true);
+    setError("");
+    try {
+      await request(session, "/admin/security-events/" + path, { method: "POST", body });
+      await load();
+      notify(message, "success");
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const status = (e) =>
+    e.status === "RESOLVED"
+      ? "Resolved by " + e.resolvedBy
+      : e.status === "OWNED"
+        ? "Owned by " + e.owner
+        : "Nobody yet";
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2>Security events</h2>
+          <p className="subtitle">
+            Emergency access, controls switched off, payment tampering, flagged access and changes applied without a
+            second approver. Each has one owner who resolves it; one nobody takes in time is escalated to the security
+            administrators.
+          </p>
+        </div>
+      </div>
+      {error && !resolving && <p className="form-error">{error}</p>}
+      <ResourceTable
+        columns={["When", "Event", "Details", "Handling", "Escalated"]}
+        rows={events}
+        render={(e) => (
+          <>
+            <td>{when(e.createdAt)}</td>
+            <td>{e.title}</td>
+            <td>
+              <small>{e.body}</small>
+            </td>
+            <td>
+              {status(e)}
+              {e.resolution && (
+                <>
+                  <br />
+                  <small>{e.resolution}</small>
+                </>
+              )}
+            </td>
+            <td>{e.escalatedAt ? when(e.escalatedAt) : "—"}</td>
+          </>
+        )}
+        editable={(e) => e.status === "OPEN" && e.canHandle}
+        editLabel={() => (busy ? "Working…" : "Take")}
+        onEdit={(e) => act(e.id + "/own", undefined, "You own this security event.")}
+        removable={(e) => e.status === "OWNED" && e.owner === profile?.username}
+        removeLabel="Resolve"
+        onDelete={(e) => {
+          setResolving(e);
+          setText("");
+          setError("");
+        }}
+      />
+      {resolving && (
+        <Dialog
+          title={"Resolve: " + resolving.title}
+          eyebrow="Security event"
+          onClose={() => setResolving(null)}
+          footer={
+            <>
+              <button type="button" className="btn secondary" onClick={() => setResolving(null)}>
+                Cancel
+              </button>
+              <button className="btn primary" form={formId} disabled={busy}>
+                {busy ? "Saving…" : "Resolve"}
+              </button>
+            </>
+          }
+        >
+          <form
+            id={formId}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (await act(resolving.id + "/resolve", { resolution: text }, "Security event resolved.")) setResolving(null);
+            }}
+          >
+            {error && <p className="form-error">{error}</p>}
+            <p className="subtitle">{resolving.body}</p>
+            <label className="form-label">
+              What was found and done
+              <textarea
+                className="input"
+                rows={3}
+                required
+                minLength={5}
+                maxLength={500}
+                autoFocus
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+              />
+            </label>
+          </form>
+        </Dialog>
+      )}
+    </section>
   );
 }
 
@@ -1371,6 +1799,11 @@ function Editor({ editor, setEditor, roles, rolesById, permissions, profile, all
                 </p>
               )}
             </fieldset>
+            {!form.id && (form.roleIds || []).some((id) => givesAccess(rolesById.get(id))) && (
+              <p className="subtitle">
+                A new user with access waits for a second administrator to approve it before they can sign in.
+              </p>
+            )}
           </>
         )}
       </form>

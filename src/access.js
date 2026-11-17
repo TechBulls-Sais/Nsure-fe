@@ -40,6 +40,7 @@ export const PAGE_ACCESS = {
     "READ_AUDIT",
     "GRANT_EMERGENCY_ACCESS",
     "REVIEW_EMERGENCY_ACCESS",
+    "REVIEW_ACCESS",
   ],
   controls: ["READ_CONTROL"],
   settings: [],
