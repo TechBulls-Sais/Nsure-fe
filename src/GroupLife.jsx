@@ -52,6 +52,11 @@ const badge = (map, key) => {
   return <Badge tone={tone}>{label}</Badge>;
 };
 const today = () => new Date().toISOString().slice(0, 10);
+// D-41: a failed write is shown once, next to the action that failed (in the open drawer, or above the table for a
+// row button), so errors are not also raised as toasts that stack over the drawer's submit button.
+const inlineErrors = (notify) => (message, tone) => {
+  if (tone !== "error") notify?.(message, tone);
+};
 
 export default function GroupLife({ session, notify, profile }) {
   const [tab, setTab] = useState("quotes");
@@ -119,9 +124,18 @@ const blankQuote = () => ({
 });
 
 function Quotes({ session, notify, profile, resource, onChange }) {
-  const [form, setForm] = useState(null);
-  const [step, setStep] = useState(null); // {quote, kind: "decide" | "activate"}
-  const action = useAction(notify);
+  const [form, setFormState] = useState(null);
+  const [step, setStepState] = useState(null); // {quote, kind: "decide" | "activate"}
+  const action = useAction(inlineErrors(notify));
+  // A drawer opens without the error of an earlier attempt; edits inside it keep the current one.
+  const setForm = (next) => {
+    if (!form || !next) action.setError("");
+    setFormState(next);
+  };
+  const setStep = (next) => {
+    if (!step || !next) action.setError("");
+    setStepState(next);
+  };
   const me = session?.username;
   const manage = can(profile, "MANAGE_SCHEME");
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
@@ -178,7 +192,7 @@ function Quotes({ session, notify, profile, resource, onChange }) {
           )
         }
       >
-        <ErrorNote error={resource.error || action.error} />
+        <ErrorNote error={resource.error || (!form && !step ? action.error : "")} />
         <DataTable
           rows={resource.data}
           loading={resource.loading}
@@ -354,7 +368,8 @@ function SchemeDetail({ session, notify, profile, schemes }) {
   const [form, setForm] = useState(null);
   const [certificate, setCertificate] = useState(null);
   const [result, setResult] = useState(null);
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
+  const settling = useAction(inlineErrors(notify));
   const manage = can(profile, "MANAGE_SCHEME");
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const submit = async () => {
@@ -380,7 +395,7 @@ function SchemeDetail({ session, notify, profile, schemes }) {
     }
   };
   const settle = async (loan) => {
-    const done = await action.run(() => request(session, "/group-life/credit-loans/" + loan.id + "/settlement", { method: "POST", body: {} }), "Loan settled");
+    const done = await settling.run(() => request(session, "/group-life/credit-loans/" + loan.id + "/settlement", { method: "POST", body: {} }), "Loan settled");
     if (done) loans.reload();
   };
   if (!schemes.length) {
@@ -402,14 +417,14 @@ function SchemeDetail({ session, notify, profile, schemes }) {
               ))}
             </select>
             {manage && (
-              <Button icon={Plus} onClick={() => setForm({ kind: "benefit", benefitType: "GLA", basis: "SALARY_MULTIPLE", multiple: "", fixedAmount: "", waitingMonths: "", terms: "" })}>
+              <Button icon={Plus} onClick={() => { action.setError(""); setForm({ kind: "benefit", benefitType: "GLA", basis: "SALARY_MULTIPLE", multiple: "", fixedAmount: "", waitingMonths: "", terms: "" }); }}>
                 Add or change a benefit
               </Button>
             )}
           </div>
         }
       >
-        <ErrorNote error={benefits.error || action.error} />
+        <ErrorNote error={benefits.error} />
         <DataTable
           rows={benefits.data}
           loading={benefits.loading}
@@ -454,13 +469,14 @@ function SchemeDetail({ session, notify, profile, schemes }) {
         action={
           can(profile, "PROCESS_CENSUS") &&
           hasCredit && (
-            <Button icon={Upload} onClick={() => setForm({ kind: "bordereau", batchReference: "", rows: "" })}>
+            <Button icon={Upload} onClick={() => { action.setError(""); setForm({ kind: "bordereau", batchReference: "", rows: "" }); }}>
               Loan bordereau
             </Button>
           )
         }
       >
         {!hasCredit && <p className="ws-hint">This scheme has no Group credit benefit.</p>}
+        <ErrorNote error={loans.error || settling.error} />
         {result && (
           <p className="ws-hint">
             {result.batchReference}: {result.accepted} accepted · {result.referred} referred · {result.duplicates} already on the scheme · {result.rejected} rejected
@@ -491,7 +507,7 @@ function SchemeDetail({ session, notify, profile, schemes }) {
               render: (r) =>
                 r.status === "ACTIVE" &&
                 can(profile, "BILL_SCHEME") && (
-                  <Button variant="secondary" busy={action.busy} onClick={() => settle(r)}>
+                  <Button variant="secondary" busy={settling.busy} onClick={() => settle(r)}>
                     Settle early
                   </Button>
                 ),
@@ -602,7 +618,7 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
   const [form, setForm] = useState(null);
   const [impact, setImpact] = useState(null);
   const [deciding, setDeciding] = useState(null);
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const me = session?.username;
   const preview = async (next) => {
     setForm(next);
@@ -670,7 +686,7 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
                 (r.requestedBy === me ? (
                   <small className="ws-hint">Needs another person</small>
                 ) : (
-                  <Button variant="secondary" onClick={() => setDeciding({ ...r, approve: true, note: "" })}>
+                  <Button variant="secondary" onClick={() => { action.setError(""); setDeciding({ ...r, approve: true, note: "" }); }}>
                     Decide
                   </Button>
                 )),

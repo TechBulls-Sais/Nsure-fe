@@ -72,6 +72,11 @@ const number = (value, digits = 0) =>
       });
 
 const today = () => new Date().toISOString().slice(0, 10);
+// Every write on these screens shows its error next to the form or button that failed, so the error is not raised
+// a second time as a toast over the drawer's actions (D-41).
+const inlineErrors = (notify) => (message, tone) => {
+  if (tone !== "error") notify?.(message, tone);
+};
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const plusYear = (iso) => {
   if (!iso) return "";
@@ -244,7 +249,7 @@ function NewSchemeForm({ session, notify, onCancel, onCreated }) {
     renewalDate: plusYear(today()),
     billingFrequency: "MONTHLY",
   });
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const set = (key) => (e) => {
     const value = e.target.value;
     setForm((f) => ({
@@ -372,7 +377,7 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
   const manage = can(profile, "MANAGE_SCHEME");
   const [editing, setEditing] = useState(null); // null: closed, "": new, code: edit
   const [form, setForm] = useState(EMPTY_CATEGORY);
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const scheme = detail.scheme;
 
   const open = (category) => {
@@ -637,7 +642,7 @@ function UnderwritingPanel({ session, notify, member, onClose, onDone }) {
   const [decision, setDecision] = useState("ACCEPT");
   const [amount, setAmount] = useState(String(Number(member.requestedCover)));
   const [reason, setReason] = useState("");
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
   const confirm = useConfirm();
 
   const submit = async () => {
@@ -758,8 +763,8 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     csv: "",
   }));
   const [fileName, setFileName] = useState("");
-  const upload = useAction(notify);
-  const commit = useAction(notify);
+  const upload = useAction(inlineErrors(notify));
+  const commit = useAction(inlineErrors(notify));
 
   useEffect(() => {
     if (!batchRef) {
@@ -1054,7 +1059,7 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
   const scheme = detail.scheme;
   const [period, setPeriod] = useState(thisMonth());
   const [selected, setSelected] = useState(null);
-  const issue = useAction(notify);
+  const issue = useAction(inlineErrors(notify));
   const confirm = useConfirm();
 
   const invoice = detail.invoices.find((i) => i.ref === selected);
@@ -1142,7 +1147,7 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
 
 function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
   const [form, setForm] = useState({ amount: String(Number(invoice.outstanding)), reference: "" });
-  const action = useAction(notify);
+  const action = useAction(inlineErrors(notify));
 
   const submit = async () => {
     const r = await action.run(
