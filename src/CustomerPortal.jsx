@@ -188,6 +188,9 @@ export default function CustomerPortal({
   const [message, setMessage] = useState("");
   const customer = shop?.customer;
   const verified = customer?.kycStatus === "VERIFIED";
+  // NS-UX-001: when a policy, request or claim last changed, from its own record.
+  const updatedOn = (ref) =>
+    shop?.lastUpdated?.[ref] ? " · updated " + formatDate(shop.lastUpdated[ref]) : "";
   const products = shop?.products || [];
   const policies = shop?.policies || [];
   const requests = shop?.requests || [];
@@ -649,7 +652,10 @@ export default function CustomerPortal({
                               {policy.product}
                               {policy.tier ? " · " + policy.tier : ""}
                             </h3>
-                            <p className="customer-policy-reference">{policy.id}</p>
+                            <p className="customer-policy-reference">
+                              {policy.id}
+                              {updatedOn(policy.id)}
+                            </p>
                           </div>
                           <span className={"customer-policy-status" + chip}>
                             {(isActive || noCover) && <span aria-hidden="true" />}
@@ -792,6 +798,7 @@ export default function CustomerPortal({
                       </strong>
                       <small>
                         {item.id} · chosen {item.date} · {money(item.premium)} / month
+                        {updatedOn(item.id)}
                       </small>
                       {pending && (
                         <p>
@@ -872,6 +879,7 @@ export default function CustomerPortal({
                     <small>
                       Policy {item.policy} · {item.claimant}
                       {item.eventDate ? " · event " + formatDate(item.eventDate) : ""}
+                      {updatedOn(item.id)}
                     </small>
                     {item.status === "Rejected" && <p>Not approved: {item.rejectionReason}</p>}
                     {item.status === "Approved" && (
