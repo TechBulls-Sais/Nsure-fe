@@ -8,8 +8,9 @@ import "./access.css";
 // (nsure-be ApiAccessRules). A write may come back 202 AWAITING_APPROVAL when maker-checker applies: it is then
 // waiting for a second person, not failed.
 
-// Identity changes always need a second person (Nsure Life NS-UX-004): their checker cannot be switched off.
-const FOUR_EYES_LOCKED = new Set(["UPDATE_USER", "UPDATE_ROLE", "PERMISSIONS_ROLE"]);
+// Identity changes always need a second person (Nsure Life NS-UX-004): their checker cannot be switched off. Creating
+// or deleting a user who has access is one of them (D-03); a login with no access is applied at once.
+const FOUR_EYES_LOCKED = new Set(["CREATE_USER", "UPDATE_USER", "DELETE_USER", "UPDATE_ROLE", "PERMISSIONS_ROLE"]);
 
 // The Super Admin role keeps these so a mistaken edit cannot lock every administrator out of role grants.
 const ADMIN_LIFELINE = new Set(["PERMISSIONS_ROLE", "CHECKER_PERMISSIONS_ROLE"]);
@@ -22,10 +23,20 @@ const BREAK_GLASS = [
 ];
 const MAX_EMERGENCY_HOURS = 8;
 
-const CHECKER_CODES = ["CHECKER_UPDATE_USER", "CHECKER_UPDATE_ROLE", "CHECKER_PERMISSIONS_ROLE"];
+const CHECKER_CODES = [
+  "CHECKER_CREATE_USER",
+  "CHECKER_UPDATE_USER",
+  "CHECKER_DELETE_USER",
+  "CHECKER_UPDATE_ROLE",
+  "CHECKER_PERMISSIONS_ROLE",
+];
 
 // There is exactly one Super Admin role, recognised by its reserved name, as the server does (RoleCommandHandler).
 const isSuperAdminRole = (role) => String(role?.name || "").trim().toLowerCase() === "super admin";
+
+// A role that gives access (desk access, any permission, or Super Admin): creating or deleting its holder needs a
+// second person, as the server decides (UserCommandHandler). An unknown role is treated as giving access.
+const givesAccess = (role) => !role || role.deskAccess || (role.permissions || []).length > 0 || isSuperAdminRole(role);
 
 const PROTECTED_ROLE_NOTE =
   "A protected role is held by portal customers, so it can never be given permissions or desk access, and it " +
@@ -450,7 +461,7 @@ function describeCommand(command) {
   }
   return (
     Object.entries(body)
-      .filter(([key]) => key !== "password")
+      .filter(([key]) => key !== "password" && key !== "passwordHash")
       .map(([key, value]) => key + ": " + (Array.isArray(value) ? value.join(", ") : String(value)))
       .join(" · ") || "—"
   );
@@ -1371,6 +1382,11 @@ function Editor({ editor, setEditor, roles, rolesById, permissions, profile, all
                 </p>
               )}
             </fieldset>
+            {!form.id && (form.roleIds || []).some((id) => givesAccess(rolesById.get(id))) && (
+              <p className="subtitle">
+                A new user with access waits for a second administrator to approve it before they can sign in.
+              </p>
+            )}
           </>
         )}
       </form>
