@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { CheckCheck, FilePlus2, MessageSquarePlus, RefreshCw, Search, Send } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Ban, CheckCheck, FilePlus2, MessageSquarePlus, RefreshCw, Search, Send } from "lucide-react";
 import { request } from "./api";
 import {
   Badge,
@@ -37,7 +37,8 @@ const EVENT_FIELDS = {
   OperationalNotice: ["customerName"],
 };
 const COMMON_FIELDS = ["customerRef", "portalLink"];
-const STATUSES = ["QUEUED", "SUBMITTED", "DELIVERED", "READ", "FAILED", "SUPPRESSED"];
+// NS-SH09B-004: accepted by the provider is not delivered; delivery comes only from the provider's report.
+const STATUSES = ["QUEUED", "SUBMITTED", "ACCEPTED", "DELIVERED", "READ", "FAILED", "SUPPRESSED"];
 
 const label = (value) => String(value || "").replaceAll("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
 const channelName = (c) => (c === "WHATSAPP" ? "WhatsApp" : "Email");
@@ -53,7 +54,10 @@ export default function Communications({ session, notify, profile }) {
     const r = await action.run(() => request(session, "/communications/dispatch", { method: "POST" }));
     if (r) {
       const d = r.data;
-      notify(`Sent ${d.processed}: ${d.delivered} delivered, ${d.retrying} will retry, ${d.failed} failed`);
+      notify(
+        `Handed ${d.processed} to the provider: ${d.accepted} accepted, ${d.retrying} will retry, ${d.failed} failed. ` +
+          `${d.delivered} delivery report(s) received.`,
+      );
       all.reload();
       setRefresh((n) => n + 1);
     }
@@ -89,7 +93,14 @@ export default function Communications({ session, notify, profile }) {
         )}
       </Heading>
       <div className="stat-grid">
-        <Stat label="Queued" value={counts.QUEUED || 0} tone="amber" note="Waiting for the provider" loading={loading} />
+        <Stat label="Queued" value={counts.QUEUED || 0} tone="amber" note="Waiting to be sent" loading={loading} />
+        <Stat
+          label="With the provider"
+          value={(counts.SUBMITTED || 0) + (counts.ACCEPTED || 0)}
+          tone="blue"
+          note="Accepted, not yet reported delivered"
+          loading={loading}
+        />
         <Stat
           label="Delivered"
           value={(counts.DELIVERED || 0) + (counts.READ || 0)}
@@ -112,6 +123,7 @@ export default function Communications({ session, notify, profile }) {
         onChange={setTab}
         tabs={[
           ["messages", "Messages"],
+          ["delivery", "Delivery"],
           ["templates", "Templates"],
           ["preferences", "Preferences"],
           ["inbound", "Inbound"],
@@ -121,6 +133,7 @@ export default function Communications({ session, notify, profile }) {
       {tab === "messages" && (
         <Messages key={refresh} session={session} notify={notify} profile={profile} onChange={changed} />
       )}
+      {tab === "delivery" && <Delivery key={refresh} session={session} />}
       {tab === "templates" && <Templates session={session} notify={notify} profile={profile} />}
       {tab === "preferences" && <Preferences session={session} notify={notify} profile={profile} onChange={changed} />}
       {tab === "inbound" && <Inbound session={session} notify={notify} profile={profile} />}
@@ -141,6 +154,15 @@ function Messages({ session, notify, profile, onChange }) {
   const action = useAction(notify);
   const confirm = useConfirm();
   const manage = can(profile, "MANAGE_COMMUNICATION");
+  const me = profile?.username;
+  // SH09B failed-message queue: one person takes a failed message to work it.
+  const own = async (m, release) => {
+    const r = await action.run(
+      () => request(session, `/communications/messages/${m.id}/owner`, { method: "POST", body: release ? { release: true } : {} }),
+      release ? m.ref + " is back in the queue" : "You are working " + m.ref,
+    );
+    if (r) messages.reload();
+  };
   const retry = async (m) => {
     const ok = await confirm({
       title: "Retry " + m.ref + "?",
@@ -230,7 +252,16 @@ function Messages({ session, notify, profile, onChange }) {
               render: (m) => (m.templateCode ? `${m.templateCode} v${m.templateVersion}` : "Manual"),
             },
             { key: "attempts", label: "Tries", align: "right" },
-            { key: "status", label: "Status", render: (m) => <Badge>{label(m.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (m) => (
+                <>
+                  <Badge>{label(m.status)}</Badge>
+                  {m.owner && <small className="com-sub">Worked by {m.owner}</small>}
+                </>
+              ),
+            },
             {
               key: "act",
               label: "",
@@ -238,6 +269,16 @@ function Messages({ session, notify, profile, onChange }) {
                 m.status === "FAILED" &&
                 manage && (
                   <div className="ws-row-actions" onClick={(e) => e.stopPropagation()}>
+                    {!m.owner && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(m, false)}>
+                        Take
+                      </Button>
+                    )}
+                    {m.owner === me && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(m, true)}>
+                        Give back
+                      </Button>
+                    )}
                     <Button variant="secondary" icon={RefreshCw} busy={action.busy} onClick={() => retry(m)}>
                       Retry
                     </Button>
@@ -259,6 +300,7 @@ function Messages({ session, notify, profile, onChange }) {
           onClose={() => setOpen(null)}
         >
           <MessagePreview message={open} />
+          <MessageTrail session={session} id={open.id} key={open.id + ":" + open.status} />
         </Drawer>
       )}
       {composing && (
@@ -299,7 +341,16 @@ function MessagePreview({ message: m }) {
           <small>Last update</small>
           <strong>{when(m.updatedAt)}</strong>
         </div>
+        <div>
+          <small>Purpose</small>
+          <strong>{m.purpose ? label(m.purpose) : "—"}</strong>
+        </div>
+        <div>
+          <small>Recipient</small>
+          <strong>{m.recipientRole ? label(m.recipientRole) : "Customer"}</strong>
+        </div>
       </div>
+      {m.recipientBasis && <p className="com-sub">Why this recipient: {m.recipientBasis}</p>}
       {m.lastError && (
         <p className={"com-reason " + (m.status === "SUPPRESSED" ? "is-info" : "is-error")}>
           {m.status === "SUPPRESSED" ? "Not sent: " : "Provider error: "}
@@ -319,13 +370,107 @@ function MessagePreview({ message: m }) {
   );
 }
 
+/** NS-SH09B-007: every state of the message, who or what moved it, and the provider's own report as evidence. */
+function MessageTrail({ session, id }) {
+  const trail = useResource(session, "/communications/messages/" + id, null);
+  const steps = trail.data?.trail || [];
+  return (
+    <div className="com-trail">
+      <strong>Trail</strong>
+      <ErrorNote error={trail.error} />
+      {trail.loading && !steps.length && <p className="com-sub">Loading…</p>}
+      <ol>
+        {steps.map((e, i) => (
+          <li key={i}>
+            <Badge>{label(e.status)}</Badge> <span className="com-sub-inline">{when(e.occurredAt)}</span>
+            <small className="com-sub">
+              {e.detail}
+              {" · "}
+              {e.source === "PROVIDER" ? "provider" : e.source === "STAFF" ? e.actor : "system"}
+            </small>
+            {e.rawPayload && (
+              <details>
+                <summary>Provider report</summary>
+                <code className="ws-mono">{e.rawPayload}</code>
+              </details>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** SH09B delivery dashboard: per channel and per day over a period, from the message log. */
+function Delivery({ session }) {
+  const [days, setDays] = useState("30");
+  const metrics = useResource(session, "/communications/metrics?days=" + days, null);
+  const d = metrics.data;
+  return (
+    <Panel
+      title="Delivery"
+      subtitle="Messages raised in the period, by channel and state. Delivered counts only what the provider reported delivered."
+      action={
+        <select className="input" value={days} onChange={(e) => setDays(e.target.value)} aria-label="Period">
+          <option value="7">Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+        </select>
+      }
+    >
+      <ErrorNote error={metrics.error} />
+      <DataTable
+        rows={d?.channels}
+        loading={metrics.loading}
+        rowKey={(c) => c.channel}
+        empty="No messages in the period"
+        columns={[
+          { key: "channel", label: "Channel", render: (c) => channelName(c.channel) },
+          { key: "total", label: "Raised", align: "right" },
+          { key: "queued", label: "Queued", align: "right" },
+          { key: "inFlight", label: "With provider", align: "right" },
+          { key: "delivered", label: "Delivered", align: "right" },
+          { key: "read", label: "Read", align: "right" },
+          { key: "failed", label: "Failed", align: "right" },
+          { key: "suppressed", label: "Suppressed", align: "right" },
+          {
+            key: "deliveryRate",
+            label: "Delivered of sent",
+            align: "right",
+            render: (c) => (c.deliveryRate == null ? "—" : c.deliveryRate + "%"),
+          },
+        ]}
+      />
+      {d && (
+        <p className="com-sub">
+          {d.failedUnowned} failed message(s) nobody has taken yet. From {d.from}.
+        </p>
+      )}
+      <DataTable
+        rows={(d?.byDay || []).filter((x) => x.raised > 0).reverse()}
+        loading={metrics.loading}
+        rowKey={(x) => x.day}
+        empty="Nothing raised on any day in the period"
+        columns={[
+          { key: "day", label: "Day" },
+          { key: "raised", label: "Raised", align: "right" },
+          { key: "delivered", label: "Delivered", align: "right" },
+          { key: "failed", label: "Failed", align: "right" },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 function ManualMessage({ session, notify, onClose, onSent }) {
-  const empty = { customerRef: "", channel: "EMAIL", subject: "", body: "" };
+  const empty = { customerRef: "", channel: "EMAIL", subject: "", body: "", caseRef: "" };
   const [form, setForm] = useState(empty);
   const action = useAction(notify);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const submit = async () => {
-    const r = await action.run(() => request(session, "/communications/messages", { method: "POST", body: form }));
+    const { caseRef, ...rest } = form;
+    const body = caseRef.trim() ? { ...rest, caseRef: caseRef.trim() } : rest;
+    const r = await action.run(() => request(session, "/communications/messages", { method: "POST", body }));
     if (r) {
       notify(
         r.data.status === "SUPPRESSED"
@@ -351,6 +496,9 @@ function ManualMessage({ session, notify, onClose, onSent }) {
             <option value="EMAIL">Email</option>
             <option value="WHATSAPP">WhatsApp</option>
           </select>
+        </Field>
+        <Field label="Service case (optional)" hint="Joins the case's conversation">
+          <input value={form.caseRef} onChange={set("caseRef")} placeholder="SR-000123" />
         </Field>
         {form.channel === "EMAIL" && (
           <Field label="Subject" full>
@@ -395,6 +543,49 @@ function Templates({ session, notify, profile }) {
       templates.reload();
     }
   };
+  // D-22: an approved version is withdrawn without a replacement: one user asks with a reason, another confirms.
+  const [withdrawing, setWithdrawing] = useState(null);
+  const askWithdrawal = async () => {
+    const t = withdrawing.template;
+    const r = await action.run(
+      () =>
+        request(session, `/communications/templates/${t.id}/withdraw`, {
+          method: "POST",
+          body: { reason: withdrawing.reason.trim() },
+        }),
+      `Withdrawal of ${t.code} v${t.version} sent for approval`,
+    );
+    if (r) {
+      setWithdrawing(null);
+      setOpen(r.data);
+      templates.reload();
+    }
+  };
+  const decideWithdrawal = async (t, verdict) => {
+    const approveIt = verdict === "approve";
+    const ok = await confirm({
+      title: (approveIt ? "Withdraw " : "Keep ") + `${t.code} v${t.version}?`,
+      message: approveIt ? (
+        <>
+          No new <strong>{t.eventType}</strong> {channelName(t.channel)} message uses this version from now on, and no
+          other version replaces it. {t.withdrawalRequestedBy} asked: “{t.withdrawalReason}”.
+        </>
+      ) : (
+        <>The version stays approved and in use. The request from {t.withdrawalRequestedBy} is declined.</>
+      ),
+      confirmLabel: approveIt ? "Withdraw template" : "Decline withdrawal",
+      tone: approveIt ? "danger" : undefined,
+    });
+    if (!ok) return;
+    const r = await action.run(
+      () => request(session, `/communications/templates/${t.id}/withdraw/${verdict}`, { method: "POST" }),
+      approveIt ? `${t.code} v${t.version} withdrawn` : "Withdrawal declined",
+    );
+    if (r) {
+      setOpen(r.data);
+      templates.reload();
+    }
+  };
   const newVersion = (t) =>
     setDraft({
       code: t.code,
@@ -409,7 +600,7 @@ function Templates({ session, notify, profile }) {
     <>
       <Panel
         title="Templates"
-        subtitle="Approved versions are used for new messages. A change is a new version that another user approves."
+        subtitle="Approved versions are used for new messages. A change is a new version that another user approves; a withdrawal, also confirmed by another user, stops a version without replacing it."
         action={
           canDraft && (
             <Button
@@ -439,7 +630,18 @@ function Templates({ session, notify, profile }) {
             { key: "eventType", label: "Event" },
             { key: "channel", label: "Channel", render: (t) => channelName(t.channel) },
             { key: "audience", label: "Audience", render: (t) => label(t.audience) },
-            { key: "status", label: "Status", render: (t) => <Badge>{label(t.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (t) => (
+                <>
+                  <Badge tone={t.status === "WITHDRAWN" ? "red" : undefined}>{label(t.status)}</Badge>
+                  {t.status === "APPROVED" && t.withdrawalRequestedBy && (
+                    <small className="com-sub">Withdrawal asked by {t.withdrawalRequestedBy}</small>
+                  )}
+                </>
+              ),
+            },
             { key: "createdBy", label: "Drafted by" },
             {
               key: "approvedBy",
@@ -462,6 +664,24 @@ function Templates({ session, notify, profile }) {
                       New version
                     </Button>
                   )}
+                  {t.status === "APPROVED" && !t.withdrawalRequestedBy && (canDraft || canApprove) && (
+                    <Button variant="secondary" icon={Ban} onClick={() => setWithdrawing({ template: t, reason: "" })}>
+                      Withdraw
+                    </Button>
+                  )}
+                  {t.status === "APPROVED" &&
+                    t.withdrawalRequestedBy &&
+                    canApprove &&
+                    t.withdrawalRequestedBy !== profile?.username && (
+                      <>
+                        <Button icon={Ban} busy={action.busy} onClick={() => decideWithdrawal(t, "approve")}>
+                          Confirm withdrawal
+                        </Button>
+                        <Button variant="secondary" busy={action.busy} onClick={() => decideWithdrawal(t, "decline")}>
+                          Keep
+                        </Button>
+                      </>
+                    )}
                 </div>
               ),
             },
@@ -483,15 +703,45 @@ function Templates({ session, notify, profile }) {
               <Badge>{label(open.status)}</Badge>
             </p>
             <p className="com-sub">
-              Merge fields used: {open.placeholders.length ? open.placeholders.map((f) => `{{${f}}}`).join(", ") : "none"}
+              Purpose: {label(open.purpose)} (a service notice, never promotional) · Merge fields used:{" "}
+              {open.placeholders.length ? open.placeholders.map((f) => `{{${f}}}`).join(", ") : "none"}
               {open.status === "DRAFT" && open.createdBy === profile?.username &&
                 " · You drafted this, so another user approves it."}
             </p>
+            {open.withdrawalRequestedBy && (
+              <p className={"com-reason " + (open.status === "WITHDRAWN" ? "is-error" : "is-info")}>
+                {open.status === "WITHDRAWN"
+                  ? `Withdrawn by ${open.withdrawnBy} on ${when(open.withdrawnAt)}, asked by ${open.withdrawalRequestedBy}: `
+                  : `Withdrawal asked by ${open.withdrawalRequestedBy} on ${when(open.withdrawalRequestedAt)}, waiting for another approver: `}
+                {open.withdrawalReason}
+              </p>
+            )}
             <div className={"com-message " + (open.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
               {open.subject && <strong>{open.subject}</strong>}
               <p>{open.body}</p>
             </div>
           </div>
+        </Drawer>
+      )}
+      {withdrawing && (
+        <Drawer
+          title={`Withdraw ${withdrawing.template.code} v${withdrawing.template.version}`}
+          description="Stops new messages from using this version without replacing it. Another approver confirms before it takes effect; until then it is still used."
+          onClose={() => setWithdrawing(null)}
+        >
+          <FormGrid submitLabel="Ask for withdrawal" busy={action.busy} error={action.error} onSubmit={askWithdrawal}>
+            <Field label="Reason" full hint={`${withdrawing.reason.trim().length} / 500, at least 10`}>
+              <textarea
+                rows={3}
+                value={withdrawing.reason}
+                maxLength={500}
+                minLength={10}
+                required
+                placeholder="e.g. Gives the wrong appeal address"
+                onChange={(e) => setWithdrawing({ ...withdrawing, reason: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
         </Drawer>
       )}
       {draft && (
@@ -515,7 +765,34 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
   const [form, setForm] = useState(draft);
   const action = useAction(notify);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const fields = [...(EVENT_FIELDS[form.eventType] || []), ...COMMON_FIELDS];
+  // Template designer preview: rendered on the server with sample values, flagging fields the audience may not use.
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!form.body.trim()) {
+      setPreview(null);
+      return undefined;
+    }
+    let live = true;
+    const timer = setTimeout(async () => {
+      try {
+        const { data } = await request(session, "/communications/templates/preview", {
+          method: "POST",
+          body: { eventType: form.eventType, audience: form.audience, subject: form.subject, body: form.body },
+        });
+        if (live) setPreview(data);
+      } catch {
+        if (live) setPreview(null);
+      }
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [session, form.eventType, form.audience, form.subject, form.body]);
+  const fields =
+    preview?.knownFields ||
+    (form.audience === "INTERMEDIARY" ? ["policyRef", "product", "customerName", "intermediaryName", "portalLink"]
+      : [...(EVENT_FIELDS[form.eventType] || []), ...COMMON_FIELDS]);
   const submit = async () => {
     const { locked, ...body } = form;
     const r = await action.run(
@@ -565,6 +842,22 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
           <textarea rows={5} value={form.body} onChange={set("body")} maxLength={2000} required />
         </Field>
       </FormGrid>
+      {preview && (
+        <div className="com-preview">
+          <small className="com-sub">Preview with sample values · purpose {label(preview.purpose)}</small>
+          {preview.unknownFields.length > 0 && (
+            <p className="com-reason is-error">
+              {preview.unknownFields.map((f) => `{{${f}}}`).join(", ")}{" "}
+              {preview.unknownFields.length === 1 ? "is" : "are"} not available for this event and audience; approval will
+              be refused.
+            </p>
+          )}
+          <div className={"com-message " + (form.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
+            {preview.subject && <strong>{preview.subject}</strong>}
+            <p>{preview.body}</p>
+          </div>
+        </div>
+      )}
     </Drawer>
   );
 }
@@ -674,6 +967,7 @@ function Preferences({ session, notify, profile, onChange }) {
           </>
         )}
       </Panel>
+      {data && <Conversation session={session} customerRef={data.customerRef} key={data.customerRef + JSON.stringify(data.channels)} />}
       {data && can(profile, "MANAGE_COMMUNICATION") && (
         <Panel title="Change a channel" subtitle="Record the customer's own instruction. A new contact is unverified unless it matches their registered one.">
           <FormGrid submitLabel="Save preference" busy={save.busy} error={save.error} onSubmit={submit}>
@@ -707,6 +1001,40 @@ function Preferences({ session, notify, profile, onChange }) {
   );
 }
 
+/** SH09B case conversation timeline: what we sent the customer and what they sent us, with the service case. */
+function Conversation({ session, customerRef }) {
+  const items = useResource(session, "/communications/conversations/" + encodeURIComponent(customerRef), []);
+  return (
+    <Panel title="Conversation" subtitle="Messages sent and replies received, oldest first, with the service case each belongs to.">
+      <ErrorNote error={items.error} />
+      <DataTable
+        rows={items.data}
+        loading={items.loading}
+        rowKey={(i) => i.direction + i.ref}
+        empty="No messages with this customer yet"
+        columns={[
+          { key: "at", label: "When", render: (i) => when(i.at) },
+          { key: "direction", label: "", render: (i) => (i.direction === "IN" ? "Received" : "Sent") },
+          { key: "channel", label: "Channel", render: (i) => channelName(i.channel) },
+          {
+            key: "body",
+            label: "Message",
+            render: (i) => (
+              <>
+                {i.subject && <strong>{i.subject} </strong>}
+                {i.body}
+              </>
+            ),
+          },
+          { key: "caseRef", label: "Case", render: (i) => i.caseRef || "—" },
+          { key: "status", label: "Status", render: (i) => <Badge>{label(i.status)}</Badge> },
+          { key: "by", label: "By" },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 /**
  * Inbound correspondence (Solution Blueprint §5): replies matched to one customer are linked to a service case; an
  * unknown or ambiguous sender waits in triage until someone says who it is.
@@ -714,27 +1042,38 @@ function Preferences({ session, notify, profile, onChange }) {
 function Inbound({ session, notify, profile }) {
   const [status, setStatus] = useState("TRIAGE");
   const list = useResource(session, "/communications/inbound" + (status ? "?status=" + status : ""), []);
+  const methods = useResource(session, "/communications/inbound/verification-methods", []);
   const action = useAction(notify);
   const [assigning, setAssigning] = useState(null);
+  const manage = can(profile, "MANAGE_COMMUNICATION");
+  const me = profile?.username;
+  // AT-SH09B-03: an unverified sender is a verification task; it is linked only once someone records how they checked.
   const assign = async () => {
     const done = await action.run(
       () =>
         request(session, `/communications/inbound/${assigning.id}/assign`, {
           method: "POST",
-          body: { customerRef: assigning.customerRef },
+          body: { customerRef: assigning.customerRef, method: assigning.method, note: assigning.note || undefined },
         }),
-      "Linked to the customer's service case",
+      "Sender verified and linked to the customer's service case",
     );
     if (done) {
       setAssigning(null);
       list.reload();
     }
   };
+  const own = async (r, release) => {
+    const done = await action.run(
+      () => request(session, `/communications/inbound/${r.id}/owner`, { method: "POST", body: release ? { release: true } : {} }),
+      release ? "Task given back" : "You are verifying this sender",
+    );
+    if (done) list.reload();
+  };
   return (
     <>
       <Panel
         title="Inbound messages"
-        subtitle="Replies by Email and WhatsApp. A known sender joins their service case; others wait here for a person."
+        subtitle="Replies by Email and WhatsApp. A sender with a verified contact joins their service case; any other is a verification task: nothing about a policy is shared until someone verifies who sent it."
         action={
           <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter">
             <option value="TRIAGE">Needs triage</option>
@@ -755,17 +1094,48 @@ function Inbound({ session, notify, profile }) {
             { key: "channel", label: "Channel", render: (r) => channelName(r.channel) },
             { key: "sender", label: "From" },
             { key: "body", label: "Message" },
-            { key: "status", label: "Status", render: (r) => <Badge>{label(r.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => (
+                <>
+                  <Badge>{r.status === "TRIAGE" ? "Verify sender" : label(r.status)}</Badge>
+                  {r.status === "TRIAGE" ? (
+                    <small className="com-sub">
+                      {r.taskOwner ? "Worked by " + r.taskOwner : "Nobody has taken it"}
+                      {r.taskDueAt && " · due " + when(r.taskDueAt)}
+                    </small>
+                  ) : (
+                    r.verificationMethod && <small className="com-sub">Verified: {r.verificationMethod}</small>
+                  )}
+                </>
+              ),
+            },
             { key: "caseRef", label: "Case", render: (r) => r.caseRef || r.note || "—" },
             {
               key: "act",
               label: "",
               render: (r) =>
                 r.status === "TRIAGE" &&
-                can(profile, "MANAGE_COMMUNICATION") && (
-                  <Button variant="secondary" onClick={() => setAssigning({ id: r.id, customerRef: "" })}>
-                    Assign customer
-                  </Button>
+                manage && (
+                  <span className="ws-row-actions">
+                    {!r.taskOwner && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(r, false)}>
+                        Take
+                      </Button>
+                    )}
+                    {r.taskOwner === me && (
+                      <Button variant="secondary" busy={action.busy} onClick={() => own(r, true)}>
+                        Give back
+                      </Button>
+                    )}
+                    <Button
+                      variant="secondary"
+                      onClick={() => setAssigning({ id: r.id, customerRef: "", method: methods.data?.[0] || "", note: "" })}
+                    >
+                      Verify and link
+                    </Button>
+                  </span>
                 ),
             },
           ]}
@@ -774,10 +1144,10 @@ function Inbound({ session, notify, profile }) {
       {assigning && (
         <Drawer
           title="Who sent this?"
-          description="Check the sender against the customer record before linking it; never guess."
+          description="Verify the sender against the customer record before linking it; never guess, and share nothing about the policy until then."
           onClose={() => setAssigning(null)}
         >
-          <FormGrid busy={action.busy} error={action.error} onSubmit={assign} submitLabel="Link to customer">
+          <FormGrid busy={action.busy} error={action.error} onSubmit={assign} submitLabel="Verified: link to customer">
             <Field label="Customer reference" full>
               <input
                 required
@@ -785,6 +1155,16 @@ function Inbound({ session, notify, profile }) {
                 value={assigning.customerRef}
                 onChange={(e) => setAssigning({ ...assigning, customerRef: e.target.value })}
               />
+            </Field>
+            <Field label="How you verified the sender" full>
+              <select required value={assigning.method} onChange={(e) => setAssigning({ ...assigning, method: e.target.value })}>
+                {(methods.data || []).map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Note (optional)" full>
+              <input value={assigning.note} maxLength={500} onChange={(e) => setAssigning({ ...assigning, note: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { Pencil, Search } from "lucide-react";
-import { request } from "./api";
+import { Ban, CheckCheck, Eye, Pencil, Search } from "lucide-react";
+import { fetchFile, request } from "./api";
 import { Badge, Button, DataTable, Drawer, ErrorNote, Field, FormGrid, Heading, Panel, Stat, Tabs, can, pula, useAction, useResource, when } from "./ui/workspace";
 
 // One work queue across the modules with ownership and SLA, the workflow definitions and business calendar behind
@@ -35,7 +35,7 @@ export default function Operations({ session, notify, profile, go }) {
         tabs={[
           ["queue", "Queue"],
           ["workflow", "Workflows & calendar"],
-          can(profile, "READ_POLICY") && ["documents", "Documents"],
+          (can(profile, "READ_POLICY") || can(profile, "READ_CLAIM")) && ["documents", "Documents"],
           ["partners", "Partner requests"],
         ].filter(Boolean)}
       />
@@ -385,11 +385,20 @@ function Workflow({ session, notify, profile }) {
   );
 }
 
+const FILTER_FIELD = { flex: "1 1 160px", minWidth: 0 };
+const NO_FILTER = { q: "", customerRef: "", ownerRef: "", documentClass: "", from: "", to: "" };
+
+/**
+ * The document register (NS-SH09A-005): policy documents for policy readers, claim evidence for claim readers. Search
+ * covers the details and the text of generated and released PDFs; every search is logged as sensitive access.
+ */
 function Documents({ session, notify, profile }) {
-  const [q, setQ] = useState("");
-  const [term, setTerm] = useState("");
-  const docs = useResource(session, "/ops/documents" + (term ? "?q=" + encodeURIComponent(term) : ""), null);
+  const [form, setForm] = useState(NO_FILTER);
+  const [filter, setFilter] = useState(NO_FILTER);
+  const query = new URLSearchParams(Object.entries(filter).filter(([, v]) => v.trim())).toString();
+  const docs = useResource(session, "/ops/documents" + (query ? "?" + query : ""), null);
   const [hold, setHold] = useState(null);
+  const [access, setAccess] = useState(null);
   const action = useAction(notify);
   const save = async (doc, on, reason) => {
     const done = await action.run(
@@ -404,30 +413,78 @@ function Documents({ session, notify, profile }) {
   const retention = docs.data?.retention || {};
   return (
     <>
+      {can(profile, "READ_CLAIM") && <Quarantine session={session} notify={notify} profile={profile} onChange={docs.reload} />}
       <Panel
         title="Document register"
         subtitle={
-          "Every stored document has passed the upload scan. Retention: " +
+          "No malware scanner is connected: an upload is held in quarantine until a reviewer releases it, and is never shown as scanned. Retention: " +
           Object.entries(retention)
             .map(([k, v]) => k.toLowerCase() + " " + v + " years")
             .join(", ") +
           ". A document on legal hold is never eligible for disposal."
         }
-        action={
-          <form
-            className="ws-row-actions"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setTerm(q);
-            }}
-          >
-            <input aria-label="Search documents" value={q} onChange={(e) => setQ(e.target.value)} placeholder="File, type, policy, customer…" />
-            <Button type="submit" variant="secondary" icon={Search}>
-              Search
-            </Button>
-          </form>
-        }
       >
+        <form
+          style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            setFilter(form);
+          }}
+        >
+          <input
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Search documents"
+            value={form.q}
+            onChange={(e) => setForm({ ...form, q: e.target.value })}
+            placeholder="File, type, record, customer or words in the document…"
+          />
+          <input
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Customer reference"
+            value={form.customerRef}
+            onChange={(e) => setForm({ ...form, customerRef: e.target.value })}
+            placeholder="Customer, e.g. CUS-1001"
+          />
+          <input
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Policy or claim"
+            value={form.ownerRef}
+            onChange={(e) => setForm({ ...form, ownerRef: e.target.value })}
+            placeholder="Policy or claim number"
+          />
+          <select
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Document class"
+            value={form.documentClass}
+            onChange={(e) => setForm({ ...form, documentClass: e.target.value })}
+          >
+            <option value="">Every class</option>
+            {(docs.data?.classes || []).map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+          <input className="input" style={FILTER_FIELD} aria-label="Stored from" type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
+          <input className="input" style={FILTER_FIELD} aria-label="Stored to" type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />
+          <Button type="submit" variant="secondary" icon={Search}>
+            Search
+          </Button>
+          {query && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setForm(NO_FILTER);
+                setFilter(NO_FILTER);
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </form>
+        <p className="ws-hint">Searches are recorded in the audit trail as access to customer records.</p>
         <ErrorNote error={docs.error || action.error} />
         <DataTable
           rows={docs.data?.documents}
@@ -436,11 +493,41 @@ function Documents({ session, notify, profile }) {
           searchFrom={999}
           empty="No documents found"
           columns={[
-            { key: "fileName", label: "Document" },
-            { key: "documentClass", label: "Class" },
-            { key: "ownerRef", label: "Belongs to", render: (r) => r.ownerRef + " · " + r.customerName },
+            {
+              key: "fileName",
+              label: "Document",
+              render: (r) => (
+                <>
+                  {r.fileName}
+                  <small className="ws-hint">
+                    {" "}
+                    · {r.documentType}
+                    {r.contentMatch && " · matched in the document text"}
+                  </small>
+                </>
+              ),
+            },
+            {
+              key: "documentClass",
+              label: "Class",
+              render: (r) => (
+                <>
+                  {r.documentClass}
+                  <small className="ws-hint"> · {r.classification}</small>
+                </>
+              ),
+            },
+            {
+              key: "ownerRef",
+              label: "Belongs to",
+              render: (r) => r.ownerRef + " · " + (r.customerName || "—") + (r.customerRef ? " (" + r.customerRef + ")" : ""),
+            },
             { key: "uploadedAt", label: "Stored", render: (r) => when(r.uploadedAt) },
-            { key: "scanStatus", label: "Scan", render: (r) => <Badge tone="green">{r.scanStatus}</Badge> },
+            {
+              key: "scanStatus",
+              label: "Scan",
+              render: (r) => <Badge tone={SCAN_TONE[r.scanStatus] || "blue"}>{r.scanLabel || r.scanStatus}</Badge>,
+            },
             { key: "retainUntil", label: "Keep until" },
             {
               key: "legalHold",
@@ -450,26 +537,230 @@ function Documents({ session, notify, profile }) {
             {
               key: "act",
               label: "",
-              render: (r) =>
-                can(profile, "UPDATE_POLICY") &&
-                (r.legalHold ? (
-                  <Button variant="secondary" busy={action.busy} onClick={() => save(r, false)}>
-                    Lift hold
-                  </Button>
-                ) : (
-                  <Button variant="secondary" onClick={() => setHold({ doc: r, reason: "" })}>
-                    Legal hold
-                  </Button>
-                )),
+              render: (r) => (
+                <span className="ws-row-actions">
+                  {can(profile, "READ_AUDIT") && !r.docKey.startsWith("U:") && (
+                    <Button variant="secondary" onClick={() => setAccess(r)}>
+                      Access log
+                    </Button>
+                  )}
+                  {can(profile, "UPDATE_POLICY") &&
+                    (r.legalHold ? (
+                      <Button variant="secondary" busy={action.busy} onClick={() => save(r, false)}>
+                        Lift hold
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" onClick={() => setHold({ doc: r, reason: "" })}>
+                        Legal hold
+                      </Button>
+                    ))}
+                </span>
+              ),
             },
           ]}
         />
       </Panel>
+      {access && <AccessLog session={session} doc={access} onClose={() => setAccess(null)} />}
       {hold && (
         <Drawer title={"Legal hold on " + hold.doc.fileName} description="The document cannot be disposed of while the hold stands." onClose={() => setHold(null)}>
           <FormGrid submitLabel="Place hold" busy={action.busy} error={action.error} onSubmit={() => save(hold.doc, true, hold.reason)}>
             <Field label="Reason" full>
               <textarea value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} rows={3} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+/** Who opened a document, through which channel and when (SH09A: document access log; READ_AUDIT). */
+function AccessLog({ session, doc, onClose }) {
+  const owner = doc.ownerKind === "POLICY" ? "policies" : "claims";
+  const log = useResource(session, `/portfolio/${owner}/${encodeURIComponent(doc.ownerRef)}/document-access`, []);
+  const id = Number(doc.docKey.slice(2));
+  const rows = (log.data || []).filter((a) => a.documentId === id && a.kind === (doc.ownerKind === "POLICY" ? "POLICY" : "CLAIM"));
+  return (
+    <Drawer title={"Access log · " + doc.fileName} description={doc.ownerRef + " · every opening and download is recorded."} onClose={onClose}>
+      <ErrorNote error={log.error} />
+      <DataTable
+        rows={rows}
+        loading={log.loading}
+        rowKey={(a) => a.accessedAt + a.username}
+        empty="Nobody has opened this document"
+        columns={[
+          { key: "accessedAt", label: "When", render: (a) => when(a.accessedAt) },
+          { key: "username", label: "Who" },
+          { key: "channel", label: "Channel", render: (a) => (a.channel === "PORTAL" ? "Customer portal" : "Workspace") },
+        ]}
+      />
+    </Drawer>
+  );
+}
+
+const SCAN_TONE = { GENERATED: "blue", CLEAN: "green", RELEASED_UNSCANNED: "amber", NOT_SCANNED: "amber", QUARANTINED: "amber", REJECTED: "red" };
+
+/**
+ * The upload quarantine (AT-SH09A-02). No malware scanner is connected, so every upload waits here: it cannot be opened
+ * from the claim or count as evidence until a reviewer (RELEASE_DOCUMENT, not the uploader) releases it with a note,
+ * recorded as not scanned, or rejects it with a reason the uploader sees.
+ */
+function Quarantine({ session, notify, profile, onChange }) {
+  const [status, setStatus] = useState("PENDING");
+  const list = useResource(session, "/portfolio/document-quarantine?status=" + status, []);
+  const action = useAction(notify);
+  const [deciding, setDeciding] = useState(null);
+  const reviewer = can(profile, "RELEASE_DOCUMENT");
+  const me = profile?.username;
+  const inspect = async (u) => {
+    const tab = window.open("", "_blank");
+    try {
+      const url = URL.createObjectURL(await fetchFile(session, "/portfolio/document-quarantine/" + u.id + "/file"));
+      if (tab) tab.location.href = url;
+      else window.location.assign(url);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      tab?.close();
+      notify(error.message, "error");
+    }
+  };
+  const decide = async () => {
+    const release = deciding.verdict === "release";
+    const done = await action.run(
+      () =>
+        request(session, "/portfolio/document-quarantine/" + deciding.upload.id + "/" + deciding.verdict, {
+          method: "POST",
+          body: release ? { note: deciding.text.trim() } : { reason: deciding.text.trim() },
+        }),
+      release ? deciding.upload.fileName + " released to " + deciding.upload.ownerRef : deciding.upload.fileName + " rejected",
+    );
+    if (done) {
+      setDeciding(null);
+      list.reload();
+      onChange?.();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Upload quarantine"
+        subtitle="Uploaded files wait here before they can be opened or count as evidence. No malware scanner is connected, so a release is recorded as not scanned."
+        action={
+          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Quarantine filter">
+            <option value="PENDING">Waiting for release</option>
+            <option value="RELEASED">Released</option>
+            <option value="REJECTED">Rejected</option>
+            <option value="ALL">All</option>
+          </select>
+        }
+      >
+        <ErrorNote error={list.error || (!deciding && action.error)} />
+        <DataTable
+          rows={list.data}
+          loading={list.loading}
+          rowKey={(u) => u.id}
+          empty={status === "PENDING" ? "Nothing waiting for release" : "No uploads"}
+          emptyDetail="Files uploaded to a claim by staff or in the customer portal appear here first."
+          searchPlaceholder="Search file, claim, customer…"
+          columns={[
+            {
+              key: "fileName",
+              label: "Upload",
+              render: (u) => (
+                <>
+                  {u.fileName}
+                  <small className="ws-hint"> · {u.documentType} · {u.classification}</small>
+                </>
+              ),
+            },
+            { key: "ownerRef", label: "Claim", render: (u) => u.ownerRef + (u.customerName ? " · " + u.customerName : "") },
+            {
+              key: "uploadedBy",
+              label: "From",
+              render: (u) => u.uploadedBy + (u.channel === "PORTAL" ? " (customer portal)" : " (staff)"),
+            },
+            { key: "uploadedAt", label: "Received", render: (u) => when(u.uploadedAt) },
+            {
+              key: "scanResult",
+              label: "Scan",
+              render: (u) => (
+                <span title={u.scanDetail}>
+                  <Badge tone={u.scanResult === "CLEAN" ? "green" : u.scanResult === "INFECTED" ? "red" : "amber"}>
+                    {u.scanResult === "NOT_SCANNED" ? "Not scanned" : label(u.scanResult)}
+                  </Badge>
+                </span>
+              ),
+            },
+            {
+              key: "status",
+              label: "Decision",
+              render: (u) =>
+                u.status === "PENDING" ? (
+                  <Badge tone="amber">Waiting</Badge>
+                ) : (
+                  <>
+                    <Badge tone={u.status === "RELEASED" ? "green" : "red"}>{label(u.status)}</Badge>
+                    <small className="ws-hint">
+                      {" "}
+                      {u.decidedBy} · {u.decisionReason}
+                    </small>
+                  </>
+                ),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (u) =>
+                reviewer && (
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" icon={Eye} onClick={() => inspect(u)}>
+                      Inspect
+                    </Button>
+                    {u.status === "PENDING" &&
+                      (u.uploadedBy === me ? (
+                        <small className="ws-hint">You uploaded this; another reviewer decides</small>
+                      ) : (
+                        <>
+                          <Button icon={CheckCheck} onClick={() => setDeciding({ upload: u, verdict: "release", text: "" })}>
+                            Release
+                          </Button>
+                          <Button variant="secondary" icon={Ban} onClick={() => setDeciding({ upload: u, verdict: "reject", text: "" })}>
+                            Reject
+                          </Button>
+                        </>
+                      ))}
+                  </span>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {deciding && (
+        <Drawer
+          title={(deciding.verdict === "release" ? "Release " : "Reject ") + deciding.upload.fileName}
+          description={
+            deciding.verdict === "release"
+              ? "The file joins " + deciding.upload.ownerRef + " as " + deciding.upload.documentType + " and counts as evidence. It has not been scanned for malware: inspect it first."
+              : "The file stays out of " + deciding.upload.ownerRef + ". The uploader sees this reason."
+          }
+          onClose={() => setDeciding(null)}
+        >
+          <FormGrid
+            submitLabel={deciding.verdict === "release" ? "Release without a scan" : "Reject upload"}
+            busy={action.busy}
+            error={action.error}
+            onSubmit={decide}
+          >
+            <Field label={deciding.verdict === "release" ? "What you checked" : "Reason"} full hint="5 to 500 characters">
+              <textarea
+                rows={3}
+                required
+                minLength={5}
+                maxLength={500}
+                value={deciding.text}
+                placeholder={deciding.verdict === "release" ? "e.g. Opened it: an original death certificate" : "e.g. The page is unreadable; please upload a clear copy"}
+                onChange={(e) => setDeciding({ ...deciding, text: e.target.value })}
+              />
             </Field>
           </FormGrid>
         </Drawer>

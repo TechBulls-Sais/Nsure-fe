@@ -255,3 +255,12 @@
   text-align: right;
   white-space: nowrap;
 }
+/* AT-SH09A-02: an upload held in quarantine, or refused. */
+.wf-tag.is-held {
+  background: light-dark(rgba(217, 160, 20, 0.14), oklch(0.6 0.12 85 / 0.16));
+  color: light-dark(#5a3d06, oklch(0.86 0.109 82));
+}
+.wf-tag.is-refused {
+  background: light-dark(rgba(200, 40, 40, 0.1), oklch(0.6 0.18 25 / 0.16));
+  color: light-dark(#8a1c1c, oklch(0.82 0.1 25));
+}

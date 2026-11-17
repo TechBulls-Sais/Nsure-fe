@@ -68,3 +68,27 @@
     max-width: none;
   }
 }
+/* NS-SH09B-007: a message's trail, oldest first. */
+.com-trail {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid light-dark(#e9eee4, oklch(0.316 0.009 129));
+}
+.com-trail ol {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.com-trail code {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.com-sub-inline {
+  font-size: 13px;
+  color: light-dark(#3b4237, oklch(0.86 0.044 133));
+}
