@@ -69,6 +69,7 @@ function Queue({ session, notify, resource, go, me, profile }) {
       (view === "all" ||
         (view === "mine" && i.owner === me) ||
         (view === "unowned" && !i.owner) ||
+        (view === "approvals" && i.approval) ||
         (view === "breached" && i.breached)),
   );
   const teams = [...new Set(all.map((i) => i.team))];
@@ -90,6 +91,7 @@ function Queue({ session, notify, resource, go, me, profile }) {
               <option value="all">All work</option>
               <option value="mine">Mine</option>
               <option value="unowned">Unowned</option>
+              <option value="approvals">Approvals (all modules)</option>
               <option value="breached">Past SLA</option>
             </select>
             <select aria-label="Team" value={team} onChange={(e) => setTeam(e.target.value)}>
