@@ -128,7 +128,7 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { closeSession, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
+import { closeSession, fetchFile, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
 import AccessAdmin from "./AccessAdmin";
 import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
@@ -4268,7 +4268,7 @@ function Detail({
           notify={notify}
         />
       ) : tab === "Documents" && entity === "customer" ? (
-        <CustomerDocuments customer={r} policies={linkedPolicies} />
+        <CustomerDocuments session={session} customer={r} policies={linkedPolicies} notify={notify} />
       ) : historyType ? (
         <WorkflowTimeline session={session} type={historyType} refId={r.id} version={JSON.stringify(r)} />
       ) : (
@@ -4292,16 +4292,60 @@ function Detail({
     </>
   );
 }
-// Customer 360 documents (NS-SH01-006): the documents filed on this customer's own policies, found by reference.
-function CustomerDocuments({ customer, policies }) {
+// Customer 360 documents (NS-SH01-006): the identity evidence the customer sent for KYC, and the documents filed on
+// this customer's own policies, found by reference.
+function CustomerDocuments({ session, customer, policies, notify }) {
   const rows = policies.flatMap((p) =>
     (p.documents || []).map((d) => ({ ...d, policyRef: p.id, product: p.product })),
   );
+  const [identity, setIdentity] = useState([]);
+  useEffect(() => {
+    let live = true;
+    request(session, "/portfolio/customers/" + customer.id + "/identity-documents")
+      .then((r) => live && setIdentity(r.data || []))
+      .catch(() => live && setIdentity([]));
+    return () => {
+      live = false;
+    };
+  }, [session, customer.id]);
+  const open = async (d) => {
+    try {
+      const url = URL.createObjectURL(
+        await fetchFile(session, "/portfolio/customers/" + customer.id + "/identity-documents/" + d.id),
+      );
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      notify?.(error.message, "error");
+    }
+  };
   return (
     <>
+      <h3 className="section-title">Identity evidence</h3>
+      {identity.length ? (
+        identity.map((d) => (
+          <div className="linked-record" key={"id-" + d.id}>
+            <span className="stat-icon green">
+              <Icon name="BadgeCheck" />
+            </span>
+            <div>
+              <strong>{d.documentType}</strong>
+              <small>
+                {d.fileName} · sent {String(d.uploadedAt || "").slice(0, 10)} by {d.uploadedBy}
+              </small>
+            </div>
+            <Button variant="secondary" icon="Eye" onClick={() => open(d)}>
+              Open
+            </Button>
+          </div>
+        ))
+      ) : (
+        <p className="muted small">The customer has not sent identity evidence through the portal.</p>
+      )}
+      <h3 className="section-title">Policy documents</h3>
       <p className="subtitle">
-        Documents filed on {customer.name}'s policies. Identity evidence is checked in the KYC review (now{" "}
-        {kycLabel(customer).toLowerCase()}); each review is on the Activity tab.
+        Documents filed on {customer.name}'s policies. The KYC review (now {kycLabel(customer).toLowerCase()}) and
+        each upload are on the Activity tab.
       </p>
       {rows.length ? (
         rows.map((d) => (
