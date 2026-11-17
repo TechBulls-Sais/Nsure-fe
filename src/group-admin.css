@@ -100,6 +100,24 @@
   justify-content: space-between;
   gap: 10px;
 }
+.ga-status-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: light-dark(#fff6df, oklch(0.32 0.05 82));
+  color: light-dark(#523c0b, oklch(0.9 0.08 82));
+}
+/* Scheme lifecycle impact preview (GroupLife.jsx). */
+.gl-impact-list {
+  margin-top: 10px;
+}
+.gl-impact-list summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
 .ga-paid {
   display: flex;
   align-items: center;

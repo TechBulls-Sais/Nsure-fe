@@ -314,6 +314,10 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
             : undefined
         }
       >
+        {scheme && <Badge tone={scheme.status === "ACTIVE" ? "green" : scheme.status === "SUSPENDED" ? "amber" : undefined}>{label(scheme.status)}</Badge>}
+        {d && can(profile, "MANAGE_SCHEME") && !d.members.length && !d.censusBatches.length && !d.invoices.length && (
+          <DeleteScheme session={session} notify={notify} scheme={scheme} onDeleted={onBack} />
+        )}
         <Button variant="secondary" icon={ArrowLeft} onClick={onBack}>
           All schemes
         </Button>
@@ -347,15 +351,51 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
               ["members", `Members (${d.members.length})`],
               ["census", `Census (${d.censusBatches.length})`],
               ["billing", `Billing (${d.invoices.length})`],
+              ["claims", "Claims"],
             ]}
           />
+          {scheme.status !== "ACTIVE" && (
+            <p className="ga-status-note" role="status">
+              {scheme.status === "SUSPENDED"
+                ? "This scheme is suspended: cover is suspended for its members, and census changes and underwriting decisions wait until it is reactivated."
+                : "This scheme is closed: members' cover has ended and is kept as history. Invoices, receipts and claims for earlier cover can still be recorded."}
+            </p>
+          )}
           {tab === "categories" && <CategoriesTab {...shared} />}
           {tab === "members" && <MembersTab {...shared} />}
           {tab === "census" && <CensusTab {...shared} />}
           {tab === "billing" && <BillingTab {...shared} />}
+          {tab === "claims" && <ClaimsTab {...shared} />}
         </>
       )}
     </div>
+  );
+}
+
+/** Only a scheme with no contractual or financial activity can be deleted; the server checks and explains. */
+function DeleteScheme({ session, notify, scheme, onDeleted }) {
+  const confirm = useConfirm();
+  const action = useAction(notify);
+  const remove = async () => {
+    const ok = await confirm({
+      title: `Delete ${scheme.ref}?`,
+      message: (
+        <>
+          <strong>{scheme.name}</strong> has no members, census, invoices or claims, so it can be removed as set up by
+          mistake. A scheme with any activity is closed instead and keeps its history.
+        </>
+      ),
+      confirmLabel: "Delete scheme",
+      tone: "danger",
+    });
+    if (!ok) return;
+    const r = await action.run(() => request(session, `/group/schemes/${encodeURIComponent(scheme.ref)}`, { method: "DELETE" }), `Scheme ${scheme.ref} deleted`);
+    if (r) onDeleted();
+  };
+  return (
+    <Button variant="secondary" busy={action.busy} onClick={remove}>
+      Delete scheme
+    </Button>
   );
 }
 
@@ -1258,3 +1298,189 @@ function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
   );
 }
 
+// ── claims ──────────────────────────────────────────────────────────────────────────────────────
+
+const CLAIM_TONES = { NOTIFIED: "amber", APPROVED: "blue", IN_PAYMENT: "blue", PAID: "green", DECLINED: "red", CEASED: "gray" };
+const CLAIM_BENEFITS = {
+  GLA: "Group life assurance",
+  LUMP_SUM_DISABILITY: "Lump-sum disability",
+  CRITICAL_ILLNESS: "Critical illness",
+  FAMILY: "Family benefits",
+  INCOME_PROTECTION: "Income protection",
+};
+
+/** Claims on members' cover: notified against the episode on the event date, decided by a second person. */
+function ClaimsTab({ session, notify, profile, detail }) {
+  const scheme = detail.scheme;
+  const claims = useResource(session, `/group/schemes/${encodeURIComponent(scheme.ref)}/claims`, []);
+  const [form, setForm] = useState(null);
+  const [deciding, setDeciding] = useState(null);
+  const action = useAction(inlineErrors(notify));
+  const me = session?.username;
+  const keys = [...new Set(detail.members.map((m) => m.memberKey))].sort();
+
+  const open = (next) => {
+    action.setError("");
+    setForm(next);
+  };
+  const notifyClaim = async () => {
+    const r = await action.run(
+      () => request(session, `/group/schemes/${encodeURIComponent(scheme.ref)}/claims`, { method: "POST", body: form }),
+      "Claim notified",
+    );
+    if (r) {
+      setForm(null);
+      claims.reload();
+    }
+  };
+  const decide = async () => {
+    const { ref, ...body } = deciding;
+    const r = await action.run(
+      () => request(session, `/group/claims/${encodeURIComponent(ref)}/decision`, { method: "POST", body }),
+      `Claim ${ref} updated`,
+    );
+    if (r) {
+      setDeciding(null);
+      claims.reload();
+    }
+  };
+  const actionsFor = (c) => {
+    if (c.status === "NOTIFIED") {
+      return [
+        ...(can(profile, "APPROVE_CLAIM") && c.notifiedBy !== me ? [["APPROVE", "Approve"]] : []),
+        ...(can(profile, "ASSESS_CLAIM") ? [["DECLINE", "Decline"]] : []),
+      ];
+    }
+    if (c.status === "APPROVED") return can(profile, "SETTLE_CLAIM") ? [["PAY", "Record payment"]] : [];
+    if (c.status === "IN_PAYMENT") return can(profile, "ASSESS_CLAIM") ? [["REVIEW", "Review"], ["CEASE", "Cease"]] : [];
+    return [];
+  };
+
+  return (
+    <>
+      <Panel
+        title="Claims"
+        subtitle="Each claim sits on the member's cover episode for the event date. Only accepted cover is claimable; income benefits are paid until review or cessation."
+        action={
+          can(profile, "CREATE_CLAIM") && keys.length > 0 ? (
+            <Button icon={Plus} onClick={() => open({ memberKey: keys[0], benefitType: "GLA", eventDate: today(), amount: "", note: "" })}>
+              Notify claim
+            </Button>
+          ) : null
+        }
+      >
+        <ErrorNote error={claims.error} />
+        <DataTable
+          rows={claims.data}
+          loading={claims.loading}
+          rowKey={(c) => c.ref}
+          empty="No claims on this scheme"
+          emptyDetail="Claims notified against members' cover show here with their decision and payment."
+          searchPlaceholder="Search claim, member, benefit…"
+          columns={[
+            { key: "ref", label: "Claim", render: (c) => <span className="ws-mono">{c.ref}</span> },
+            { key: "member", label: "Member", render: (c) => (
+              <div className="ga-person">
+                <strong>{c.member}</strong>
+                <span className="ws-mono">{c.memberKey}</span>
+              </div>
+            ) },
+            { key: "benefitType", label: "Benefit", render: (c) => CLAIM_BENEFITS[c.benefitType] || c.benefitType },
+            { key: "eventDate", label: "Event", render: (c) => day(c.eventDate) },
+            { key: "claimedAmount", label: "Claimed", align: "right", render: (c) => pula(c.claimedAmount) },
+            { key: "approvedAmount", label: "Approved", align: "right", render: (c) => (c.approvedAmount != null ? pula(c.approvedAmount) : "—") },
+            { key: "status", label: "Status", render: (c) => <Badge tone={CLAIM_TONES[c.status]}>{label(c.status)}</Badge> },
+            { key: "nextReviewDate", label: "Next review", render: (c) => (c.nextReviewDate ? day(c.nextReviewDate) : "—") },
+            {
+              key: "actions",
+              label: "",
+              render: (c) => {
+                const acts = actionsFor(c);
+                if (!acts.length) {
+                  return c.status === "NOTIFIED" && c.notifiedBy === me ? <span className="ga-muted">Needs another approver</span> : null;
+                }
+                return (
+                  <div className="ws-row-actions">
+                    {acts.map(([act, text]) => (
+                      <Button key={act} variant="secondary" onClick={() => { action.setError(""); setDeciding({ ref: c.ref, action: act, note: "", amount: "", paymentReference: "", nextReviewDate: "", claim: c }); }}>
+                        {text}
+                      </Button>
+                    ))}
+                  </div>
+                );
+              },
+            },
+          ]}
+        />
+      </Panel>
+      {form && (
+        <Drawer title="Notify a claim" description={`${scheme.name} · the member must have had cover on the event date`} onClose={() => setForm(null)}>
+          <FormGrid onSubmit={notifyClaim} busy={action.busy} error={action.error} submitLabel="Notify claim">
+            <Field label="Member">
+              <select className="select" value={form.memberKey} onChange={(e) => setForm({ ...form, memberKey: e.target.value })}>
+                {keys.map((k) => (
+                  <option key={k} value={k}>
+                    {k} · {detail.members.find((m) => m.memberKey === k)?.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Benefit">
+              <select className="select" value={form.benefitType} onChange={(e) => setForm({ ...form, benefitType: e.target.value })}>
+                {Object.entries(CLAIM_BENEFITS).map(([k, text]) => (
+                  <option key={k} value={k}>
+                    {text}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Event date">
+              <input className="input" type="date" max={today()} value={form.eventDate} onChange={(e) => setForm({ ...form, eventDate: e.target.value })} required />
+            </Field>
+            <Field label={form.benefitType === "INCOME_PROTECTION" ? "Monthly benefit (BWP)" : "Amount claimed (BWP)"} hint={form.benefitType === "INCOME_PROTECTION" ? undefined : "Up to the cover in force on the event date"}>
+              <input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
+            </Field>
+            <Field label="Note" full hint="No medical detail here: evidence stays with the claims assessor.">
+              <textarea className="textarea" rows={2} maxLength={500} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {deciding && (
+        <Drawer
+          title={`${label(deciding.action)} ${deciding.ref}`}
+          description={`${deciding.claim.member} · ${CLAIM_BENEFITS[deciding.claim.benefitType] || deciding.claim.benefitType} · claimed ${pula(deciding.claim.claimedAmount)}`}
+          onClose={() => setDeciding(null)}
+        >
+          <FormGrid onSubmit={decide} busy={action.busy} error={action.error} submitLabel={label(deciding.action)}>
+            {deciding.action === "APPROVE" && (
+              <Field label="Approved amount (BWP)" hint={`Leave blank to approve the ${pula(deciding.claim.claimedAmount)} claimed`}>
+                <input className="input" type="number" min="0.01" step="0.01" value={deciding.amount} onChange={(e) => setDeciding({ ...deciding, amount: e.target.value })} />
+              </Field>
+            )}
+            {deciding.action === "PAY" && (
+              <Field label="Payment reference">
+                <input className="input" maxLength={80} value={deciding.paymentReference} onChange={(e) => setDeciding({ ...deciding, paymentReference: e.target.value })} required />
+              </Field>
+            )}
+            {(deciding.action === "REVIEW" || (deciding.action === "APPROVE" && deciding.claim.benefitType === "INCOME_PROTECTION")) && (
+              <Field label="Next review" hint="Leave blank for 12 months on">
+                <input className="input" type="date" value={deciding.nextReviewDate} onChange={(e) => setDeciding({ ...deciding, nextReviewDate: e.target.value })} />
+              </Field>
+            )}
+            <Field label="Note" full>
+              <textarea
+                className="textarea"
+                rows={3}
+                maxLength={500}
+                value={deciding.note}
+                onChange={(e) => setDeciding({ ...deciding, note: e.target.value })}
+                required={["DECLINE", "REVIEW", "CEASE"].includes(deciding.action)}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}

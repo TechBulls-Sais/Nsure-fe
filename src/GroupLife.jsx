@@ -19,6 +19,7 @@ import {
   useResource,
   when,
 } from "./ui/workspace";
+import "./group-admin.css";
 
 // Group lifecycle: scheme quotations through approval to activation, each scheme's benefits and certificates,
 // renewal, suspension and closure with their impact, and lender loan bordereaux.
@@ -46,7 +47,7 @@ const Q_STATUS = {
   DECLINED: ["Declined", "red"],
   SUPERSEDED: ["Superseded", undefined],
 };
-const EVENT = { RENEWAL: "Renewal", SUSPENSION: "Suspension", CLOSURE: "Closure", REACTIVATION: "Reactivation" };
+const EVENT = { RENEWAL: "Renewal", SUSPENSION: "Suspension", CLOSURE: "Closure", TRANSFER: "Transfer", REACTIVATION: "Reactivation" };
 const badge = (map, key) => {
   const [label, tone] = map[key] || [key];
   return <Badge tone={tone}>{label}</Badge>;
@@ -612,7 +613,117 @@ function SchemeDetail({ session, notify, profile, schemes }) {
   );
 }
 
-// ── renewals and closures ───────────────────────────────────────────────────────────────────────
+// ── renewals, suspensions, closures and transfers ──────────────────────────────────────────────
+
+const memberStatus = (s) => (s ? s.charAt(0) + s.slice(1).toLowerCase().replaceAll("_", " ") : "—");
+
+/** What a lifecycle request touches, shown before it is raised and again to the person who decides it (AT-GL01-03). */
+function ImpactSummary({ impact }) {
+  if (!impact) return null;
+  const ends = ["SUSPENSION", "CLOSURE", "TRANSFER"].includes(impact.eventType);
+  return (
+    <div className="form-label full gl-impact">
+      <span>What this affects</span>
+      <div className="ws-kv">
+        <div>
+          <small>Members affected</small>
+          <strong>{impact.affectedMembers ?? impact.activeMembers}</strong>
+        </div>
+        <div>
+          <small>Pending underwriting</small>
+          <strong>{impact.pendingUnderwriting}</strong>
+        </div>
+        <div>
+          <small>Unpaid invoices</small>
+          <strong>
+            {impact.unpaidInvoices} · {pula(impact.outstandingAmount)}
+          </strong>
+        </div>
+        {ends && (
+          <div>
+            <small>Invoiced past {impact.effectiveDate}</small>
+            <strong>{pula(impact.premiumInvoicedAfterEffective)}</strong>
+          </div>
+        )}
+        <div>
+          <small>Pending claims</small>
+          <strong>{impact.pendingClaims ?? 0}</strong>
+        </div>
+        <div>
+          <small>Income benefits in payment</small>
+          <strong>{impact.claimsInPayment ?? 0}</strong>
+        </div>
+        <div>
+          <small>Borrower certificates in force</small>
+          <strong>{impact.activeCreditLoans}</strong>
+        </div>
+        <div>
+          <small>Policy year</small>
+          <strong>
+            {impact.policyYear} (to {impact.renewalDate})
+          </strong>
+        </div>
+      </div>
+      {(impact.blockers || []).length > 0 && <ErrorNote error={impact.blockers.join(" ")} />}
+      <ul className="uw-list">
+        {impact.notes.map((n, i) => (
+          <li key={i}>{n}</li>
+        ))}
+      </ul>
+      {(impact.members || []).length > 0 && (
+        <details className="gl-impact-list">
+          <summary>Members affected ({impact.members.length})</summary>
+          <DataTable
+            rows={impact.members}
+            rowKey={(r) => r.memberKey}
+            searchFrom={20}
+            columns={[
+              { key: "memberKey", label: "Member", render: (r) => r.memberKey + " · " + r.name },
+              { key: "category", label: "Category" },
+              { key: "status", label: "Status", render: (r) => memberStatus(r.status) },
+              { key: "acceptedCover", label: "Cover in force", align: "right", render: (r) => pula(r.acceptedCover) },
+              { key: "pendingCover", label: "Pending", align: "right", render: (r) => (Number(r.pendingCover) > 0 ? pula(r.pendingCover) : "—") },
+            ]}
+          />
+        </details>
+      )}
+      {(impact.invoices || []).length > 0 && (
+        <details className="gl-impact-list">
+          <summary>Unpaid invoices ({impact.invoices.length})</summary>
+          <DataTable
+            rows={impact.invoices}
+            rowKey={(r) => r.ref}
+            searchFrom={20}
+            columns={[
+              { key: "ref", label: "Invoice" },
+              { key: "period", label: "Period" },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "outstanding", label: "Outstanding", align: "right", render: (r) => pula(r.outstanding) },
+            ]}
+          />
+        </details>
+      )}
+      {[...(impact.claims || []), ...(impact.incomeClaims || [])].length > 0 && (
+        <details className="gl-impact-list" open>
+          <summary>Claims pending or in payment ({(impact.claims || []).length + (impact.incomeClaims || []).length})</summary>
+          <DataTable
+            rows={[...(impact.claims || []), ...(impact.incomeClaims || [])]}
+            rowKey={(r) => r.ref}
+            searchFrom={20}
+            columns={[
+              { key: "ref", label: "Claim" },
+              { key: "member", label: "Member", render: (r) => r.memberKey + " · " + r.member },
+              { key: "benefitType", label: "Benefit", render: (r) => BENEFIT[r.benefitType] || r.benefitType },
+              { key: "eventDate", label: "Event" },
+              { key: "status", label: "Status", render: (r) => memberStatus(r.status) },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+            ]}
+          />
+        </details>
+      )}
+    </div>
+  );
+}
 
 function SchemeEvents({ session, notify, profile, resource, schemes, onChange }) {
   const [form, setForm] = useState(null);
@@ -623,12 +734,16 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
   const preview = async (next) => {
     setForm(next);
     setImpact(null);
-    if (!next.schemeRef) return;
-    const done = await action.run(() => request(session, "/group-life/schemes/" + next.schemeRef + "/impact?eventType=" + next.eventType));
+    if (!next.schemeRef || (next.eventType === "TRANSFER" && !next.targetSchemeRef)) return;
+    const params = new URLSearchParams({ eventType: next.eventType });
+    if (next.eventType !== "RENEWAL" && next.effectiveDate) params.set("effectiveDate", next.effectiveDate);
+    if (next.eventType === "TRANSFER") params.set("targetSchemeRef", next.targetSchemeRef);
+    const done = await action.run(() => request(session, "/group-life/schemes/" + next.schemeRef + "/impact?" + params));
     if (done) setImpact(done.data);
   };
   const submit = async () => {
     const { schemeRef, ...body } = form;
+    if (body.eventType !== "TRANSFER") delete body.targetSchemeRef;
     const done = await action.run(() => request(session, "/group-life/schemes/" + schemeRef + "/events", { method: "POST", body }), "Request raised for approval");
     if (done) {
       setForm(null);
@@ -645,15 +760,17 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
       onChange();
     }
   };
+  const nameOf = (ref) => schemes.find((s) => s.ref === ref)?.name || "";
+  const targets = form ? schemes.filter((s) => s.ref !== form.schemeRef && s.status === "ACTIVE") : [];
   return (
     <>
       <Panel
-        title="Renewals, suspensions and closures"
-        subtitle="Each request shows what it affects before approval and is decided by a second person. A scheme is closed, never deleted."
+        title="Renewals, suspensions, closures and transfers"
+        subtitle="Each request shows what it affects before approval and is decided by a second person. Members keep their cover history; a scheme is closed, never deleted once it has activity."
         action={
           can(profile, "MANAGE_SCHEME") &&
           schemes.length > 0 && (
-            <Button icon={Plus} onClick={() => preview({ schemeRef: schemes[0].ref, eventType: "RENEWAL", effectiveDate: today(), rateChangePercent: "", reason: "" })}>
+            <Button icon={Plus} onClick={() => preview({ schemeRef: schemes[0].ref, eventType: "RENEWAL", effectiveDate: today(), rateChangePercent: "", targetSchemeRef: "", reason: "" })}>
               New request
             </Button>
           )
@@ -667,8 +784,8 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
           empty="No requests"
           columns={[
             { key: "ref", label: "Request" },
-            { key: "schemeRef", label: "Scheme", render: (r) => r.schemeRef + " · " + (schemes.find((s) => s.ref === r.schemeRef)?.name || "") },
-            { key: "eventType", label: "Type", render: (r) => EVENT[r.eventType] || r.eventType },
+            { key: "schemeRef", label: "Scheme", render: (r) => r.schemeRef + " · " + nameOf(r.schemeRef) },
+            { key: "eventType", label: "Type", render: (r) => (EVENT[r.eventType] || r.eventType) + (r.targetSchemeRef ? " to " + r.targetSchemeRef : "") },
             { key: "effectiveDate", label: "Effective" },
             { key: "impact", label: "Impact", render: (r) => r.impact[0] },
             {
@@ -695,10 +812,10 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
         />
       </Panel>
       {form && (
-        <Drawer title="Renewal, suspension or closure" onClose={() => setForm(null)}>
+        <Drawer size="lg" title="Renewal, suspension, closure or transfer" onClose={() => setForm(null)}>
           <FormGrid submitLabel="Raise for approval" busy={action.busy} error={action.error} onSubmit={submit}>
             <Field label="Scheme">
-              <select value={form.schemeRef} onChange={(e) => preview({ ...form, schemeRef: e.target.value })}>
+              <select value={form.schemeRef} onChange={(e) => preview({ ...form, schemeRef: e.target.value, targetSchemeRef: "" })}>
                 {schemes.map((s) => (
                   <option key={s.ref} value={s.ref}>
                     {s.ref} · {s.name}
@@ -720,55 +837,45 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
                 <input type="number" step="0.01" value={form.rateChangePercent} onChange={(e) => setForm({ ...form, rateChangePercent: e.target.value })} />
               </Field>
             ) : (
-              <Field label="Effective date">
-                <input type="date" value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} required />
+              <Field label="Effective date" hint={form.eventType === "REACTIVATION" ? "First day back on cover" : "First day without cover on this scheme"}>
+                <input type="date" value={form.effectiveDate} onChange={(e) => preview({ ...form, effectiveDate: e.target.value })} required />
+              </Field>
+            )}
+            {form.eventType === "TRANSFER" && (
+              <Field label="Transfer members to" hint="An active scheme with the same category codes">
+                <select value={form.targetSchemeRef} onChange={(e) => preview({ ...form, targetSchemeRef: e.target.value })} required>
+                  <option value="">Choose a scheme</option>
+                  {targets.map((s) => (
+                    <option key={s.ref} value={s.ref}>
+                      {s.ref} · {s.name}
+                    </option>
+                  ))}
+                </select>
               </Field>
             )}
             <Field label="Reason" full>
               <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} rows={2} required />
             </Field>
-            {impact && (
-              <div className="form-label full">
-                <span>What this affects</span>
-                <div className="ws-kv">
-                  <div>
-                    <small>Active members</small>
-                    <strong>{impact.activeMembers}</strong>
-                  </div>
-                  <div>
-                    <small>Pending underwriting</small>
-                    <strong>{impact.pendingUnderwriting}</strong>
-                  </div>
-                  <div>
-                    <small>Unpaid invoices</small>
-                    <strong>
-                      {impact.unpaidInvoices} · {pula(impact.outstandingAmount)}
-                    </strong>
-                  </div>
-                  <div>
-                    <small>Policy year</small>
-                    <strong>
-                      {impact.policyYear} (to {impact.renewalDate})
-                    </strong>
-                  </div>
-                </div>
-                <ul className="uw-list">
-                  {impact.notes.map((n, i) => (
-                    <li key={i}>{n}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <ImpactSummary impact={impact} />
           </FormGrid>
         </Drawer>
       )}
       {deciding && (
-        <Drawer title={"Decide " + deciding.ref} description={(EVENT[deciding.eventType] || deciding.eventType) + " of " + deciding.schemeRef} onClose={() => setDeciding(null)}>
-          <ul className="uw-list">
-            {deciding.impact.map((n, i) => (
-              <li key={i}>{n}</li>
-            ))}
-          </ul>
+        <Drawer
+          size="lg"
+          title={"Decide " + deciding.ref}
+          description={(EVENT[deciding.eventType] || deciding.eventType) + " of " + deciding.schemeRef + (deciding.targetSchemeRef ? " to " + deciding.targetSchemeRef : "") + " from " + deciding.effectiveDate + " · requested by " + deciding.requestedBy + ": " + deciding.reason}
+          onClose={() => setDeciding(null)}
+        >
+          {deciding.impactDetail ? (
+            <ImpactSummary impact={deciding.impactDetail} />
+          ) : (
+            <ul className="uw-list">
+              {deciding.impact.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
+          )}
           <FormGrid submitLabel="Save decision" busy={action.busy} error={action.error} onSubmit={decide}>
             <Field label="Decision" full>
               <select value={deciding.approve ? "yes" : "no"} onChange={(e) => setDeciding({ ...deciding, approve: e.target.value === "yes" })}>
