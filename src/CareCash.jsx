@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Plus } from "lucide-react";
 import { request } from "./api";
+import { money } from "./data";
 import {
   Badge,
   Button,
@@ -14,7 +15,6 @@ import {
   Stat,
   Tabs,
   can,
-  pula,
   useAction,
   useResource,
   when,
@@ -69,7 +69,7 @@ export default function CareCash({ session, notify, profile }) {
         <Stat label="Payments in flight" value={all.filter((e) => e.status === "PAYMENT_SENT").length} tone="amber" loading={events.loading} />
         <Stat
           label="Paid"
-          value={pula(all.filter((e) => e.status === "PAID").reduce((s, e) => s + Number(e.amount), 0))}
+          value={money(all.filter((e) => e.status === "PAID").reduce((s, e) => s + Number(e.amount), 0))}
           loading={events.loading}
         />
       </div>
@@ -96,7 +96,7 @@ export default function CareCash({ session, notify, profile }) {
             columns={[
               { key: "policyRef", label: "Policy" },
               { key: "customerName", label: "Policyholder" },
-              { key: "dailyBenefit", label: "Daily benefit", align: "right", render: (r) => pula(r.dailyBenefit) },
+              { key: "dailyBenefit", label: "Daily benefit", align: "right", render: (r) => money(r.dailyBenefit) },
               { key: "coverStartDate", label: "Cover from", render: (r) => r.coverStartDate || "—" },
               { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "green" : undefined}>{r.status}</Badge> },
             ]}
@@ -161,7 +161,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
           <div className="ws-kv">
             <div>
               <small>Daily benefit</small>
-              <strong>{pula(v.dailyBenefit)}</strong>
+              <strong>{money(v.dailyBenefit)}</strong>
             </div>
             <div>
               <small>Cover from</small>
@@ -236,7 +236,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 { key: "eventType", label: "Type", render: (r) => TYPE[r.eventType] || r.eventType },
                 { key: "admitDate", label: "Admitted" },
                 { key: "paidDays", label: "Days paid", align: "right" },
-                { key: "amount", label: "Benefit", align: "right", render: (r) => pula(r.amount) },
+                { key: "amount", label: "Benefit", align: "right", render: (r) => money(r.amount) },
                 { key: "status", label: "Status", render: (r) => badge(r.status) },
               ]}
             />
@@ -305,7 +305,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             {preview && (
               <div className="form-label full">
                 <span>
-                  Benefit {pula(preview.amount)}
+                  Benefit {money(preview.amount)}
                   {preview.waiverMonths > 0 ? " · " + preview.waiverMonths + "-month premium waiver" : ""}
                 </span>
                 <Trace lines={preview.trace} />
@@ -357,7 +357,7 @@ function Events({ session, notify, profile, resource }) {
             { key: "eventType", label: "Type", render: (r) => TYPE[r.eventType] || r.eventType },
             { key: "admitDate", label: "Admitted" },
             { key: "paidDays", label: "Days paid", align: "right" },
-            { key: "amount", label: "Benefit", align: "right", sortValue: (r) => Number(r.amount), render: (r) => pula(r.amount) },
+            { key: "amount", label: "Benefit", align: "right", sortValue: (r) => Number(r.amount), render: (r) => money(r.amount) },
             { key: "status", label: "Status", render: (r) => badge(r.status) },
             { key: "createdBy", label: "Recorded by" },
           ]}
@@ -366,7 +366,7 @@ function Events({ session, notify, profile, resource }) {
       {open && (
         <Drawer
           title={open.ref + " · " + (TYPE[open.eventType] || open.eventType)}
-          description={open.lifeName + " on " + open.policyRef + " · " + pula(open.amount)}
+          description={open.lifeName + " on " + open.policyRef + " · " + money(open.amount)}
           onClose={() => setOpen(null)}
         >
           <Trace lines={open.trace} />
@@ -421,7 +421,7 @@ function Events({ session, notify, profile, resource }) {
               <p className="ws-hint">
                 {open.status === "PAYMENT_FAILED"
                   ? "The last payment failed or was returned. Correct the payout details, then send it again under a new instruction."
-                  : "Sends a payment instruction for " + pula(open.amount) + ". It counts as paid only once the provider confirms settlement."}
+                  : "Sends a payment instruction for " + money(open.amount) + ". It counts as paid only once the provider confirms settlement."}
               </p>
               <FormGrid
                 submitLabel={open.status === "PAYMENT_FAILED" ? "Send payment again" : "Send payment"}
