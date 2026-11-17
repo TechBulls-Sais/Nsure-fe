@@ -236,6 +236,43 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
 
   const open = c && ["REFERRED", "EVIDENCE_PENDING", "OFFERED", "ACCEPTED"].includes(c.status);
 
+  const evidenceColumns = [
+    { key: "requirement", label: "Requirement" },
+    { key: "lifeName", label: "Life" },
+    {
+      key: "status",
+      label: "Status",
+      render: (r) =>
+        r.status === "REQUESTED" ? (
+          <Badge tone={r.overdue ? "red" : "amber"}>{r.overdue ? "Overdue" : "Requested"}</Badge>
+        ) : (
+          <Badge tone={r.status === "RECEIVED" ? "green" : undefined}>
+            {r.status === "RECEIVED" ? "Received" : "Waived"}
+          </Badge>
+        ),
+    },
+    { key: "dueDate", label: "Due" },
+    {
+      key: "note",
+      label: "Detail",
+      render: (r) => r.note || (r.restricted && r.status !== "REQUESTED" ? "Restricted" : "—"),
+    },
+    {
+      key: "act",
+      label: "",
+      render: (r) =>
+        canDecide &&
+        r.status === "REQUESTED" && (
+          <Button
+            variant="secondary"
+            onClick={() => setForm({ kind: "resolve", id: r.id, status: "RECEIVED", note: "" })}
+          >
+            Record
+          </Button>
+        ),
+    },
+  ];
+
   return (
     <Drawer
       size="lg"
@@ -340,7 +377,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
 
           <Panel
             title="Evidence"
-            subtitle="Clinical evidence is marked restricted: its detail is shown to underwriters only."
+            subtitle="Documents and checks asked of each life. Clinical evidence is in the medical panel below."
             action={
               canDecide &&
               open &&
@@ -364,48 +401,28 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
             }
           >
             <DataTable
-              rows={d.evidence}
+              rows={d.evidence.filter((r) => !r.restricted)}
               rowKey={(r) => r.id}
               empty="No evidence requested"
               searchFrom={99}
-              columns={[
-                { key: "requirement", label: "Requirement" },
-                { key: "lifeName", label: "Life" },
-                {
-                  key: "status",
-                  label: "Status",
-                  render: (r) =>
-                    r.status === "REQUESTED" ? (
-                      <Badge tone={r.overdue ? "red" : "amber"}>{r.overdue ? "Overdue" : "Requested"}</Badge>
-                    ) : (
-                      <Badge tone={r.status === "RECEIVED" ? "green" : undefined}>
-                        {r.status === "RECEIVED" ? "Received" : "Waived"}
-                      </Badge>
-                    ),
-                },
-                { key: "dueDate", label: "Due" },
-                {
-                  key: "note",
-                  label: "Detail",
-                  render: (r) => r.note || (r.restricted && r.status !== "REQUESTED" ? "Restricted" : "—"),
-                },
-                {
-                  key: "act",
-                  label: "",
-                  render: (r) =>
-                    canDecide &&
-                    r.status === "REQUESTED" && (
-                      <Button
-                        variant="secondary"
-                        onClick={() => setForm({ kind: "resolve", id: r.id, status: "RECEIVED", note: "" })}
-                      >
-                        Record
-                      </Button>
-                    ),
-                },
-              ]}
+              columns={evidenceColumns}
             />
           </Panel>
+
+          {/* IL02 medical panel: restricted clinical evidence on its own; its detail only for underwriters. */}
+          {d.evidence.some((r) => r.restricted) && (
+            <Panel
+              title="Medical evidence"
+              subtitle="Restricted: the clinical detail is shown to underwriters only; others see that it exists."
+            >
+              <DataTable
+                rows={d.evidence.filter((r) => r.restricted)}
+                rowKey={(r) => r.id}
+                searchFrom={99}
+                columns={evidenceColumns}
+              />
+            </Panel>
+          )}
 
           {d.lives.length > 0 && (
             <Panel title="Lives on the application">
@@ -461,6 +478,15 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                         .join(" · ") || "—",
                   },
                   { key: "reason", label: "Reason" },
+                  {
+                    key: "basis",
+                    label: "Made on",
+                    // IL02: the life, the benefit and the evidence the decision rested on (recorded from now on).
+                    render: (r) =>
+                      [r.lifeRef, r.benefit, r.sumAssured != null && pula(r.sumAssured), r.evidenceBasis]
+                        .filter(Boolean)
+                        .join(" · ") || "—",
+                  },
                   {
                     key: "decidedBy",
                     label: "By",
