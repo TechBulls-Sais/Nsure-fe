@@ -130,6 +130,9 @@ export default function GroupAdmin({ session, notify, profile }) {
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const schemes = useResource(session, "/group/schemes", []);
+  const queue = useResource(session, "/group/underwriting-queue", []);
+  const arrears = useResource(session, "/group/arrears", []);
+  const [deciding, setDeciding] = useState(null);
 
   if (selected) {
     return (
@@ -240,6 +243,84 @@ export default function GroupAdmin({ session, notify, profile }) {
           ))}
         </div>
       )}
+
+      <Panel
+        title="Member underwriting queue"
+        subtitle="Cover pending underwriting across all schemes, oldest first: requested against the free-cover limit, the actively-at-work declaration and why it was referred."
+      >
+        <ErrorNote error={queue.error} />
+        <DataTable
+          rows={queue.data}
+          loading={queue.loading}
+          rowKey={(m) => m.memberId}
+          empty="Nothing waiting for underwriting"
+          searchPlaceholder="Search scheme, member…"
+          columns={[
+            { key: "schemeRef", label: "Scheme", render: (m) => `${m.schemeRef} · ${m.schemeName}` },
+            { key: "memberKey", label: "Member", render: (m) => (
+              <div className="ga-person">
+                <strong>{m.name}</strong>
+                <span className="ws-mono">{m.memberKey}</span>
+              </div>
+            ) },
+            { key: "requestedCover", label: "Requested", align: "right", render: (m) => pula(m.requestedCover) },
+            { key: "freeCoverLimit", label: "Free cover limit", align: "right", render: (m) => pula(m.freeCoverLimit) },
+            { key: "pendingCover", label: "Pending", align: "right", render: (m) => <strong className="ga-pending">{pula(m.pendingCover)}</strong> },
+            { key: "activelyAtWork", label: "At work", render: (m) => (m.activelyAtWork == null ? "Not declared" : m.activelyAtWork ? "Yes" : "No") },
+            { key: "referredBecause", label: "Referred because", render: (m) => m.referredBecause || "—" },
+            { key: "schemeCoverPending", label: "Scheme pending / in force", align: "right", render: (m) => `${pula(m.schemeCoverPending)} / ${pula(m.schemeCoverInForce)}` },
+            { key: "waitingSince", label: "Waiting since", render: (m) => when(m.waitingSince) },
+            ...(can(profile, "UNDERWRITE_MEMBER")
+              ? [{
+                  key: "act",
+                  label: "",
+                  render: (m) =>
+                    m.schemeStatus === "ACTIVE" ? (
+                      <Button icon={ShieldCheck} onClick={() => setDeciding({ ...m, id: m.memberId, salary: null })}>
+                        Decide
+                      </Button>
+                    ) : (
+                      <span className="ga-muted">Scheme {label(m.schemeStatus)}</span>
+                    ),
+                }]
+              : []),
+          ]}
+        />
+      </Panel>
+      {deciding && (
+        <UnderwritingPanel
+          session={session}
+          notify={notify}
+          member={deciding}
+          onClose={() => setDeciding(null)}
+          onDone={() => {
+            setDeciding(null);
+            queue.reload();
+            schemes.reload();
+          }}
+        />
+      )}
+
+      <Panel title="Arrears" subtitle="Scheme invoices still owed after their billing month ended, oldest first.">
+        <ErrorNote error={arrears.error} />
+        <DataTable
+          rows={arrears.data}
+          loading={arrears.loading}
+          rowKey={(i) => i.invoiceRef}
+          empty="No scheme is in arrears"
+          searchPlaceholder="Search scheme, invoice…"
+          columns={[
+            { key: "invoiceRef", label: "Invoice", render: (i) => <span className="ws-mono">{i.invoiceRef}</span> },
+            { key: "schemeRef", label: "Scheme", render: (i) => `${i.schemeRef} · ${i.schemeName}` },
+            { key: "period", label: "Period" },
+            { key: "policyYear", label: "Year", align: "right", render: (i) => i.policyYear ?? "—" },
+            { key: "outstanding", label: "Outstanding", align: "right", render: (i) => <strong className="ga-bad">{pula(i.outstanding)}</strong> },
+            { key: "disputedAmount", label: "Disputed", align: "right", render: (i) => (Number(i.disputedAmount) > 0 ? pula(i.disputedAmount) : "—") },
+            { key: "daysOverdue", label: "Days overdue", align: "right" },
+            { key: "status", label: "Status", render: (i) => <Badge tone={INVOICE_TONES[i.status]}>{label(i.status)}</Badge> },
+          ]}
+        />
+      </Panel>
     </div>
   );
 }
@@ -313,7 +394,8 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
         title={scheme?.name || "Scheme"}
         subtitle={
           scheme
-            ? `Scheme year ${day(scheme.inceptionDate)} – ${day(scheme.renewalDate)} · ${label(scheme.billingFrequency)} billing`
+            ? `Policy year ${scheme.policyYear ?? 1} to ${day(scheme.renewalDate)} · in force from ${day(scheme.inceptionDate)} · ${label(scheme.billingFrequency)} billing` +
+              (scheme.quoteRef ? ` · accepted terms ${scheme.quoteRef}` : "")
             : undefined
         }
       >
@@ -355,6 +437,7 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
               ["census", `Census (${d.censusBatches.length})`],
               ["billing", `Billing (${d.invoices.length})`],
               ["claims", "Claims"],
+              ["timeline", "Timeline & rules"],
             ]}
           />
           {scheme.status !== "ACTIVE" && (
@@ -369,6 +452,7 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
           {tab === "census" && <CensusTab {...shared} />}
           {tab === "billing" && <BillingTab {...shared} />}
           {tab === "claims" && <ClaimsTab {...shared} />}
+          {tab === "timeline" && <TimelineTab {...shared} />}
         </>
       )}
     </div>
@@ -1212,6 +1296,7 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
               <span className={"ws-mono" + (i.ref === selected ? " ga-current" : "")}>{i.ref}</span>
             ) },
             { key: "period", label: "Period" },
+            { key: "policyYear", label: "Year", align: "right", render: (i) => i.policyYear ?? "—" },
             { key: "memberCount", label: "Members", align: "right" },
             { key: "amount", label: "Amount", align: "right", render: (i) => pula(i.amount) },
             { key: "paidAmount", label: "Paid", align: "right", render: (i) => pula(i.paidAmount) },
@@ -1585,6 +1670,71 @@ function ClaimsTab({ session, notify, profile, detail }) {
           </FormGrid>
         </Drawer>
       )}
+    </>
+  );
+}
+
+// ── master-policy timeline and resolved rules ───────────────────────────────────────────────────
+
+/** The master policy in date order (GL01) and the rule set its categories and benefits resolve to (GL02). */
+function TimelineTab({ session, detail }) {
+  const ref = encodeURIComponent(detail.scheme.ref);
+  const timeline = useResource(session, `/group-life/schemes/${ref}/timeline`, []);
+  const rules = useResource(session, `/group-life/schemes/${ref}/resolved-rules`, null);
+  const r = rules.data;
+  return (
+    <>
+      <Panel title="Master-policy timeline" subtitle="Quote versions and decisions, activation, plan approvals, renewals, suspensions, transfers and closure.">
+        <ErrorNote error={timeline.error} />
+        <DataTable
+          rows={timeline.data}
+          loading={timeline.loading}
+          rowKey={(e) => `${e.at}-${e.title}`}
+          empty="Nothing on the timeline yet"
+          searchFrom={30}
+          columns={[
+            { key: "at", label: "When", render: (e) => when(e.at) },
+            { key: "kind", label: "Kind", render: (e) => <Badge>{label(e.kind)}</Badge> },
+            { key: "title", label: "Event" },
+            { key: "detail", label: "Detail", render: (e) => e.detail || "—" },
+            { key: "actor", label: "By", render: (e) => e.actor || "—" },
+          ]}
+        />
+      </Panel>
+      <Panel title="Resolved rules" subtitle={r?.acceptedTerms ? `From accepted terms ${r.acceptedTerms}; category terms override scheme and product defaults.` : "Category terms override scheme and product defaults."}>
+        <ErrorNote error={rules.error} />
+        <DataTable
+          rows={r?.categories || []}
+          loading={rules.loading}
+          rowKey={(c) => c.category}
+          empty="No categories"
+          searchFrom={30}
+          columns={[
+            { key: "category", label: "Category", render: (c) => `${c.category} · ${c.name}` },
+            { key: "cover", label: "Cover" },
+            { key: "freeCoverLimit", label: "Free cover", align: "right", render: (c) => pula(c.freeCoverLimit) },
+            { key: "ratePerMille", label: "Rate ‰", align: "right", render: (c) => number(c.ratePerMille, 2) },
+            { key: "entryAges", label: "Entry ages" },
+            { key: "lateEntryDays", label: "Late entry", render: (c) => (c.lateEntryDays != null ? `${c.lateEntryDays} days` : "Not configured") },
+            { key: "members", label: "Members", align: "right" },
+          ]}
+        />
+        <DataTable
+          rows={r?.benefits || []}
+          loading={rules.loading}
+          rowKey={(b) => b.benefitType}
+          empty="No scheme benefits defined (group life only)"
+          searchFrom={30}
+          columns={[
+            { key: "benefitType", label: "Benefit", render: (b) => label(b.benefitType) },
+            { key: "basis", label: "Basis", render: (b) => label(b.basis) },
+            { key: "amount", label: "Amount", align: "right", render: (b) => (b.fixedAmount != null ? pula(b.fixedAmount) : b.multiple != null ? number(b.multiple, 2) : "—") },
+            { key: "productMaximum", label: "Product maximum", align: "right", render: (b) => (b.productMaximum != null ? pula(b.productMaximum) : "—") },
+            { key: "source", label: "Source" },
+            { key: "approvalStatus", label: "Approval", render: (b) => <Badge tone={b.approvalStatus === "PENDING" ? "amber" : "green"}>{label(b.approvalStatus)}</Badge> },
+          ]}
+        />
+      </Panel>
     </>
   );
 }

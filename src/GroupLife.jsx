@@ -366,6 +366,8 @@ function SchemeDetail({ session, notify, profile, schemes }) {
   const benefits = useResource(session, base && base + "/benefits", []);
   const certificates = useResource(session, base && base + "/certificates", []);
   const loans = useResource(session, base && base + "/credit-loans", []);
+  const bordereaux = useResource(session, base && base + "/bordereaux", []);
+  const [loan, setLoan] = useState(null);
   const [form, setForm] = useState(null);
   const [certificate, setCertificate] = useState(null);
   const [result, setResult] = useState(null);
@@ -393,6 +395,7 @@ function SchemeDetail({ session, notify, profile, schemes }) {
       setResult(done.data);
       setForm(null);
       loans.reload();
+      bordereaux.reload();
     }
   };
   const [settlement, setSettlement] = useState(null); // the early-settlement preview being confirmed
@@ -527,10 +530,31 @@ function SchemeDetail({ session, notify, profile, schemes }) {
             · premium {pula(result.premiumTotal)}
           </p>
         )}
+        {(bordereaux.data || []).length > 0 && (
+          <details className="gl-impact-list">
+            <summary>Bordereau history ({bordereaux.data.length} file(s))</summary>
+            <DataTable
+              rows={bordereaux.data}
+              rowKey={(b) => b.batchReference}
+              searchFrom={20}
+              columns={[
+                { key: "batchReference", label: "File" },
+                { key: "receivedAt", label: "Received", render: (b) => when(b.receivedAt) },
+                { key: "loans", label: "Loans", align: "right" },
+                { key: "active", label: "Covered", align: "right" },
+                { key: "referred", label: "Referred", align: "right" },
+                { key: "settled", label: "Settled", align: "right" },
+                { key: "coverAmount", label: "Cover", align: "right", render: (b) => pula(b.coverAmount) },
+                { key: "premium", label: "Premium", align: "right", render: (b) => pula(b.premium) },
+              ]}
+            />
+          </details>
+        )}
         <DataTable
           rows={loans.data}
           loading={loans.loading}
           rowKey={(r) => r.id}
+          onRowClick={setLoan}
           empty="No loans"
           columns={[
             { key: "certificateNo", label: "Certificate" },
@@ -589,6 +613,52 @@ function SchemeDetail({ session, notify, profile, schemes }) {
               <strong>{certificate.benefits.map((b) => BENEFIT[b] || b).join(", ")}</strong>
             </div>
           </div>
+          <div className="ws-form-actions">
+            <Button variant="secondary" onClick={() => window.print()}>
+              Print certificate
+            </Button>
+          </div>
+        </Drawer>
+      )}
+      {loan && (
+        <Drawer title={"Certificate " + loan.certificateNo} description={"Borrower cover under " + current + " · lender loan " + loan.lenderLoanId} onClose={() => setLoan(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Borrower</small>
+              <strong>{loan.borrowerName}</strong>
+            </div>
+            <div>
+              <small>Loan / cover</small>
+              <strong>
+                {pula(loan.loanAmount)} / {pula(loan.coverAmount)}
+              </strong>
+            </div>
+            <div>
+              <small>Term</small>
+              <strong>{loan.termMonths} months from {loan.startDate}</strong>
+            </div>
+            <div>
+              <small>Single premium</small>
+              <strong>{pula(loan.premium)}</strong>
+            </div>
+            <div>
+              <small>Status</small>
+              <strong>{loan.status.charAt(0) + loan.status.slice(1).toLowerCase()}</strong>
+            </div>
+            <div>
+              <small>Bordereau</small>
+              <strong>{loan.batchRef}</strong>
+            </div>
+            {loan.settledOn && (
+              <div>
+                <small>Settled</small>
+                <strong>
+                  {loan.settledOn} · refund {pula(loan.refund)}
+                </strong>
+              </div>
+            )}
+          </div>
+          {loan.note && <p className="ws-hint">{loan.note}</p>}
           <div className="ws-form-actions">
             <Button variant="secondary" onClick={() => window.print()}>
               Print certificate
@@ -748,6 +818,25 @@ function ImpactSummary({ impact }) {
           <li key={i}>{n}</li>
         ))}
       </ul>
+      {(impact.comparison || []).length > 0 && (
+        <details className="gl-impact-list" open>
+          <summary>Renewal comparison: expiring and proposed terms ({Number(impact.rateChangePercent || 0)}% rate change)</summary>
+          <DataTable
+            rows={impact.comparison}
+            rowKey={(r) => r.category}
+            searchFrom={20}
+            columns={[
+              { key: "category", label: "Category", render: (r) => r.category + " · " + r.name },
+              { key: "members", label: "Members", align: "right" },
+              { key: "coverInForce", label: "Cover in force", align: "right", render: (r) => pula(r.coverInForce) },
+              { key: "ratePerMille", label: "Rate ‰ now", align: "right", render: (r) => Number(r.ratePerMille) },
+              { key: "proposedRatePerMille", label: "Proposed ‰", align: "right", render: (r) => Number(r.proposedRatePerMille) },
+              { key: "monthlyPremium", label: "Premium / month now", align: "right", render: (r) => pula(r.monthlyPremium) },
+              { key: "proposedMonthlyPremium", label: "Proposed / month", align: "right", render: (r) => pula(r.proposedMonthlyPremium) },
+            ]}
+          />
+        </details>
+      )}
       {(impact.members || []).length > 0 && (
         <details className="gl-impact-list">
           <summary>Members affected ({impact.members.length})</summary>
@@ -816,6 +905,7 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
     const params = new URLSearchParams({ eventType: next.eventType });
     if (next.eventType !== "RENEWAL" && next.effectiveDate) params.set("effectiveDate", next.effectiveDate);
     if (next.eventType === "TRANSFER") params.set("targetSchemeRef", next.targetSchemeRef);
+    if (next.eventType === "RENEWAL" && next.rateChangePercent !== "") params.set("rateChangePercent", next.rateChangePercent);
     const done = await action.run(() => request(session, "/group-life/schemes/" + next.schemeRef + "/impact?" + params));
     if (done) setImpact(done.data);
   };
@@ -912,7 +1002,7 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
             </Field>
             {form.eventType === "RENEWAL" ? (
               <Field label="Rate change (%)">
-                <input type="number" step="0.01" value={form.rateChangePercent} onChange={(e) => setForm({ ...form, rateChangePercent: e.target.value })} />
+                <input type="number" step="0.01" value={form.rateChangePercent} onChange={(e) => setForm({ ...form, rateChangePercent: e.target.value })} onBlur={() => preview(form)} />
               </Field>
             ) : (
               <Field label="Effective date" hint={form.eventType === "REACTIVATION" ? "First day back on cover" : "First day without cover on this scheme"}>
