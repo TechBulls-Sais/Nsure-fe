@@ -3997,6 +3997,18 @@ function Detail({
   const linkedClaims = linkedPolicies.length
     ? (claims || []).filter((c) => linkedPolicies.some((p) => p.id === c.policy))
     : [];
+  // Interactions and complaints (NS-SH01-006): the customer's service cases, by reference, for those who read cases.
+  const [cases, setCases] = useState([]);
+  useEffect(() => {
+    if (entity !== "customer" || !can(profile, "READ_SERVICE_CASE")) return undefined;
+    let live = true;
+    request(session, "/service/cases")
+      .then((res) => live && setCases((res.data || []).filter((c) => c.customerRef === r.id)))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [entity, session, profile, r.id]);
   // An application's identity check is its customer's KYC; a policy can only be issued once it is verified.
   const applicant =
     entity === "application" && r.customerRef ? customers.find((c) => c.id === r.customerRef) : null;
@@ -4055,6 +4067,14 @@ function Detail({
                   ...(r.eddRejectionReason ? [["EDD rejected because", r.eddRejectionReason]] : []),
                   ["Sign-in", r.loginUsername || "No login yet"],
                   ["Linked policies", linkedPolicies.length],
+                  [
+                    "Premium in force",
+                    money(
+                      linkedPolicies
+                        .filter((p) => p.status === "Active")
+                        .reduce((sum, p) => sum + Number(p.premium || 0), 0),
+                    ) + " / month",
+                  ],
                   ...(r.duplicateReview ? [["Referred for duplicate review", r.duplicateReview]] : []),
                 ].map(([k, v]) => (
                   <div className="detail-item" key={k}>
@@ -4085,6 +4105,24 @@ function Detail({
                   text="A fresh start"
                   detail="This customer has no policies yet."
                 />
+              )}
+              {cases.length > 0 && (
+                <>
+                  <h3 className="section-title">Service requests and complaints</h3>
+                  {cases.map((c) => (
+                    <div className="linked-record" key={c.ref}>
+                      <Icon name="Headset" />
+                      <div>
+                        <strong>{c.subject || c.category}</strong>
+                        <small>
+                          {c.ref} · {String(c.caseType || "").toLowerCase()} · opened{" "}
+                          {String(c.openedAt || "").slice(0, 10)}
+                        </small>
+                      </div>
+                      <Badge>{c.status}</Badge>
+                    </div>
+                  ))}
+                </>
               )}
               {linkedClaims.length > 0 && (
                 <>
