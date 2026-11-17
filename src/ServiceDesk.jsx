@@ -65,6 +65,8 @@ export default function ServiceDesk({ session, notify, profile }) {
     open: (c) => ["OPEN", "IN_PROGRESS"].includes(c.status),
     paused: (c) => c.status === "PAUSED",
     breached: (c) => c.breached,
+    // The complaint register: every complaint, open or done, apart from service requests (NS-SH10-004).
+    complaints: (c) => c.caseType === "COMPLAINT",
     all: () => true,
   };
   const count = (key) => rows.filter(filters[key]).length;
@@ -122,6 +124,7 @@ export default function ServiceDesk({ session, notify, profile }) {
             ["open", `Open (${count("open")})`],
             ["paused", `Paused (${count("paused")})`],
             ["breached", `Breached (${count("breached")})`],
+            ["complaints", `Complaint register (${count("complaints")})`],
             ["all", `All (${rows.length})`],
           ]}
         />
@@ -302,6 +305,15 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
   const history = detail.data?.history || [];
   const me = profile?.username;
   const canManage = can(profile, "MANAGE_SERVICE_CASE");
+  const supervisor = can(profile, "ASSIGN_WORK");
+  // Work someone else owns is worked by them: the server refuses pause, resume and resolve until it is taken over.
+  const mayWork = c && (!c.owner || c.owner === me);
+  const [assignTo, setAssignTo] = useState("");
+  const assignees = useResource(
+    session,
+    supervisor && c && active(c) ? "/ops/queue/assignees?key=" + encodeURIComponent(c.caseType + ":" + c.ref) : null,
+    [],
+  );
 
   const act = async (name, extra = {}, done) => {
     const r = await action.run(
@@ -460,7 +472,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
                   Take over
                 </Button>
               )}
-              {["OPEN", "IN_PROGRESS"].includes(c.status) && (
+              {["OPEN", "IN_PROGRESS"].includes(c.status) && mayWork && (
                 <>
                   <Button variant="secondary" icon={Pause} onClick={() => setPrompt("pause")}>
                     Pause
@@ -470,7 +482,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
                   </Button>
                 </>
               )}
-              {c.status === "PAUSED" && (
+              {c.status === "PAUSED" && mayWork && (
                 <Button variant="secondary" icon={Play} busy={action.busy} onClick={() => act("resume", {}, "SLA clock restarted")}>
                   Resume
                 </Button>
@@ -486,6 +498,37 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
                 </>
               )}
             </div>
+          )}
+          {canManage && active(c) && !mayWork && (
+            <p className="svc-note">
+              <UserCheck size={14} aria-hidden="true" /> {c.owner} owns this case. Take it over, or ask a supervisor to
+              assign it, before working it.
+            </p>
+          )}
+          {supervisor && active(c) && (
+            <form
+              className="svc-prompt"
+              onSubmit={(e) => {
+                e.preventDefault();
+                act("assign", { to: assignTo }, `${c.ref} assigned to ${assignTo}`);
+              }}
+            >
+              <Field label="Assign to (supervisor)" hint="People who work service cases." full>
+                <select value={assignTo} onChange={(e) => setAssignTo(e.target.value)} required>
+                  <option value="">{assignees.loading ? "Loading…" : "Choose a person…"}</option>
+                  {(assignees.data || [])
+                    .filter((name) => name !== c.owner)
+                    .map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+              <Button type="submit" variant="secondary" icon={UserCheck} busy={action.busy}>
+                Assign
+              </Button>
+            </form>
           )}
           {prompt && (
             <form

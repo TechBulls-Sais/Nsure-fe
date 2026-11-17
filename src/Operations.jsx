@@ -18,7 +18,7 @@ export default function Operations({ session, notify, profile, go }) {
       <Heading
         eyebrow="OPERATIONS"
         title="Work queue"
-        subtitle="Every open piece of work across the modules with its team, owner and SLA, the workflow definitions and calendar behind it, the document register, and partner requests."
+        subtitle="The open work across the modules that you may act on, with its priority, owner, next action and SLA, the workflow definitions and calendar behind it, the document register, and partner requests."
       />
       <div className="stat-grid">
         <Stat label="Open work" value={items.length} loading={queue.loading} />
@@ -39,7 +39,7 @@ export default function Operations({ session, notify, profile, go }) {
           ["partners", "Partner requests"],
         ].filter(Boolean)}
       />
-      {tab === "queue" && <Queue session={session} notify={notify} resource={queue} go={go} me={me} />}
+      {tab === "queue" && <Queue session={session} notify={notify} resource={queue} go={go} me={me} profile={profile} />}
       {tab === "workflow" && <Workflow session={session} notify={notify} profile={profile} />}
       {tab === "documents" && <Documents session={session} notify={notify} profile={profile} />}
       {tab === "partners" && <Partners session={session} notify={notify} profile={profile} onChange={queue.reload} />}
@@ -47,76 +47,216 @@ export default function Operations({ session, notify, profile, go }) {
   );
 }
 
-function Queue({ session, notify, resource, go, me }) {
+// A detail that is a status-like code (ACCIDENTAL_DEATH) reads as words; free text is shown as it is.
+const detailText = (value) => (value && /^[A-Z0-9_]+$/.test(value) ? label(value) : value || "—");
+
+const PRIORITY_TONE = { HIGH: "red", NORMAL: "blue", LOW: "gray" };
+
+/**
+ * The work this user may act on (a supervisor sees every team's), most urgent first: past SLA, then priority, then
+ * due time (NS-SH10-002). Taking is exclusive and the modules respect the owner; a supervisor assigns work.
+ */
+function Queue({ session, notify, resource, go, me, profile }) {
   const [team, setTeam] = useState("");
+  const [view, setView] = useState("all");
+  const [assigning, setAssigning] = useState(null);
   const action = useAction(notify);
-  const rows = (resource.data || []).filter((i) => !team || i.team === team);
-  const teams = [...new Set((resource.data || []).map((i) => i.team))];
+  const supervisor = can(profile, "ASSIGN_WORK");
+  const all = resource.data || [];
+  const rows = all.filter(
+    (i) =>
+      (!team || i.team === team) &&
+      (view === "all" ||
+        (view === "mine" && i.owner === me) ||
+        (view === "unowned" && !i.owner) ||
+        (view === "breached" && i.breached)),
+  );
+  const teams = [...new Set(all.map((i) => i.team))];
   const take = async (item, release) => {
-    const done = await action.run(
+    await action.run(
       () => request(session, "/ops/queue/claim?key=" + encodeURIComponent(item.key), { method: release ? "DELETE" : "POST" }),
       release ? "Released" : "You own this work",
     );
-    void done;
     resource.reload();
   };
   return (
-    <Panel
-      title="Open work"
-      subtitle="Taking ownership is exclusive: a second person is told who already has it. SLA time is counted in working hours."
-      action={
-        <select aria-label="Team" value={team} onChange={(e) => setTeam(e.target.value)}>
-          <option value="">All teams</option>
-          {teams.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      }
-    >
-      <ErrorNote error={resource.error || action.error} />
+    <>
+      <Panel
+        title="Open work"
+        subtitle="Work you may act on. Taking it is exclusive: a second person is told who already has it, and the module refuses their action until it is released or assigned. SLA time is counted in working hours."
+        action={
+          <div className="ws-row-actions">
+            <select aria-label="Show" value={view} onChange={(e) => setView(e.target.value)}>
+              <option value="all">All work</option>
+              <option value="mine">Mine</option>
+              <option value="unowned">Unowned</option>
+              <option value="breached">Past SLA</option>
+            </select>
+            <select aria-label="Team" value={team} onChange={(e) => setTeam(e.target.value)}>
+              <option value="">All teams</option>
+              {teams.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+      >
+        <ErrorNote error={resource.error || action.error} />
+        <DataTable
+          rows={rows}
+          loading={resource.loading}
+          rowKey={(r) => r.key}
+          empty="Nothing waiting for you"
+          searchPlaceholder="Search work…"
+          columns={[
+            { key: "workflowName", label: "Work" },
+            { key: "ref", label: "Reference" },
+            { key: "subject", label: "About", render: (r) => r.subject || "—" },
+            { key: "contractRef", label: "Contract", render: (r) => r.contractRef || "—" },
+            { key: "detail", label: "Detail", render: (r) => detailText(r.detail) },
+            {
+              key: "priority",
+              label: "Priority",
+              render: (r) => <Badge tone={PRIORITY_TONE[r.priority] || "blue"}>{label(r.priority)}</Badge>,
+            },
+            { key: "nextAction", label: "Next action" },
+            { key: "team", label: "Team" },
+            {
+              key: "opened",
+              label: "Opened",
+              render: (r) => (r.opened ? when(r.opened) + (r.ageHours != null ? " · " + ageText(r.ageHours) : "") : "—"),
+            },
+            {
+              key: "dueAt",
+              label: "Due",
+              render: (r) =>
+                r.dueAt ? (
+                  <Badge tone={r.breached ? "red" : "green"}>{(r.breached ? "Past SLA · " : "") + when(r.dueAt)}</Badge>
+                ) : (
+                  "—"
+                ),
+            },
+            {
+              key: "owner",
+              label: "Owner",
+              render: (r) => (r.owner ? r.owner + (r.assignedBy && r.assignedBy !== r.owner ? " (assigned)" : "") : "Unowned"),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (r) => (
+                <div className="ws-row-actions">
+                  {!r.owner && r.canAct && (
+                    <Button variant="secondary" busy={action.busy} onClick={() => take(r, false)}>
+                      Take
+                    </Button>
+                  )}
+                  {r.owner && r.page !== "service-desk" && (r.owner === me || supervisor) && (
+                    <Button variant="secondary" busy={action.busy} onClick={() => take(r, true)}>
+                      Release
+                    </Button>
+                  )}
+                  {supervisor && (
+                    <Button variant="secondary" onClick={() => setAssigning(r)}>
+                      Assign
+                    </Button>
+                  )}
+                  {r.page !== "work-queue" && (
+                    <Button variant="secondary" onClick={() => go(r.page)}>
+                      Open
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      <SlaByTeam items={all} loading={resource.loading} />
+      {assigning && (
+        <Assign
+          session={session}
+          notify={notify}
+          item={assigning}
+          onClose={() => setAssigning(null)}
+          onDone={() => {
+            setAssigning(null);
+            resource.reload();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+const ageText = (hours) => (hours < 48 ? hours + " h" : Math.floor(hours / 24) + " days");
+
+/** SLA position per team over the work this user sees: open, past SLA, unowned and the oldest item. */
+function SlaByTeam({ items, loading }) {
+  const teams = new Map();
+  for (const i of items) {
+    const t = teams.get(i.team) || { team: i.team, open: 0, breached: 0, unowned: 0, high: 0, oldest: 0 };
+    t.open += 1;
+    if (i.breached) t.breached += 1;
+    if (!i.owner) t.unowned += 1;
+    if (i.priority === "HIGH") t.high += 1;
+    t.oldest = Math.max(t.oldest, i.ageHours || 0);
+    teams.set(i.team, t);
+  }
+  return (
+    <Panel title="SLA by team" subtitle="Open work, how much is past its due time or unowned, and how old the oldest item is.">
       <DataTable
-        rows={rows}
-        loading={resource.loading}
-        rowKey={(r) => r.key}
-        empty="Nothing waiting"
-        searchPlaceholder="Search work…"
+        rows={[...teams.values()].sort((a, b) => b.breached - a.breached || b.open - a.open)}
+        loading={loading}
+        rowKey={(r) => r.team}
+        searchFrom={99}
+        empty="No open work"
         columns={[
-          { key: "workflowName", label: "Work" },
-          { key: "ref", label: "Reference" },
-          { key: "subject", label: "About" },
-          { key: "detail", label: "Detail", render: (r) => label(r.detail) },
           { key: "team", label: "Team" },
-          { key: "opened", label: "Opened", render: (r) => when(r.opened) },
-          { key: "dueAt", label: "Due", render: (r) => <Badge tone={r.breached ? "red" : "green"}>{(r.breached ? "Past SLA · " : "") + when(r.dueAt)}</Badge> },
-          { key: "owner", label: "Owner", render: (r) => r.owner || "Unowned" },
-          {
-            key: "act",
-            label: "",
-            render: (r) => (
-              <div className="ws-row-actions">
-                {!r.owner && (
-                  <Button variant="secondary" busy={action.busy} onClick={() => take(r, false)}>
-                    Take
-                  </Button>
-                )}
-                {r.owner === me && (
-                  <Button variant="secondary" busy={action.busy} onClick={() => take(r, true)}>
-                    Release
-                  </Button>
-                )}
-                {r.page !== "work-queue" && (
-                  <Button variant="secondary" onClick={() => go(r.page)}>
-                    Open
-                  </Button>
-                )}
-              </div>
-            ),
-          },
+          { key: "open", label: "Open", align: "right" },
+          { key: "breached", label: "Past SLA", align: "right", render: (r) => (r.breached ? <Badge tone="red">{r.breached}</Badge> : 0) },
+          { key: "unowned", label: "Unowned", align: "right" },
+          { key: "high", label: "High priority", align: "right" },
+          { key: "oldest", label: "Oldest", align: "right", render: (r) => ageText(r.oldest) },
         ]}
       />
     </Panel>
+  );
+}
+
+/** A supervisor (ASSIGN_WORK) gives an item to someone who may act on it. */
+function Assign({ session, notify, item, onClose, onDone }) {
+  const people = useResource(session, "/ops/queue/assignees?key=" + encodeURIComponent(item.key), []);
+  const [to, setTo] = useState("");
+  const action = useAction(notify);
+  const submit = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/ops/queue/assign?key=" + encodeURIComponent(item.key) + "&to=" + encodeURIComponent(to), {
+          method: "POST",
+        }),
+      item.ref + " assigned to " + to,
+    );
+    if (done) onDone();
+  };
+  return (
+    <Drawer title={"Assign " + item.workflowName + " " + item.ref} onClose={onClose}>
+      <FormGrid submitLabel="Assign" busy={action.busy} error={action.error || people.error} onSubmit={submit}>
+        <Field label="Give it to" hint="Only people who may act on this work are listed." full>
+          <select value={to} onChange={(e) => setTo(e.target.value)} required>
+            <option value="">{people.loading ? "Loading…" : "Choose a person…"}</option>
+            {(people.data || []).map((name) => (
+              <option key={name} value={name}>
+                {name}
+                {name === item.owner ? " (owner now)" : ""}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </FormGrid>
+    </Drawer>
   );
 }
 
@@ -151,6 +291,7 @@ function Workflow({ session, notify, profile }) {
             { key: "name", label: "Work" },
             { key: "team", label: "Team" },
             { key: "slaHours", label: "SLA (working hours)", align: "right" },
+            { key: "priority", label: "Priority", render: (r) => label(r.priority) },
             { key: "steps", label: "Steps" },
             { key: "versionNo", label: "Version", align: "right" },
             {
@@ -222,6 +363,13 @@ function Workflow({ session, notify, profile }) {
                 </Field>
                 <Field label="SLA (working hours)">
                   <input type="number" min="1" value={form.slaHours} onChange={set("slaHours")} required />
+                </Field>
+                <Field label="Priority" hint="Work of this kind is listed by priority after anything past its SLA">
+                  <select value={form.priority || "NORMAL"} onChange={set("priority")}>
+                    <option value="HIGH">High</option>
+                    <option value="NORMAL">Normal</option>
+                    <option value="LOW">Low</option>
+                  </select>
                 </Field>
                 <Field label="Steps" hint="Separate steps with >" full>
                   <textarea value={form.steps} onChange={set("steps")} rows={3} required />
