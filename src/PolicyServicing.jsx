@@ -172,6 +172,16 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
   const [preview, setPreview] = useState(null);
   const v = view.data;
   const p = v?.policy;
+  // IL04 roster: each life's limit, use, claims, underwriting outcome and warnings, keyed by life id.
+  const standing = Object.fromEntries((v?.roster?.lives || []).map((s) => [s.lifeId, s]));
+  // Relationship history: a person who was covered more than once (removed and added again, or replaced).
+  const episodes = Object.values(
+    (v?.lives || []).reduce((byPerson, life) => {
+      const key = (life.fullName || "").toLowerCase() + "|" + (life.dateOfBirth || "");
+      (byPerson[key] = byPerson[key] || []).push(life);
+      return byPerson;
+    }, {}),
+  ).filter((list) => list.length > 1);
   const manage = can(profile, "MANAGE_SERVICING");
   const approve = can(profile, "APPROVE_ENDORSEMENT");
   const inForce = p && ["Active", "Active - No Cover", "Reinstatement Pending"].includes(p.contractStatus);
@@ -299,7 +309,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
 
           <Panel
             title="Insured lives"
-            subtitle="A removed life stays on the record. A life added again keeps its original waiting-period start."
+            subtitle="A removed life stays on the record. A life added again keeps its original waiting-period start. Limits show what claims have used, per life and for the whole policy."
             action={
               manage &&
               inForce && (
@@ -313,16 +323,59 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               )
             }
           >
+            {v.roster && (
+              <div className="ws-kv">
+                <div>
+                  <small>Policy limit (all lives)</small>
+                  <strong>{pula(v.roster.policyLimit)}</strong>
+                </div>
+                <div>
+                  <small>Used by claims</small>
+                  <strong>{pula(v.roster.policyUsed)}</strong>
+                </div>
+                <div>
+                  <small>Remaining</small>
+                  <strong>{pula(v.roster.policyRemaining)}</strong>
+                </div>
+              </div>
+            )}
+            {(v.roster?.warnings || []).map((w) => (
+              <p className="ws-hint" key={w}>
+                <Badge tone="amber">Eligibility</Badge> {w}
+              </p>
+            ))}
             <DataTable
               rows={v.lives}
               rowKey={(r) => r.id}
               searchFrom={99}
               empty="This policy covers the policyholder only"
               columns={[
-                { key: "fullName", label: "Life" },
+                {
+                  key: "fullName",
+                  label: "Life",
+                  render: (r) => (
+                    <>
+                      {r.fullName}
+                      {(standing[r.id]?.warnings || []).map((w) => (
+                        <div key={w}>
+                          <Badge tone="amber">{w}</Badge>
+                        </div>
+                      ))}
+                    </>
+                  ),
+                },
                 { key: "relationship", label: "Relationship" },
                 { key: "ageNow", label: "Age", align: "right", render: (r) => r.ageNow ?? "—" },
                 { key: "coverAmount", label: "Cover", align: "right", render: (r) => pula(r.coverAmount) },
+                {
+                  key: "limit",
+                  label: "Limit used / left",
+                  align: "right",
+                  render: (r) =>
+                    standing[r.id] ? pula(standing[r.id].used) + " / " + pula(standing[r.id].remaining) : "—",
+                },
+                { key: "claims", label: "Claims", align: "right", render: (r) => standing[r.id]?.claims ?? "—" },
+                { key: "underwriting", label: "Underwriting", render: (r) => standing[r.id]?.underwriting || "—" },
                 { key: "monthlyPremium", label: "Premium", align: "right", render: (r) => pula(r.monthlyPremium) },
                 {
                   key: "status",
@@ -370,6 +423,26 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 },
               ]}
             />
+            {episodes.length > 0 && (
+              <>
+                <h3 className="section-title">Relationship history</h3>
+                {episodes.map((list) => (
+                  <p className="ws-hint" key={list[0].id}>
+                    <strong>{list[0].fullName}</strong>:{" "}
+                    {list
+                      .map(
+                        (e) =>
+                          e.relationship +
+                          " from " +
+                          (e.effectiveFrom || p.coverStartDate || "issue") +
+                          (e.effectiveTo ? " to " + e.effectiveTo : " (covered)") +
+                          (e.ceaseReason ? " · " + e.ceaseReason : ""),
+                      )
+                      .join(" → ")}
+                  </p>
+                ))}
+              </>
+            )}
           </Panel>
 
           <Panel
