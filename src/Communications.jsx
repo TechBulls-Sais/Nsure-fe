@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCheck, FilePlus2, MessageSquarePlus, RefreshCw, Search, Send } from "lucide-react";
+import { Ban, CheckCheck, FilePlus2, MessageSquarePlus, RefreshCw, Search, Send } from "lucide-react";
 import { request } from "./api";
 import {
   Badge,
@@ -395,6 +395,49 @@ function Templates({ session, notify, profile }) {
       templates.reload();
     }
   };
+  // D-22: an approved version is withdrawn without a replacement: one user asks with a reason, another confirms.
+  const [withdrawing, setWithdrawing] = useState(null);
+  const askWithdrawal = async () => {
+    const t = withdrawing.template;
+    const r = await action.run(
+      () =>
+        request(session, `/communications/templates/${t.id}/withdraw`, {
+          method: "POST",
+          body: { reason: withdrawing.reason.trim() },
+        }),
+      `Withdrawal of ${t.code} v${t.version} sent for approval`,
+    );
+    if (r) {
+      setWithdrawing(null);
+      setOpen(r.data);
+      templates.reload();
+    }
+  };
+  const decideWithdrawal = async (t, verdict) => {
+    const approveIt = verdict === "approve";
+    const ok = await confirm({
+      title: (approveIt ? "Withdraw " : "Keep ") + `${t.code} v${t.version}?`,
+      message: approveIt ? (
+        <>
+          No new <strong>{t.eventType}</strong> {channelName(t.channel)} message uses this version from now on, and no
+          other version replaces it. {t.withdrawalRequestedBy} asked: “{t.withdrawalReason}”.
+        </>
+      ) : (
+        <>The version stays approved and in use. The request from {t.withdrawalRequestedBy} is declined.</>
+      ),
+      confirmLabel: approveIt ? "Withdraw template" : "Decline withdrawal",
+      tone: approveIt ? "danger" : undefined,
+    });
+    if (!ok) return;
+    const r = await action.run(
+      () => request(session, `/communications/templates/${t.id}/withdraw/${verdict}`, { method: "POST" }),
+      approveIt ? `${t.code} v${t.version} withdrawn` : "Withdrawal declined",
+    );
+    if (r) {
+      setOpen(r.data);
+      templates.reload();
+    }
+  };
   const newVersion = (t) =>
     setDraft({
       code: t.code,
@@ -409,7 +452,7 @@ function Templates({ session, notify, profile }) {
     <>
       <Panel
         title="Templates"
-        subtitle="Approved versions are used for new messages. A change is a new version that another user approves."
+        subtitle="Approved versions are used for new messages. A change is a new version that another user approves; a withdrawal, also confirmed by another user, stops a version without replacing it."
         action={
           canDraft && (
             <Button
@@ -439,7 +482,18 @@ function Templates({ session, notify, profile }) {
             { key: "eventType", label: "Event" },
             { key: "channel", label: "Channel", render: (t) => channelName(t.channel) },
             { key: "audience", label: "Audience", render: (t) => label(t.audience) },
-            { key: "status", label: "Status", render: (t) => <Badge>{label(t.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (t) => (
+                <>
+                  <Badge tone={t.status === "WITHDRAWN" ? "red" : undefined}>{label(t.status)}</Badge>
+                  {t.status === "APPROVED" && t.withdrawalRequestedBy && (
+                    <small className="com-sub">Withdrawal asked by {t.withdrawalRequestedBy}</small>
+                  )}
+                </>
+              ),
+            },
             { key: "createdBy", label: "Drafted by" },
             {
               key: "approvedBy",
@@ -462,6 +516,24 @@ function Templates({ session, notify, profile }) {
                       New version
                     </Button>
                   )}
+                  {t.status === "APPROVED" && !t.withdrawalRequestedBy && (canDraft || canApprove) && (
+                    <Button variant="secondary" icon={Ban} onClick={() => setWithdrawing({ template: t, reason: "" })}>
+                      Withdraw
+                    </Button>
+                  )}
+                  {t.status === "APPROVED" &&
+                    t.withdrawalRequestedBy &&
+                    canApprove &&
+                    t.withdrawalRequestedBy !== profile?.username && (
+                      <>
+                        <Button icon={Ban} busy={action.busy} onClick={() => decideWithdrawal(t, "approve")}>
+                          Confirm withdrawal
+                        </Button>
+                        <Button variant="secondary" busy={action.busy} onClick={() => decideWithdrawal(t, "decline")}>
+                          Keep
+                        </Button>
+                      </>
+                    )}
                 </div>
               ),
             },
@@ -487,11 +559,40 @@ function Templates({ session, notify, profile }) {
               {open.status === "DRAFT" && open.createdBy === profile?.username &&
                 " · You drafted this, so another user approves it."}
             </p>
+            {open.withdrawalRequestedBy && (
+              <p className={"com-reason " + (open.status === "WITHDRAWN" ? "is-error" : "is-info")}>
+                {open.status === "WITHDRAWN"
+                  ? `Withdrawn by ${open.withdrawnBy} on ${when(open.withdrawnAt)}, asked by ${open.withdrawalRequestedBy}: `
+                  : `Withdrawal asked by ${open.withdrawalRequestedBy} on ${when(open.withdrawalRequestedAt)}, waiting for another approver: `}
+                {open.withdrawalReason}
+              </p>
+            )}
             <div className={"com-message " + (open.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
               {open.subject && <strong>{open.subject}</strong>}
               <p>{open.body}</p>
             </div>
           </div>
+        </Drawer>
+      )}
+      {withdrawing && (
+        <Drawer
+          title={`Withdraw ${withdrawing.template.code} v${withdrawing.template.version}`}
+          description="Stops new messages from using this version without replacing it. Another approver confirms before it takes effect; until then it is still used."
+          onClose={() => setWithdrawing(null)}
+        >
+          <FormGrid submitLabel="Ask for withdrawal" busy={action.busy} error={action.error} onSubmit={askWithdrawal}>
+            <Field label="Reason" full hint={`${withdrawing.reason.trim().length} / 500, at least 10`}>
+              <textarea
+                rows={3}
+                value={withdrawing.reason}
+                maxLength={500}
+                minLength={10}
+                required
+                placeholder="e.g. Gives the wrong appeal address"
+                onChange={(e) => setWithdrawing({ ...withdrawing, reason: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
         </Drawer>
       )}
       {draft && (
