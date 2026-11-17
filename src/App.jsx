@@ -933,6 +933,8 @@ export default function App() {
       const updated = await request(session, "/portfolio/customers/" + customer.id + "/" + review, {
         method: "POST",
         body: { decision, reason },
+        // The record as this screen showed it: a decision on a customer changed meanwhile is refused (NS-TXN-001).
+        version: customer.version,
       });
       setCustomers((rows) => rows.map((row) => (row.id === customer.id ? updated.data : row)));
       notify(
@@ -960,6 +962,27 @@ export default function App() {
       }
     }
   };
+  // An application changed on its checklist (evidence, submission): keep it an application, and read it again so its
+  // status, premium and row version (If-Match on issue) are the server's.
+  const applicationUpdated = (record) => {
+    setApplications((rows) => rows.map((row) => (row.id === record.id ? { ...row, ...record } : row)));
+    setModal((current) =>
+      current?.type === "detail" && current.record?.id === record.id
+        ? { ...current, entity: "application", record: { ...current.record, ...record } }
+        : current,
+    );
+    request(session, "/portfolio/applications")
+      .then((r) => {
+        setApplications(r.data);
+        const fresh = r.data.find((row) => row.id === record.id);
+        if (fresh) {
+          setModal((current) =>
+            current?.type === "detail" && current.record?.id === record.id ? { ...current, record: fresh } : current,
+          );
+        }
+      })
+      .catch(() => {});
+  };
   const claimUpdated = (record) => {
     setClaims((rows) => rows.map((row) => (row.id === record.id ? record : row)));
     setModal({ type: "detail", entity: "claim", record });
@@ -974,6 +997,7 @@ export default function App() {
       created = await request(session, "/portfolio/policies", {
         method: "POST",
         idempotencyKey: "issue-" + record.id,
+        version: record.version,
         body: {
           applicationRef: record.id,
           product: record.product,
@@ -2288,11 +2312,21 @@ export default function App() {
                 // A resumed draft (NS-UX-001): save what was completed, then submit it when asked to.
                 const ref = modal.draft.id;
                 try {
-                  await request(session, "/portfolio/applications/" + ref + "/details", { method: "PUT", body });
+                  const saved = (
+                    await request(session, "/portfolio/applications/" + ref + "/details", {
+                      method: "PUT",
+                      body,
+                      version: modal.draft.version,
+                    })
+                  ).data;
                   let checklist = null;
                   if (status !== "Draft") {
-                    checklist = (await request(session, "/portfolio/applications/" + ref + "/submit", { method: "POST" }))
-                      .data;
+                    checklist = (
+                      await request(session, "/portfolio/applications/" + ref + "/submit", {
+                        method: "POST",
+                        version: saved.version,
+                      })
+                    ).data;
                   }
                   const fresh = await request(session, "/portfolio/applications").catch(() => null);
                   if (fresh) setApplications(fresh.data);
@@ -2432,6 +2466,7 @@ export default function App() {
               session={session}
               profile={profile}
               onPolicyUpdated={policyUpdated}
+              onApplicationUpdated={applicationUpdated}
               onClaimUpdated={claimUpdated}
               canReviewKyc={can(profile, "KYC_CUSTOMER")}
               canReviewEdd={can(profile, "EDD_CUSTOMER")}
@@ -3935,6 +3970,7 @@ function Detail({
   session,
   profile,
   onPolicyUpdated,
+  onApplicationUpdated,
   onClaimUpdated,
   canReviewKyc,
   onKyc,
@@ -4139,7 +4175,7 @@ function Detail({
                   application={r}
                   profile={profile}
                   notify={notify}
-                  onChanged={onPolicyUpdated}
+                  onChanged={onApplicationUpdated}
                 />
               )}
               {(entity === "application" || entity === "policy") && r.quoteRef && (
