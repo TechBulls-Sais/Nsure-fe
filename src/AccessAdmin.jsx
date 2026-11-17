@@ -638,7 +638,17 @@ function EmergencyPanel({ grants, users, rolesById, profile, allow, busy, error,
   const isStaff = (user) =>
     rolesById.size === 0 ||
     (user.roleIds || []).some((id) => rolesById.get(id)?.deskAccess && !rolesById.get(id)?.disabled);
-  const candidates = users.filter((user) => user.enabled && user.username !== profile?.username && isStaff(user));
+  // A partner login (agent, employer, lender) holds only the partner portal: it is not the insurer's staff (D-07).
+  const isPartner = (user) => {
+    const codes = (user.roleIds || [])
+      .map((id) => rolesById.get(id))
+      .filter((role) => role && !role.disabled)
+      .flatMap((role) => role.permissions || []);
+    return codes.length > 0 && codes.every((code) => code === "USE_PARTNER_PORTAL");
+  };
+  const candidates = users.filter(
+    (user) => user.enabled && user.username !== profile?.username && isStaff(user) && !isPartner(user),
+  );
   const label = (code) => BREAK_GLASS.find(([key]) => key === code)?.[1] || code;
   const tone = { ACTIVE: "amber", EXPIRED: "gray", REVOKED: "gray" };
   const needsReview = (grant) =>
@@ -704,7 +714,8 @@ function EmergencyPanel({ grants, users, rolesById, profile, allow, busy, error,
               <h2>Grant emergency access</h2>
               <p className="subtitle">
                 No role holds these permissions. Give one to one staff member for up to {MAX_EMERGENCY_HOURS} hours,
-                with a reason. Everyone who reads the audit log is alerted, and it is reviewed once it ends.
+                with a reason. Everyone who reads the audit log is alerted, and it is reviewed once it ends. Partner
+                portal logins (agents, employers, lenders) can never receive it.
               </p>
             </div>
           </div>
