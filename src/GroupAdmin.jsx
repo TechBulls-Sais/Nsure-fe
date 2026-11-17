@@ -38,7 +38,7 @@ import "./group-admin.css";
 
 const CENSUS_HEADER = "memberKey,firstName,lastName,dateOfBirth,category,salary,action,effectiveDate";
 // Optional trailing columns: the actively-at-work declaration (Y/N) and the date the member became eligible.
-const CENSUS_OPTIONAL = "activelyAtWork,eligibleDate";
+const CENSUS_OPTIONAL = "activelyAtWork,eligibleDate,rowKey";
 
 const MEMBER_TONES = {
   ACTIVE: "green",
@@ -103,12 +103,12 @@ const csvCell = (value) => {
 /** The batch's results file (NS-UX-002): every row of the file with its outcome, error and resulting member. */
 function batchResultsCsv(batch) {
   const head = [
-    "batch", "externalBatchId", "lineNo", "memberKey", "firstName", "lastName", "dateOfBirth", "category", "salary",
-    "action", "effectiveDate", "outcome", "errors", "memberId",
+    "batch", "externalBatchId", "lineNo", "rowKey", "memberKey", "firstName", "lastName", "dateOfBirth", "category",
+    "salary", "action", "effectiveDate", "outcome", "errors", "memberId", "changeId",
   ];
   const lines = batch.rows.map((r) =>
-    [batch.ref, batch.externalBatchId, r.lineNo, r.memberKey, r.firstName, r.lastName, r.dateOfBirth, r.category,
-      r.salary, r.action, r.effectiveDate, r.status, r.error, r.memberId].map(csvCell).join(","),
+    [batch.ref, batch.externalBatchId, r.lineNo, r.rowKey, r.memberKey, r.firstName, r.lastName, r.dateOfBirth,
+      r.category, r.salary, r.action, r.effectiveDate, r.status, r.error, r.memberId, r.changeId].map(csvCell).join(","),
   );
   return [head.join(","), ...lines].join("\n") + "\n";
 }
@@ -821,6 +821,18 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
   const [fileName, setFileName] = useState("");
   const upload = useAction(inlineErrors(notify));
   const commit = useAction(inlineErrors(notify));
+  const [recon, setRecon] = useState(null);
+  useEffect(() => {
+    setRecon(null);
+    if (!batch || batch.status !== "COMMITTED") return;
+    let live = true;
+    request(session, `/group/census-batches/${encodeURIComponent(batch.ref)}/reconciliation`)
+      .then((r) => live && setRecon(r.data))
+      .catch(() => live && setRecon(null));
+    return () => {
+      live = false;
+    };
+  }, [session, batch]);
 
   useEffect(() => {
     if (!batchRef) {
@@ -841,10 +853,10 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     const first = codes[0] || "STAFF";
     const lines = [
       `${CENSUS_HEADER},${CENSUS_OPTIONAL}`,
-      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()},Y,${today()}`,
-      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()},Y,`,
-      `EMP-0999,,,,,,LEAVE,${today()},,`,
-      `EMP-0998,,,,,210000,SALARY,${today()},Y,`,
+      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()},Y,${today()},HR-1`,
+      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()},Y,,HR-2`,
+      `EMP-0999,,,,,,LEAVE,${today()},,,HR-3`,
+      `EMP-0998,,,,,210000,SALARY,${today()},Y,,HR-4`,
     ];
     saveTextFile(`census-template-${scheme.ref}.csv`, lines.join("\n") + "\n");
   };
@@ -953,7 +965,7 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                 <option value="ATOMIC">Atomic — all or nothing</option>
               </select>
             </Field>
-            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}, optionally followed by ${CENSUS_OPTIONAL}. A joiner declared not actively at work (N) has all cover referred to underwriting.`}>
+            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}, optionally followed by ${CENSUS_OPTIONAL}. A joiner declared not actively at work (N) has all cover referred to underwriting; a rowKey already applied is never applied again.`}>
               <label className="btn secondary ga-file">
                 <FileSpreadsheet className="icon icon-sm" aria-hidden="true" />
                 Choose .csv file
@@ -1063,6 +1075,30 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                   <strong className="ws-mono" title={batch.fileHash}>{batch.fileHash.slice(0, 16)}…</strong>
                 </div>
               </div>
+              {recon && (
+                <section className="ga-drawer-section">
+                  <h3>Reconciliation</h3>
+                  <p className="subtitle">
+                    {recon.appliedRows} applied row(s) · {recon.rowsTracedToChanges} traced to a member change · {recon.certificates}{" "}
+                    with a certificate in force · {recon.invoiceLines} invoice line(s) billed since ·{" "}
+                    {recon.reconciled ? <Badge tone="green">Reconciled</Badge> : <Badge tone="red">Does not reconcile</Badge>}
+                  </p>
+                  <DataTable
+                    rows={recon.rows}
+                    rowKey={(r) => r.lineNo}
+                    searchFrom={20}
+                    empty="No applied rows"
+                    columns={[
+                      { key: "lineNo", label: "Line", align: "right" },
+                      { key: "memberKey", label: "Member key", render: (r) => <span className="ws-mono">{r.memberKey}</span> },
+                      { key: "changeType", label: "Change", render: (r) => (r.changeType ? `${label(r.changeType)} #${r.changeId}` : "—") },
+                      { key: "coverAfter", label: "Cover after", align: "right", render: (r) => (r.coverAfter != null ? pula(r.coverAfter) : "—") },
+                      { key: "certificateNo", label: "Certificate", render: (r) => r.certificateNo || "—" },
+                      { key: "invoices", label: "Invoices", render: (r) => (r.invoices?.length ? r.invoices.join(", ") : "—") },
+                    ]}
+                  />
+                </section>
+              )}
               {atomicBlocked && (
                 <ErrorNote error="This ATOMIC batch has invalid rows, so it cannot be committed. Correct the file and submit it under a new batch id." />
               )}
