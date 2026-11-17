@@ -35,7 +35,7 @@ export default function Operations({ session, notify, profile, go }) {
         tabs={[
           ["queue", "Queue"],
           ["workflow", "Workflows & calendar"],
-          can(profile, "READ_POLICY") && ["documents", "Documents"],
+          (can(profile, "READ_POLICY") || can(profile, "READ_CLAIM")) && ["documents", "Documents"],
           ["partners", "Partner requests"],
         ].filter(Boolean)}
       />
@@ -235,11 +235,20 @@ function Workflow({ session, notify, profile }) {
   );
 }
 
+const FILTER_FIELD = { flex: "1 1 160px", minWidth: 0 };
+const NO_FILTER = { q: "", customerRef: "", ownerRef: "", documentClass: "", from: "", to: "" };
+
+/**
+ * The document register (NS-SH09A-005): policy documents for policy readers, claim evidence for claim readers. Search
+ * covers the details and the text of generated and released PDFs; every search is logged as sensitive access.
+ */
 function Documents({ session, notify, profile }) {
-  const [q, setQ] = useState("");
-  const [term, setTerm] = useState("");
-  const docs = useResource(session, "/ops/documents" + (term ? "?q=" + encodeURIComponent(term) : ""), null);
+  const [form, setForm] = useState(NO_FILTER);
+  const [filter, setFilter] = useState(NO_FILTER);
+  const query = new URLSearchParams(Object.entries(filter).filter(([, v]) => v.trim())).toString();
+  const docs = useResource(session, "/ops/documents" + (query ? "?" + query : ""), null);
   const [hold, setHold] = useState(null);
+  const [access, setAccess] = useState(null);
   const action = useAction(notify);
   const save = async (doc, on, reason) => {
     const done = await action.run(
@@ -264,21 +273,68 @@ function Documents({ session, notify, profile }) {
             .join(", ") +
           ". A document on legal hold is never eligible for disposal."
         }
-        action={
-          <form
-            className="ws-row-actions"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setTerm(q);
-            }}
-          >
-            <input aria-label="Search documents" value={q} onChange={(e) => setQ(e.target.value)} placeholder="File, type, policy, customer…" />
-            <Button type="submit" variant="secondary" icon={Search}>
-              Search
-            </Button>
-          </form>
-        }
       >
+        <form
+          style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            setFilter(form);
+          }}
+        >
+          <input
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Search documents"
+            value={form.q}
+            onChange={(e) => setForm({ ...form, q: e.target.value })}
+            placeholder="File, type, record, customer or words in the document…"
+          />
+          <input
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Customer reference"
+            value={form.customerRef}
+            onChange={(e) => setForm({ ...form, customerRef: e.target.value })}
+            placeholder="Customer, e.g. CUS-1001"
+          />
+          <input
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Policy or claim"
+            value={form.ownerRef}
+            onChange={(e) => setForm({ ...form, ownerRef: e.target.value })}
+            placeholder="Policy or claim number"
+          />
+          <select
+            className="input"
+            style={FILTER_FIELD}
+            aria-label="Document class"
+            value={form.documentClass}
+            onChange={(e) => setForm({ ...form, documentClass: e.target.value })}
+          >
+            <option value="">Every class</option>
+            {(docs.data?.classes || []).map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
+          <input className="input" style={FILTER_FIELD} aria-label="Stored from" type="date" value={form.from} onChange={(e) => setForm({ ...form, from: e.target.value })} />
+          <input className="input" style={FILTER_FIELD} aria-label="Stored to" type="date" value={form.to} onChange={(e) => setForm({ ...form, to: e.target.value })} />
+          <Button type="submit" variant="secondary" icon={Search}>
+            Search
+          </Button>
+          {query && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setForm(NO_FILTER);
+                setFilter(NO_FILTER);
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </form>
+        <p className="ws-hint">Searches are recorded in the audit trail as access to customer records.</p>
         <ErrorNote error={docs.error || action.error} />
         <DataTable
           rows={docs.data?.documents}
@@ -287,9 +343,35 @@ function Documents({ session, notify, profile }) {
           searchFrom={999}
           empty="No documents found"
           columns={[
-            { key: "fileName", label: "Document" },
-            { key: "documentClass", label: "Class" },
-            { key: "ownerRef", label: "Belongs to", render: (r) => r.ownerRef + " · " + r.customerName },
+            {
+              key: "fileName",
+              label: "Document",
+              render: (r) => (
+                <>
+                  {r.fileName}
+                  <small className="ws-hint">
+                    {" "}
+                    · {r.documentType}
+                    {r.contentMatch && " · matched in the document text"}
+                  </small>
+                </>
+              ),
+            },
+            {
+              key: "documentClass",
+              label: "Class",
+              render: (r) => (
+                <>
+                  {r.documentClass}
+                  <small className="ws-hint"> · {r.classification}</small>
+                </>
+              ),
+            },
+            {
+              key: "ownerRef",
+              label: "Belongs to",
+              render: (r) => r.ownerRef + " · " + (r.customerName || "—") + (r.customerRef ? " (" + r.customerRef + ")" : ""),
+            },
             { key: "uploadedAt", label: "Stored", render: (r) => when(r.uploadedAt) },
             {
               key: "scanStatus",
@@ -305,21 +387,30 @@ function Documents({ session, notify, profile }) {
             {
               key: "act",
               label: "",
-              render: (r) =>
-                can(profile, "UPDATE_POLICY") &&
-                (r.legalHold ? (
-                  <Button variant="secondary" busy={action.busy} onClick={() => save(r, false)}>
-                    Lift hold
-                  </Button>
-                ) : (
-                  <Button variant="secondary" onClick={() => setHold({ doc: r, reason: "" })}>
-                    Legal hold
-                  </Button>
-                )),
+              render: (r) => (
+                <span className="ws-row-actions">
+                  {can(profile, "READ_AUDIT") && !r.docKey.startsWith("U:") && (
+                    <Button variant="secondary" onClick={() => setAccess(r)}>
+                      Access log
+                    </Button>
+                  )}
+                  {can(profile, "UPDATE_POLICY") &&
+                    (r.legalHold ? (
+                      <Button variant="secondary" busy={action.busy} onClick={() => save(r, false)}>
+                        Lift hold
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" onClick={() => setHold({ doc: r, reason: "" })}>
+                        Legal hold
+                      </Button>
+                    ))}
+                </span>
+              ),
             },
           ]}
         />
       </Panel>
+      {access && <AccessLog session={session} doc={access} onClose={() => setAccess(null)} />}
       {hold && (
         <Drawer title={"Legal hold on " + hold.doc.fileName} description="The document cannot be disposed of while the hold stands." onClose={() => setHold(null)}>
           <FormGrid submitLabel="Place hold" busy={action.busy} error={action.error} onSubmit={() => save(hold.doc, true, hold.reason)}>
@@ -330,6 +421,30 @@ function Documents({ session, notify, profile }) {
         </Drawer>
       )}
     </>
+  );
+}
+
+/** Who opened a document, through which channel and when (SH09A: document access log; READ_AUDIT). */
+function AccessLog({ session, doc, onClose }) {
+  const owner = doc.ownerKind === "POLICY" ? "policies" : "claims";
+  const log = useResource(session, `/portfolio/${owner}/${encodeURIComponent(doc.ownerRef)}/document-access`, []);
+  const id = Number(doc.docKey.slice(2));
+  const rows = (log.data || []).filter((a) => a.documentId === id && a.kind === (doc.ownerKind === "POLICY" ? "POLICY" : "CLAIM"));
+  return (
+    <Drawer title={"Access log · " + doc.fileName} description={doc.ownerRef + " · every opening and download is recorded."} onClose={onClose}>
+      <ErrorNote error={log.error} />
+      <DataTable
+        rows={rows}
+        loading={log.loading}
+        rowKey={(a) => a.accessedAt + a.username}
+        empty="Nobody has opened this document"
+        columns={[
+          { key: "accessedAt", label: "When", render: (a) => when(a.accessedAt) },
+          { key: "username", label: "Who" },
+          { key: "channel", label: "Channel", render: (a) => (a.channel === "PORTAL" ? "Customer portal" : "Workspace") },
+        ]}
+      />
+    </Drawer>
   );
 }
 
