@@ -46,6 +46,7 @@ export default function Finance({ session, notify, profile }) {
           ["gl", "GL export"],
           ["manual", "Manual journals"],
           ["suspense", "Suspense"],
+          ["refunds", "Refunds"],
           ["reconciliation", "Reconciliation"],
         ]}
       />
@@ -57,6 +58,7 @@ export default function Finance({ session, notify, profile }) {
       {tab === "gl" && <GlExport session={session} notify={notify} profile={profile} />}
       {tab === "manual" && <ManualJournals session={session} notify={notify} profile={profile} />}
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
+      {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} />}
       {tab === "reconciliation" && <Reconciliation session={session} notify={notify} profile={profile} />}
     </>
   );
@@ -1437,6 +1439,170 @@ function Suspense({ session, notify, profile }) {
                 value={clearing.reason}
                 onChange={(e) => setClearing({ ...clearing, reason: e.target.value })}
               />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// AT-SH10-01: a refund is raised with a reason and paid only when someone else approves it, whatever roles the maker
+// holds. Approval settles it (RefundSettled).
+const REFUND_SOURCES = {
+  PREMIUM: "Premium",
+  CREDIT_EARLY_SETTLEMENT: "Credit life early settlement",
+  GROUP_SETTLEMENT: "Group settlement",
+  OTHER: "Other",
+};
+
+function Refunds({ session, notify, profile }) {
+  const list = useResource(session, "/finance/refunds", []);
+  const action = useAction(notify);
+  const confirm = useConfirm();
+  const [form, setForm] = useState(null);
+  const [rejecting, setRejecting] = useState(null);
+  const me = profile?.username;
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const raise = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds", { method: "POST", body: form }),
+      "Refund sent for approval",
+    );
+    if (done) {
+      setForm(null);
+      list.reload();
+    }
+  };
+  const approve = async (r) => {
+    const ok = await confirm({
+      title: "Approve refund " + r.ref + "?",
+      message: (
+        <>
+          Pays {pula(r.amount)} to <strong>{r.payeeName}</strong> by {r.payoutMethod} {r.accountRef}, raised by {r.requestedBy}:{" "}
+          <em>{r.reason}</em>.
+        </>
+      ),
+      confirmLabel: "Approve and pay",
+    });
+    if (!ok) return;
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + r.ref + "/approve", { method: "POST", body: {} }),
+      "Refund approved and settled",
+    );
+    if (done) list.reload();
+  };
+  const reject = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + rejecting.ref + "/reject", { method: "POST", body: { note: rejecting.note } }),
+      "Refund rejected",
+    );
+    if (done) {
+      setRejecting(null);
+      list.reload();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Refunds"
+        subtitle="Premium and settlement refunds. Each is raised with a reason and paid only when a different person approves it."
+        action={
+          can(profile, "MANAGE_FINANCE") && (
+            <Button
+              onClick={() =>
+                setForm({ source: "PREMIUM", sourceRef: "", policyRef: "", payeeName: "", payoutMethod: "Bank Account", accountRef: "", amount: "", reason: "" })
+              }
+            >
+              Raise refund
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={list.error || (!form && !rejecting && action.error)} />
+        <DataTable
+          rows={list.data}
+          loading={list.loading}
+          rowKey={(r) => r.ref}
+          empty="No refunds"
+          searchPlaceholder="Search refund, policy, payee…"
+          columns={[
+            { key: "ref", label: "Refund" },
+            { key: "source", label: "For", render: (r) => REFUND_SOURCES[r.source] || r.source },
+            { key: "policyRef", label: "Policy", render: (r) => r.policyRef || "—" },
+            { key: "payeeName", label: "Payee" },
+            { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+            { key: "requestedBy", label: "Raised by" },
+            { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.status !== "PENDING_APPROVAL" ? (
+                  <small className="ws-hint">
+                    {r.decidedBy ? (r.status === "SETTLED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                    {r.decisionNote ? ": " + r.decisionNote : ""}
+                  </small>
+                ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                  <small className="ws-hint">Waiting for another approver</small>
+                ) : (
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                      Approve
+                    </Button>
+                    <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
+                      Reject
+                    </Button>
+                  </span>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {form && (
+        <Drawer title="Raise a refund" description="A second person approves it before it is paid." onClose={() => setForm(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={raise} submitLabel="Send for approval">
+            <Field label="For">
+              <select value={form.source} onChange={set("source")}>
+                {Object.entries(REFUND_SOURCES).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Source reference" hint="The loan, receipt or settlement it refunds">
+              <input value={form.sourceRef} maxLength={60} onChange={set("sourceRef")} />
+            </Field>
+            <Field label="Policy">
+              <input value={form.policyRef} maxLength={40} placeholder="POL-…" onChange={set("policyRef")} />
+            </Field>
+            <Field label="Amount (BWP)">
+              <input type="number" min="0.01" step="0.01" required value={form.amount} onChange={set("amount")} />
+            </Field>
+            <Field label="Payee">
+              <input required maxLength={150} value={form.payeeName} onChange={set("payeeName")} />
+            </Field>
+            <Field label="Payout method">
+              <select value={form.payoutMethod} onChange={set("payoutMethod")}>
+                <option>Bank Account</option>
+                <option>Mobile Wallet</option>
+              </select>
+            </Field>
+            <Field label="Account / wallet number">
+              <input required maxLength={60} value={form.accountRef} onChange={set("accountRef")} />
+            </Field>
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={form.reason} onChange={set("reason")} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {rejecting && (
+        <Drawer title={"Reject refund " + rejecting.ref} description="The person who raised it sees why." onClose={() => setRejecting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject refund">
+            <Field label="Why" full>
+              <input required maxLength={500} value={rejecting.note} onChange={(e) => setRejecting({ ...rejecting, note: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>
