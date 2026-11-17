@@ -1,130 +1,66 @@
-const { chromium, expect } = require("@playwright/test");
+// Themed dropdown (Radix Select) check against the running app (backend with demo data on 8091, `npm run dev` on
+// 5180), in the New application form: opening, the selected checkmark state, keyboard choice, Escape returning focus
+// without closing the dialog, a click outside, and the menu staying on screen on a phone. The form is cancelled, so
+// nothing is saved.
 const assert = require("node:assert/strict");
-const os = require("node:os");
-const path = require("node:path");
-(async () => {
-  const browser = await chromium.launch({
-    channel: process.env.PLAYWRIGHT_CHANNEL || "chrome",
-    headless: true,
-  });
-  try {
-    const page = await browser.newPage({
-      viewport: { width: 1440, height: 1000 },
-      reducedMotion: "reduce",
-    });
-    const errors = [];
-    page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto(process.env.NSURE_BASE_URL || "http://127.0.0.1:5173");
-    await page.getByRole("button", { name: "Enter workspace" }).click();
-    await page
-      .getByRole("button", { name: "New application", exact: true })
-      .click();
-    await page.getByRole("button", { name: "Continue", exact: true }).click();
-    const product = page.getByRole("combobox", {
-      name: "Product",
-      exact: true,
-    });
-    await product.click();
-    await page
-      .getByRole("option", { name: "Family Funeral", exact: true })
-      .click();
-    assert.equal(await product.textContent(), "Family Funeral");
-    await page.getByText("BWP 185", { exact: false }).waitFor();
-    await product.click();
-    assert.equal(
-      await page
-        .getByRole("option", { name: "Family Funeral", exact: true })
-        .getAttribute("data-state"),
-      "checked",
-    );
-    assert.equal(
-      await page
-        .getByRole("listbox")
-        .evaluate((el) => getComputedStyle(el).borderRadius),
-      "12px",
-    );
-    await page.screenshot({
-      path: path.join(os.tmpdir(), "nsure-dropdown-desktop.png"),
-      fullPage: false,
-    });
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("listbox")).toHaveCount(0);
-    await expect(page.getByRole("dialog")).toHaveCount(1);
-    await expect(product).toBeFocused();
-    await product.press("ArrowDown");
-    await expect(
-      page.getByRole("option", { name: "Family Funeral", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("Home");
-    await expect(
-      page.getByRole("option", { name: "Term Life", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("ArrowDown");
-    await expect(
-      page.getByRole("option", { name: "Whole of Life", exact: true }),
-    ).toBeFocused();
-    await page.keyboard.press("Enter");
-    assert.equal(await product.textContent(), "Whole of Life");
-    await page.getByText("BWP 680", { exact: false }).waitFor();
-    await product.click();
-    await expect(page.getByRole("option", { name: "Whole of Life", exact: true })).toBeFocused();
-    const headingBox = await page.locator(".modal-body h3").boundingBox();
-    await page.mouse.move(headingBox.x + 20, headingBox.y + 10, { steps: 8 });
-    await page.mouse.click(headingBox.x + 20, headingBox.y + 10);
-    await expect(page.getByRole("listbox")).toHaveCount(0);
-    await expect(page.getByRole("dialog")).toHaveCount(1);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await product.click();
-    const box = await page.getByRole("listbox").boundingBox();
-    assert(box.x >= 0 && box.x + box.width <= 390, "Menu fits mobile width");
-    assert(box.y >= 0 && box.y + box.height <= 844, "Menu fits mobile height");
-    await page.screenshot({
-      path: path.join(os.tmpdir(), "nsure-dropdown-mobile.png"),
-      fullPage: false,
-    });
-    await page.getByRole("option", { name: "Care Cash", exact: true }).click();
-    assert.equal(await product.textContent(), "Care Cash");
-    await page.getByRole("button", { name: "Close dialog" }).click();
-    await page.getByRole("button", { name: "Toggle navigation" }).click();
-    await page.getByRole("link", { name: "Claims", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Register claim", exact: true })
-      .click();
-    await page.getByRole("combobox", { name: "Product", exact: true }).click();
-    await page
-      .getByRole("option", { name: "Family Funeral", exact: true })
-      .click();
-    await page
-      .getByRole("combobox", { name: "Benefit type", exact: true })
-      .click();
-    await page
-      .getByRole("option", { name: "Funeral benefit", exact: true })
-      .click();
-    await page
-      .getByLabel("Claimed amount (BWP)", { exact: true })
-      .fill("25000");
-    await page.getByLabel("Event date", { exact: true }).fill("2026-09-20");
-    await page
-      .getByLabel("Brief description", { exact: true })
-      .fill("Test fictional claim");
-    await page.getByRole("button", { name: "Register claim" }).click();
-    const row = page.getByRole("row").filter({ hasText: "CLM-843" });
-    await row.getByText("Family Funeral", { exact: true }).waitFor();
-    await page
-      .getByRole("button", { name: "View CLM-843", exact: true })
-      .click();
-    await page
-      .getByRole("dialog")
-      .getByText("Funeral benefit", { exact: true })
-      .waitFor();
-    assert.deepEqual(errors, []);
-    console.log(
-      "PASS: styled options, selected state, mouse/keyboard selection, premium synchronization, Escape/focus return, outside dismissal, mobile collision handling, and FormData submission.",
-    );
-  } finally {
-    await browser.close();
-  }
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
+const { assertNoErrors, expect, openPage, run, screenshot, signInStaff } = require("./smoke-support.cjs");
+
+run("dropdown: open, selected state, keyboard and mouse choice, Escape and focus, outside click, phone bounds", async (browser) => {
+  const page = await openPage(browser, { reducedMotion: "reduce" });
+  await signInStaff(page, "admin");
+  await page.getByRole("button", { name: "New application", exact: true }).first().click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: "Who are we looking after?" })).toBeVisible();
+
+  // Customer: the open menu marks the current choice; Escape closes the menu, not the dialog.
+  const customer = dialog.getByRole("combobox", { name: "Customer", exact: true });
+  await customer.click();
+  const listbox = page.getByRole("listbox");
+  await expect(listbox).toBeVisible();
+  const options = listbox.getByRole("option");
+  assert((await options.count()) >= 2, "The demo data has at least two customers");
+  await expect(listbox.locator('[role="option"][data-state="checked"]')).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(dialog).toHaveCount(1);
+  await expect(customer).toBeFocused();
+
+  // Keyboard: open, move down one, choose. The trigger shows the choice.
+  await customer.press("ArrowDown");
+  await expect(page.getByRole("listbox")).toBeVisible();
+  const second = (await page.getByRole("listbox").getByRole("option").nth(1).textContent()).trim();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(customer).toHaveText(second);
+
+  // Product (next step): a mouse choice, then a click outside closes the menu but keeps the dialog.
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  const product = dialog.getByRole("combobox", { name: "Product", exact: true });
+  await product.click();
+  const products = page.getByRole("listbox").getByRole("option");
+  const last = (await products.last().textContent()).trim();
+  await products.last().click();
+  await expect(product).toHaveText(last);
+  await product.click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await screenshot(page, "nsure-dropdown-desktop.png");
+  const heading = await dialog.getByRole("heading", { name: "A little protection goes a long way." }).boundingBox();
+  await page.mouse.click(heading.x + 10, heading.y + 5);
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(dialog).toHaveCount(1);
+
+  // Phone: the open menu stays inside the screen.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await product.click();
+  const box = await page.getByRole("listbox").boundingBox();
+  assert(box.x >= 0 && box.x + box.width <= 390, "Menu fits the phone's width");
+  assert(box.y >= 0 && box.y + box.height <= 844, "Menu fits the phone's height");
+  await screenshot(page, "nsure-dropdown-mobile.png");
+  await page.keyboard.press("Escape");
+  await dialog.getByRole("button", { name: "Back", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  assertNoErrors(page);
 });

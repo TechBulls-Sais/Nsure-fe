@@ -61,17 +61,28 @@ Replace seed state and local mutation handlers with a typed API client when the 
 
 Scope follows the supplied Nsure specification: Individual Life application/policy journeys, customer records, claims, Group scheme previews, products, collections, and governed AI previews. Commissions, reinsurance, subledger posting, provider integrations, and a full product rule engine are outside this frontend milestone.
 
-## Browser smoke check
+## Browser smoke checks
 
-With the dev server running and Google Chrome installed:
+The checks drive the real app. Start the backend with demo data (port 8091) and `npm run dev` (port 5180), with
+Google Chrome installed, then:
 
 ```sh
-npm run test:smoke
+npm test               # workspace: staff sign-in with the one-time code, navigation, work queue, access, service desk, mobile
+npm run test:landing   # public landing page, sign-in routes, product cards, FAQ, reduced motion, mobile menu
+npm run test:intelligence  # command palette, theme switch, reduced motion
+npm run test:select    # themed dropdowns in the New application form (cancelled, nothing saved)
+npm run test:products  # Product studio list and wizard validation (discarded, nothing saved)
+npm run test:all       # all of the above
 ```
 
-The check exercises dummy login, search, customer creation, application submission and policy issuance, claim evidence/approval/settlement, census validation, scripted AI, product defaults, CSV download, and mobile navigation. It fails on browser runtime errors or page-wide mobile overflow. Screenshots are written to the operating system temporary directory.
+Staff sign-in is the real two-step flow: the scripts read the demo code a dev/demo backend shows on screen. They only
+read (the workspace check also confirms that a read-only role has no work to take). They fail on browser runtime
+errors or sideways scrolling at phone width. Screenshots go to the operating system temporary directory. Shared set-up
+is in `scripts/smoke-support.cjs`.
 
-Optional environment variables: `NSURE_BASE_URL`, `NSURE_SCREENSHOT_DIR` (existing directory), and `PLAYWRIGHT_CHANNEL` (defaults to `chrome`).
+Optional environment variables: `NSURE_BASE_URL` (default `http://127.0.0.1:5180`), `NSURE_SCREENSHOT_DIR` (existing
+directory), `PLAYWRIGHT_CHANNEL` (defaults to `chrome`), `NSURE_PASSWORD` (default `password`) and
+`NSURE_ONE_TIME_CODE` (only for a backend that does not show the demo code).
 
 ## Product Studio
 
@@ -86,7 +97,7 @@ The configuration showcase includes a searchable list with Draft, In review, and
 
 A live product preview updates while editing. Save draft retains a configuration in the current session; editing and saving increments its displayed version. Validation checks required/unique product identity, age ranges, selected benefits/channels, and positive amounts. Drafts may contain incomplete operational settings. Demo activation changes only the configuration status: it does not add a saleable product to the existing catalogue or change application premiums. Refresh resets configurations to the seeded examples.
 
-Run the focused configuration browser check with `npm run test:products` while the dev server is running. It covers creation, validation, live edits, review/activation, versioning, duplication, drafts, search, navigation, and mobile layout.
+Run the focused configuration browser check with `npm run test:products` while the dev server and backend are running. It covers the list, filters, search, wizard validation, leaving without saving, and the mobile layout.
 
 ## Animated intelligence experience
 
@@ -96,13 +107,13 @@ The UI now uses adapted open-source components from **Kokonut UI** and **Magic U
 - Workspace command palette: **Cmd/Ctrl+K** opens search with arrow-key navigation, Enter selection, and Escape dismissal. It opens pages or starts applications/claims.
 - Motion: the header toggle pauses decorative animation. System reduced-motion preferences are respected, including changes while the app is open. Page timelines clean up on navigation; decorative effects have bounded repeats.
 
-Run all browser checks with `npm test` while the dev server and backend are running, or run only the new interactions with `npm run test:intelligence`. Portfolio records are stored by the backend.
+Run all browser checks with `npm run test:all` while the dev server and backend are running, or run only these interactions with `npm run test:intelligence`. Portfolio records are stored by the backend.
 
 Dropdown fields share a themed Radix Select menu with selected checkmarks, keyboard navigation, and mobile-aware positioning. Run `npm run test:select` for selection, premium updates, focus/Escape, mobile bounds, and claim submission checks.
 
 ## Public landing page
 
-The root URL now opens a responsive Nsure landing page. It includes product cards with explicit flip controls, a short getting-started guide, expandable FAQs, and an Admin dropdown with both **Customer login** and **Admin login** links. Product copy is introductory and illustrative; current products and eligibility remain in the authenticated portal.
+The root URL now opens a responsive Nsure landing page. It includes product cards with explicit flip controls, a short getting-started guide, expandable FAQs, and **Admin login** and **Customer login** links in the header. Product copy is introductory and illustrative; current products and eligibility remain in the authenticated portal.
 
 - `#/home`: landing page; `#/cover`, `#/how-it-works`, and `#/questions`: landing sections.
 - `#/login/customer`: existing customer sign-in form.
@@ -110,4 +121,4 @@ The root URL now opens a responsive Nsure landing page. It includes product card
 - Signing out returns to the landing page. Successful sign-in retains the existing backend-based customer/staff routing.
 - `src/LandingPage.jsx` and `src/landing.css`: isolated landing UI, responsive styles, accessible interactions, and scoped Anime.js entrance animation.
 
-Use `npm run test:landing` with the dev server running for the standalone landing-page checks. These verify public navigation, both login entry points, flip controls, FAQs, mobile bounds, and reduced motion without needing the backend. Existing portfolio smoke scripts depend on a running backend and their original showcase fixture assumptions.
+Use `npm run test:landing` with the dev server and backend running for the landing-page checks (the product cards come from the backend). These verify public navigation, both login entry points, flip controls, FAQs, mobile bounds, and reduced motion.
