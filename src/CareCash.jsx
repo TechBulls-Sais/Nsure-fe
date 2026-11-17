@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Plus } from "lucide-react";
-import { request } from "./api";
+import { newIdempotencyKey, request } from "./api";
+import { money } from "./data";
 import {
   Badge,
   Button,
@@ -14,15 +15,25 @@ import {
   Stat,
   Tabs,
   can,
-  pula,
   useAction,
   useResource,
+  when,
 } from "./ui/workspace";
 
 // Care Cash hospital benefits: each event is worked out benefit by benefit against the policy's day limits.
 
 const TYPE = { ADMISSION: "Hospital admission", DAY_CASE: "Day case", MATERNITY: "Maternity", ACCIDENTAL_DEATH: "Accidental death" };
-const STATUS = { ASSESSED: ["Awaiting approval", "amber"], APPROVED: ["Approved", "blue"], PAID: ["Paid", "green"], DECLINED: ["Declined", undefined] };
+// A payment is in flight between Payment sent and Paid (the provider confirmed it settled); a failed or returned one
+// is sent again with corrected details, as for claim payouts (NS-SH05-007).
+const STATUS = {
+  ASSESSED: ["Awaiting approval", "amber"],
+  APPROVED: ["Approved", "blue"],
+  PAYMENT_SENT: ["Payment sent", "amber"],
+  PAYMENT_FAILED: ["Payment failed", "red"],
+  PAID: ["Paid", "green"],
+  DECLINED: ["Declined", undefined],
+};
+const PAYOUT_METHODS = ["Bank Account", "Mobile Wallet"];
 const badge = (s) => {
   const [label, tone] = STATUS[s] || [s];
   return <Badge tone={tone}>{label}</Badge>;
@@ -49,10 +60,16 @@ export default function CareCash({ session, notify, profile }) {
       <div className="stat-grid">
         <Stat label="Care Cash policies" value={(policies.data || []).length} loading={policies.loading} />
         <Stat label="Events awaiting approval" value={all.filter((e) => e.status === "ASSESSED").length} tone="amber" loading={events.loading} />
-        <Stat label="Approved, to pay" value={all.filter((e) => e.status === "APPROVED").length} tone="blue" loading={events.loading} />
+        <Stat
+          label="Approved, to pay"
+          value={all.filter((e) => e.status === "APPROVED" || e.status === "PAYMENT_FAILED").length}
+          tone="blue"
+          loading={events.loading}
+        />
+        <Stat label="Payments in flight" value={all.filter((e) => e.status === "PAYMENT_SENT").length} tone="amber" loading={events.loading} />
         <Stat
           label="Paid"
-          value={pula(all.filter((e) => e.status === "PAID").reduce((s, e) => s + Number(e.amount), 0))}
+          value={money(all.filter((e) => e.status === "PAID").reduce((s, e) => s + Number(e.amount), 0))}
           loading={events.loading}
         />
       </div>
@@ -79,7 +96,7 @@ export default function CareCash({ session, notify, profile }) {
             columns={[
               { key: "policyRef", label: "Policy" },
               { key: "customerName", label: "Policyholder" },
-              { key: "dailyBenefit", label: "Daily benefit", align: "right", render: (r) => pula(r.dailyBenefit) },
+              { key: "dailyBenefit", label: "Daily benefit", align: "right", render: (r) => money(r.dailyBenefit) },
               { key: "coverStartDate", label: "Cover from", render: (r) => r.coverStartDate || "—" },
               { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "green" : undefined}>{r.status}</Badge> },
             ]}
@@ -144,7 +161,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
           <div className="ws-kv">
             <div>
               <small>Daily benefit</small>
-              <strong>{pula(v.dailyBenefit)}</strong>
+              <strong>{money(v.dailyBenefit)}</strong>
             </div>
             <div>
               <small>Cover from</small>
@@ -219,7 +236,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 { key: "eventType", label: "Type", render: (r) => TYPE[r.eventType] || r.eventType },
                 { key: "admitDate", label: "Admitted" },
                 { key: "paidDays", label: "Days paid", align: "right" },
-                { key: "amount", label: "Benefit", align: "right", render: (r) => pula(r.amount) },
+                { key: "amount", label: "Benefit", align: "right", render: (r) => money(r.amount) },
                 { key: "status", label: "Status", render: (r) => badge(r.status) },
               ]}
             />
@@ -288,7 +305,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             {preview && (
               <div className="form-label full">
                 <span>
-                  Benefit {pula(preview.amount)}
+                  Benefit {money(preview.amount)}
                   {preview.waiverMonths > 0 ? " · " + preview.waiverMonths + "-month premium waiver" : ""}
                 </span>
                 <Trace lines={preview.trace} />
@@ -305,27 +322,37 @@ function Events({ session, notify, profile, resource }) {
   const action = useAction(notify);
   const [open, setOpen] = useState(null);
   const [note, setNote] = useState("");
+  const [payee, setPayee] = useState(null);
   const me = session?.username;
   const post = async (suffix, body, message) => {
-    const done = await action.run(() => request(session, "/care-cash/events/" + open.ref + suffix, { method: "POST", body }), message);
+    // Payments carry an Idempotency-Key, so a double click or a retried request never sends two instructions.
+    const idempotencyKey = suffix.startsWith("/payment") ? newIdempotencyKey() : undefined;
+    const done = await action.run(
+      () => request(session, "/care-cash/events/" + open.ref + suffix, { method: "POST", body, idempotencyKey }),
+      message,
+    );
     if (done) {
       setOpen(null);
       setNote("");
       resource.reload();
     }
   };
+  const show = (r) => {
+    setNote("");
+    setPayee({ payeeName: r.payment?.payeeName || r.customerName || "", payoutMethod: r.payment?.payoutMethod || PAYOUT_METHODS[0], accountRef: "" });
+    setOpen(r);
+  };
+  const settle = can(profile, "SETTLE_CLAIM");
+  const payment = open?.payment;
   return (
     <>
-      <Panel title="Hospital events" subtitle="An event is approved by someone other than the person who recorded it, then paid.">
+      <Panel title="Hospital events" subtitle="An event is approved by someone other than the person who recorded it, then paid: the payment is in flight until the provider confirms it settled.">
         <ErrorNote error={resource.error} />
         <DataTable
           rows={resource.data}
           loading={resource.loading}
           rowKey={(r) => r.ref}
-          onRowClick={(r) => {
-            setNote("");
-            setOpen(r);
-          }}
+          onRowClick={show}
           empty="No events recorded"
           searchPlaceholder="Search events, policies, lives…"
           columns={[
@@ -335,7 +362,7 @@ function Events({ session, notify, profile, resource }) {
             { key: "eventType", label: "Type", render: (r) => TYPE[r.eventType] || r.eventType },
             { key: "admitDate", label: "Admitted" },
             { key: "paidDays", label: "Days paid", align: "right" },
-            { key: "amount", label: "Benefit", align: "right", sortValue: (r) => Number(r.amount), render: (r) => pula(r.amount) },
+            { key: "amount", label: "Benefit", align: "right", sortValue: (r) => Number(r.amount), render: (r) => money(r.amount) },
             { key: "status", label: "Status", render: (r) => badge(r.status) },
             { key: "createdBy", label: "Recorded by" },
           ]}
@@ -344,10 +371,38 @@ function Events({ session, notify, profile, resource }) {
       {open && (
         <Drawer
           title={open.ref + " · " + (TYPE[open.eventType] || open.eventType)}
-          description={open.lifeName + " on " + open.policyRef + " · " + pula(open.amount)}
+          description={open.lifeName + " on " + open.policyRef + " · " + money(open.amount)}
           onClose={() => setOpen(null)}
         >
           <Trace lines={open.trace} />
+          {payment && (
+            <div className="ws-kv">
+              <div>
+                <small>Payment instruction</small>
+                <strong>{open.paymentReference || "—"}</strong>
+              </div>
+              <div>
+                <small>Payee</small>
+                <strong>
+                  {payment.payeeName} · {payment.payoutMethod} {payment.accountRef}
+                </strong>
+              </div>
+              <div>
+                <small>Sent</small>
+                <strong>{payment.sentAt ? when(payment.sentAt) + " by " + payment.sentBy : "—"}</strong>
+              </div>
+              <div>
+                <small>Settled</small>
+                <strong>{payment.settledAt ? when(payment.settledAt) : open.status === "PAYMENT_SENT" ? "In flight: awaiting the provider" : "—"}</strong>
+              </div>
+              {open.status === "PAYMENT_FAILED" && payment.failureReason && (
+                <div>
+                  <small>Failed</small>
+                  <strong>{payment.failureReason}</strong>
+                </div>
+              )}
+            </div>
+          )}
           <ErrorNote error={action.error} />
           {open.status === "ASSESSED" && can(profile, "APPROVE_CLAIM") && open.createdBy !== me && (
             <FormGrid
@@ -366,10 +421,54 @@ function Events({ session, notify, profile, resource }) {
             </FormGrid>
           )}
           {open.status === "ASSESSED" && open.createdBy === me && <p className="ws-hint">You recorded this event, so someone else must approve it.</p>}
-          {open.status === "APPROVED" && can(profile, "SETTLE_CLAIM") && (
-            <FormGrid submitLabel="Record payment" busy={action.busy} onSubmit={() => post("/payment", { paymentReference: note }, "Payment recorded")}>
-              <Field label="Payment reference" full>
-                <input value={note} onChange={(e) => setNote(e.target.value)} required />
+          {(open.status === "APPROVED" || open.status === "PAYMENT_FAILED") && settle && Number(open.amount) > 0 && (
+            <>
+              <p className="ws-hint">
+                {open.status === "PAYMENT_FAILED"
+                  ? "The last payment failed or was returned. Correct the payout details, then send it again under a new instruction."
+                  : "Sends a payment instruction for " + money(open.amount) + ". It counts as paid only once the provider confirms settlement."}
+              </p>
+              <FormGrid
+                submitLabel={open.status === "PAYMENT_FAILED" ? "Send payment again" : "Send payment"}
+                busy={action.busy}
+                onSubmit={() => post("/payment", payee, "Payment sent. Waiting for the provider to confirm settlement.")}
+              >
+                <Field label="Payee" full>
+                  <input value={payee.payeeName} onChange={(e) => setPayee({ ...payee, payeeName: e.target.value })} required />
+                </Field>
+                <Field label="Payout method">
+                  <select value={payee.payoutMethod} onChange={(e) => setPayee({ ...payee, payoutMethod: e.target.value })}>
+                    {PAYOUT_METHODS.map((m) => (
+                      <option key={m}>{m}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Account / wallet number">
+                  <input value={payee.accountRef} onChange={(e) => setPayee({ ...payee, accountRef: e.target.value })} required />
+                </Field>
+              </FormGrid>
+            </>
+          )}
+          {open.status === "PAYMENT_SENT" && settle && (
+            <FormGrid
+              submitLabel="Confirm settlement"
+              busy={action.busy}
+              onSubmit={() => post("/payment/confirm", { providerReference: open.paymentReference }, open.ref + " is paid.")}
+              extra={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  busy={action.busy}
+                  disabled={!note.trim()}
+                  title={note.trim() ? undefined : "Enter what the provider or bank said first"}
+                  onClick={() => post("/payment/failed", { reason: note }, "Payment recorded as failed. Correct the details before sending again.")}
+                >
+                  Payment failed
+                </Button>
+              }
+            >
+              <Field label="If it failed or came back: the provider's reason" full hint="Confirm settlement only when the provider or bank statement shows the money arrived.">
+                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Returned: account closed" />
               </Field>
             </FormGrid>
           )}

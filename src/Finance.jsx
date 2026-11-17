@@ -46,6 +46,8 @@ export default function Finance({ session, notify, profile }) {
           ["gl", "GL export"],
           ["manual", "Manual journals"],
           ["suspense", "Suspense"],
+          ["refunds", "Refunds"],
+          ["billing", "Billing"],
           ["reconciliation", "Reconciliation"],
         ]}
       />
@@ -57,6 +59,8 @@ export default function Finance({ session, notify, profile }) {
       {tab === "gl" && <GlExport session={session} notify={notify} profile={profile} />}
       {tab === "manual" && <ManualJournals session={session} notify={notify} profile={profile} />}
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
+      {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} />}
+      {tab === "billing" && <Billing session={session} notify={notify} profile={profile} />}
       {tab === "reconciliation" && <Reconciliation session={session} notify={notify} profile={profile} />}
     </>
   );
@@ -1437,6 +1441,318 @@ function Suspense({ session, notify, profile }) {
                 value={clearing.reason}
                 onChange={(e) => setClearing({ ...clearing, reason: e.target.value })}
               />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// AT-SH10-01: a refund is raised with a reason and paid only when someone else approves it, whatever roles the maker
+// holds. Approval settles it (RefundSettled).
+const REFUND_SOURCES = {
+  PREMIUM: "Premium",
+  CREDIT_EARLY_SETTLEMENT: "Credit life early settlement",
+  GROUP_SETTLEMENT: "Group settlement",
+  OTHER: "Other",
+};
+
+function Refunds({ session, notify, profile }) {
+  const list = useResource(session, "/finance/refunds", []);
+  const action = useAction(notify);
+  const confirm = useConfirm();
+  const [form, setForm] = useState(null);
+  const [rejecting, setRejecting] = useState(null);
+  const me = profile?.username;
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const raise = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds", { method: "POST", body: form }),
+      "Refund sent for approval",
+    );
+    if (done) {
+      setForm(null);
+      list.reload();
+    }
+  };
+  const approve = async (r) => {
+    const ok = await confirm({
+      title: "Approve refund " + r.ref + "?",
+      message: (
+        <>
+          Pays {pula(r.amount)} to <strong>{r.payeeName}</strong> by {r.payoutMethod} {r.accountRef}, raised by {r.requestedBy}:{" "}
+          <em>{r.reason}</em>.
+        </>
+      ),
+      confirmLabel: "Approve and pay",
+    });
+    if (!ok) return;
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + r.ref + "/approve", { method: "POST", body: {} }),
+      "Refund approved and settled",
+    );
+    if (done) list.reload();
+  };
+  const reject = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + rejecting.ref + "/reject", { method: "POST", body: { note: rejecting.note } }),
+      "Refund rejected",
+    );
+    if (done) {
+      setRejecting(null);
+      list.reload();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Refunds"
+        subtitle="Premium and settlement refunds. Each is raised with a reason and paid only when a different person approves it."
+        action={
+          can(profile, "MANAGE_FINANCE") && (
+            <Button
+              onClick={() =>
+                setForm({ source: "PREMIUM", sourceRef: "", policyRef: "", payeeName: "", payoutMethod: "Bank Account", accountRef: "", amount: "", reason: "" })
+              }
+            >
+              Raise refund
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={list.error || (!form && !rejecting && action.error)} />
+        <DataTable
+          rows={list.data}
+          loading={list.loading}
+          rowKey={(r) => r.ref}
+          empty="No refunds"
+          searchPlaceholder="Search refund, policy, payee…"
+          columns={[
+            { key: "ref", label: "Refund" },
+            { key: "source", label: "For", render: (r) => REFUND_SOURCES[r.source] || r.source },
+            { key: "policyRef", label: "Policy", render: (r) => r.policyRef || "—" },
+            { key: "payeeName", label: "Payee" },
+            { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+            { key: "requestedBy", label: "Raised by" },
+            { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.status !== "PENDING_APPROVAL" ? (
+                  <small className="ws-hint">
+                    {r.decidedBy ? (r.status === "SETTLED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                    {r.decisionNote ? ": " + r.decisionNote : ""}
+                  </small>
+                ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                  <small className="ws-hint">Waiting for another approver</small>
+                ) : (
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                      Approve
+                    </Button>
+                    <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
+                      Reject
+                    </Button>
+                  </span>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {form && (
+        <Drawer title="Raise a refund" description="A second person approves it before it is paid." onClose={() => setForm(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={raise} submitLabel="Send for approval">
+            <Field label="For">
+              <select value={form.source} onChange={set("source")}>
+                {Object.entries(REFUND_SOURCES).map(([k, label]) => (
+                  <option key={k} value={k}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Source reference" hint="The loan, receipt or settlement it refunds">
+              <input value={form.sourceRef} maxLength={60} onChange={set("sourceRef")} />
+            </Field>
+            <Field label="Policy">
+              <input value={form.policyRef} maxLength={40} placeholder="POL-…" onChange={set("policyRef")} />
+            </Field>
+            <Field label="Amount (BWP)">
+              <input type="number" min="0.01" step="0.01" required value={form.amount} onChange={set("amount")} />
+            </Field>
+            <Field label="Payee">
+              <input required maxLength={150} value={form.payeeName} onChange={set("payeeName")} />
+            </Field>
+            <Field label="Payout method">
+              <select value={form.payoutMethod} onChange={set("payoutMethod")}>
+                <option>Bank Account</option>
+                <option>Mobile Wallet</option>
+              </select>
+            </Field>
+            <Field label="Account / wallet number">
+              <input required maxLength={60} value={form.accountRef} onChange={set("accountRef")} />
+            </Field>
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={form.reason} onChange={set("reason")} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {rejecting && (
+        <Drawer title={"Reject refund " + rejecting.ref} description="The person who raised it sees why." onClose={() => setRejecting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject refund">
+            <Field label="Why" full>
+              <input required maxLength={500} value={rejecting.note} onChange={(e) => setRejecting({ ...rejecting, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// SH04 collection run and instalment adjustments. The run goes to the background (spec §10) and is followed through
+// GET /operations/{id}; an adjustment is a signed correction with a reason, made on the version on screen.
+function Billing({ session, notify, profile }) {
+  const action = useAction(notify);
+  const [operation, setOperation] = useState(null);
+  const [policyRef, setPolicyRef] = useState("");
+  const [account, setAccount] = useState(null);
+  const [adjusting, setAdjusting] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const follow = async (id) => {
+    for (let i = 0; i < 120; i++) {
+      const r = await request(session, "/operations/" + encodeURIComponent(id));
+      setOperation(r.data);
+      if (r.data.status === "SUCCEEDED" || r.data.status === "FAILED") return r.data;
+      await new Promise((done) => setTimeout(done, 1000));
+    }
+    return null;
+  };
+  const run = async () => {
+    const started = await action.run(() => request(session, "/collections/billing-run?async=true", { method: "POST" }));
+    if (!started) return;
+    setOperation(started.data);
+    try {
+      const done = await follow(started.data.id);
+      if (done?.status === "SUCCEEDED") notify("Billing run finished: " + (done.result?.issued ?? 0) + " instalment(s) issued", "success");
+      if (done?.status === "FAILED") notify(done.error, "error");
+    } catch (error) {
+      notify(error.message, "error");
+    }
+  };
+  const load = async (ref) => {
+    const done = await action.run(() => request(session, "/collections/policies/" + encodeURIComponent(ref.trim())));
+    if (done) setAccount(done.data);
+  };
+  const adjust = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/instalments/" + encodeURIComponent(adjusting.ref) + "/adjustments", {
+          method: "POST",
+          version: adjusting.version,
+          body: { amount: adjusting.amount, reason: adjusting.reason },
+        }),
+      "Adjustment recorded",
+    );
+    if (done) {
+      setAdjusting(null);
+      setAccount(done.data);
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Collection run"
+        subtitle="Issues the instalment of every in-force policy whose premium falls due within the lead time. It also runs every morning; running it again issues nothing twice."
+        action={
+          manage && (
+            <Button icon={RefreshCw} busy={action.busy || operation?.status === "PROCESSING" || operation?.status === "ACCEPTED"} onClick={run}>
+              Run billing now
+            </Button>
+          )
+        }
+      >
+        {operation ? (
+          <div className="ws-kv">
+            <div>
+              <small>Operation</small>
+              <strong>{operation.id}</strong>
+            </div>
+            <div>
+              <small>Status</small>
+              <strong>
+                <Badge>{operation.status}</Badge>
+              </strong>
+            </div>
+            <div>
+              <small>Last update</small>
+              <strong>{when(operation.updatedAt)}</strong>
+            </div>
+            {operation.status === "SUCCEEDED" && (
+              <div>
+                <small>Issued</small>
+                <strong>
+                  {operation.result?.issued ?? 0}
+                  {operation.result?.instalments?.length ? " · " + operation.result.instalments.join(", ") : ""}
+                </strong>
+              </div>
+            )}
+            {operation.status === "FAILED" && (
+              <div>
+                <small>Error</small>
+                <strong>{operation.error}</strong>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="ws-hint">No run started from this screen yet.</p>
+        )}
+      </Panel>
+      <Panel title="Instalments and adjustments" subtitle="Open a policy's billing account to correct an instalment with a signed adjustment and a reason.">
+        <FormGrid submitLabel="Open account" busy={action.busy} error={!adjusting && action.error} onSubmit={() => load(policyRef)}>
+          <Field label="Policy">
+            <input required value={policyRef} placeholder="POL-…" onChange={(e) => setPolicyRef(e.target.value)} />
+          </Field>
+        </FormGrid>
+        {account && (
+          <DataTable
+            rows={account.instalments}
+            rowKey={(r) => r.ref}
+            searchFrom={99}
+            empty="No instalments issued"
+            columns={[
+              { key: "ref", label: "Instalment" },
+              { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "billed", label: "Billed", align: "right", render: (r) => pula(r.billed) },
+              { key: "adjustments", label: "Adjustments", align: "right", render: (r) => pula(r.adjustments) },
+              { key: "allocated", label: "Paid", align: "right", render: (r) => pula(r.allocated) },
+              { key: "outstanding", label: "Outstanding", align: "right", render: (r) => pula(r.outstanding) },
+              { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  manage && (
+                    <Button variant="secondary" onClick={() => setAdjusting({ ref: r.ref, version: r.version, amount: "", reason: "" })}>
+                      Adjust
+                    </Button>
+                  ),
+              },
+            ]}
+          />
+        )}
+      </Panel>
+      {adjusting && (
+        <Drawer title={"Adjust " + adjusting.ref} description="A negative amount reduces what is owed; the billed amount itself never changes." onClose={() => setAdjusting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={adjust} submitLabel="Record adjustment">
+            <Field label="Amount (BWP, signed)">
+              <input type="number" step="0.01" required value={adjusting.amount} onChange={(e) => setAdjusting({ ...adjusting, amount: e.target.value })} />
+            </Field>
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={adjusting.reason} onChange={(e) => setAdjusting({ ...adjusting, reason: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>

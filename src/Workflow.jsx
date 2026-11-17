@@ -17,7 +17,7 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { fetchFile, request, uploadFile } from "./api";
+import { fetchFile, newIdempotencyKey, request, uploadFile } from "./api";
 import { money } from "./data";
 import { useConfirm } from "./ui/overlay";
 import { can as holds } from "./ui/workspace";
@@ -1088,7 +1088,20 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const [payout, setPayout] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [fourEyesReason, setFourEyesReason] = useState("");
+  const [evidenceReason, setEvidenceReason] = useState("");
+  const [closing, setClosing] = useState(null);
   const [approveError, setApproveError] = useState("");
+  // Reserve history, benefit limits and decisions (GET .../financials), for the approval summary and the panel.
+  const [financials, setFinancials] = useState(null);
+  useEffect(() => {
+    let active = true;
+    request(session, "/portfolio/claims/" + encodeURIComponent(c.id) + "/financials")
+      .then((r) => active && setFinancials(r.data))
+      .catch(() => active && setFinancials(null));
+    return () => {
+      active = false;
+    };
+  }, [session, c.id, c.version]);
   const open = OPEN_CLAIM.includes(c.status);
   // Legal from the claim's state (the server's list); whether this user may take it is the permission check below.
   const can = (action) => c.actions?.includes(action);
@@ -1102,6 +1115,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const hardFailed = HARD_CHECKS.filter((name) => result(name) === "Fail");
   const notChecked = HARD_CHECKS.some((name) => result(name) === "Pending");
   const softFailed = SOFT_CHECKS.filter((name) => result(name) === "Fail");
+  // NS-SH05-003: mandatory evidence still outstanding does not block the claim, but approving it needs a reason.
+  const missingEvidence = (c.evidence || []).filter((e) => e.mandatory && !e.received).map((e) => e.documentType);
   // Why the claim cannot move towards payout; the server refuses the same cases.
   const blocked = hardFailed.length
     ? hardFailed.join(", ") + " failed, so there was no valid cover for this event. This claim can only be rejected."
@@ -1125,13 +1140,17 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
     const ok = await confirm({
       title: "Approve " + c.id + "?",
       message: (
-        <>
-          Approve a payout of <strong>{money(amount)}</strong>
-          {amount < c.amount ? " (partial, cover " + money(c.amount) + ")" : ""} to {payee.name || "the payee"}.
-          {breakGlass
-            ? " You assessed this claim, so this is a break-glass four-eyes override, recorded on the claim with your reason."
-            : ""}
-        </>
+        <ApprovalSummary
+          claim={c}
+          amount={amount}
+          financials={financials}
+          softFailed={softFailed}
+          overrideReason={overrideReason.trim()}
+          missingEvidence={missingEvidence}
+          evidenceReason={evidenceReason.trim()}
+          breakGlass={breakGlass}
+          fourEyesReason={fourEyesReason.trim()}
+        />
       ),
       confirmLabel: breakGlass ? "Override and approve" : "Approve payout",
       tone: breakGlass ? "danger" : undefined,
@@ -1143,10 +1162,12 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         const result = await request(session, "/portfolio/claims/" + c.id + "/approve", {
           method: "POST",
           version: c.version,
+          idempotencyKey: newIdempotencyKey(),
           body: {
             ...(payout ? { payoutAmount: Number(payout) } : {}),
             ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
             ...(breakGlass ? { fourEyesOverrideReason: fourEyesReason.trim() } : {}),
+            ...(missingEvidence.length ? { evidenceOverrideReason: evidenceReason.trim() } : {}),
           },
         });
         onUpdated(result.data);
@@ -1167,7 +1188,14 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         <Item label="Date of event" value={formatDate(c.eventDate)} />
         <Item label="Processing" value={c.processingType} />
         <Item label="Policy cover" value={money(c.amount)} />
-        <Item label="Payout" value={c.payoutAmount != null ? money(c.payoutAmount) : "Not decided"} />
+        <Item
+          label="Payout"
+          value={
+            c.payoutAmount != null
+              ? money(c.payoutAmount) + (Number(c.payoutAmount) < Number(c.amount) ? " · partially approved" : "")
+              : "Not decided"
+          }
+        />
         <Item label="Case reserve" value={money(c.reserve)} />
       </div>
       {c.description && (
@@ -1207,13 +1235,16 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           <ul className="wf-evidence">
             {c.related.map((r) => (
               <li key={r.ref} className={r.possibleDuplicate ? "missing" : "optional"}>
-                {r.ref} · {r.type} · {r.coveredLife} · event {formatDate(r.eventDate)} · {r.status}
+                {[r.ref, r.type, r.coveredLife, r.eventDate ? "event " + formatDate(r.eventDate) : "event date not recorded", r.status]
+                  .filter(Boolean)
+                  .join(" · ")}
                 {r.possibleDuplicate && <small>possibly the same event</small>}
               </li>
             ))}
           </ul>
         </>
       )}
+      {financials && <ClaimCalculation claim={c} financials={financials} profile={profile} />}
       <p className="muted small">
         All five passing pays the claim straight through. If Policy Active, Waiting Period or Premiums Paid fails,
         the claim can only be rejected; if Beneficiary Match or No Duplicate fails, it can be approved with a reason.
@@ -1233,6 +1264,15 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             : ""}
           , so there is nothing to check it against.
         </p>
+      )}
+      {open && missingEvidence.length > 0 && (
+        <div className="notice wf-alert" role="status">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <p>
+            <strong>Required evidence not yet on file:</strong> {missingEvidence.join(", ")}. The claim can still be
+            assessed; approving it before the evidence arrives needs a reason, which is kept with the claim.
+          </p>
+        </div>
       )}
       {open && blocked && (
         <div className="notice wf-alert">
@@ -1346,6 +1386,11 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           Approved although {softFailed.join(" and ") || "a check"} failed: {c.checkOverrideReason}
         </p>
       )}
+      {c.evidenceOverrideReason && (
+        <p className="muted small">
+          Approved before the required evidence was on file: {c.evidenceOverrideReason}
+        </p>
+      )}
       {c.status === "Rejected" && (
         <div className="notice">
           <X size={18} aria-hidden="true" />
@@ -1359,6 +1404,15 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           <CircleCheck size={18} aria-hidden="true" />
           <p>
             {money(c.payoutAmount)} paid to {payee.name} on {formatDate(c.paidAt)} · {c.payoutReference}
+          </p>
+        </div>
+      )}
+      {c.closedAt && (
+        <div className="notice">
+          <CircleCheck size={18} aria-hidden="true" />
+          <p>
+            Closed on {formatDate(c.closedAt)} by {c.closedBy}
+            {c.closeNote ? ": " + c.closeNote : ""}. The settlement and its financial tasks are complete.
           </p>
         </div>
       )}
@@ -1391,7 +1445,14 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           <Btn
             icon={BadgeCheck}
             disabled={busy || !payeeComplete || !!blocked}
-            title={blocked || (payeeComplete ? undefined : "Add the payee first")}
+            title={
+              blocked ||
+              (payeeComplete
+                ? missingEvidence.length
+                  ? "Required evidence outstanding: " + missingEvidence.join(", ")
+                  : undefined
+                : "Add the payee first")
+            }
             onClick={() => call("/assess", { method: "POST", body: {} }, c.id + " is recommended for approval.")}
           >
             Assess &amp; recommend
@@ -1407,6 +1468,19 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               value={overrideReason}
               onChange={(e) => setOverrideReason(e.target.value)}
               placeholder="e.g. Payee verified against the death certificate"
+            />
+          </label>
+        )}
+        {mayApprove && !blocked && missingEvidence.length > 0 && (
+          <label className="form-label wf-override">
+            <span>Reason for approving without {missingEvidence.join(", ")} (kept with the claim)</span>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              value={evidenceReason}
+              onChange={(e) => setEvidenceReason(e.target.value)}
+              placeholder="e.g. Original certificate seen at the branch; certified copy to follow"
             />
           </label>
         )}
@@ -1442,15 +1516,18 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
                 busy ||
                 !!blocked ||
                 (softFailed.length > 0 && !overrideReason.trim()) ||
+                (missingEvidence.length > 0 && !evidenceReason.trim()) ||
                 (breakGlass && !fourEyesReason.trim())
               }
               title={
                 blocked ||
                 (softFailed.length > 0 && !overrideReason.trim()
                   ? "Enter the reason for approving first"
-                  : breakGlass && !fourEyesReason.trim()
-                    ? "Enter the break-glass override reason first"
-                    : undefined)
+                  : missingEvidence.length > 0 && !evidenceReason.trim()
+                    ? "Enter the reason for approving without the required evidence first"
+                    : breakGlass && !fourEyesReason.trim()
+                      ? "Enter the break-glass override reason first"
+                      : undefined)
               }
               onClick={approve}
             >
@@ -1477,7 +1554,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               if (ok)
                 call(
                   "/pay",
-                  { method: "POST" },
+                  { method: "POST", idempotencyKey: newIdempotencyKey() },
                   "Payout sent for " + c.id + ". Waiting for the provider to confirm settlement.",
                 );
             }}
@@ -1503,7 +1580,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               if (ok)
                 call(
                   "/confirm-payout",
-                  { method: "POST", body: { providerReference: c.payoutReference } },
+                  { method: "POST", body: { providerReference: c.payoutReference }, idempotencyKey: newIdempotencyKey() },
                   c.id + " is paid.",
                 );
             }}
@@ -1526,9 +1603,53 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             }
           />
         )}
+        {can("close") && holds(profile, "SETTLE_CLAIM") && !closing && (
+          <Btn variant="secondary" icon={CircleCheck} disabled={busy} onClick={() => setClosing({ note: "", retain: false })}>
+            Close claim
+          </Btn>
+        )}
+        {closing && (
+          <div className="wf-reason">
+            <textarea
+              className="textarea"
+              rows={2}
+              maxLength={500}
+              placeholder="Note (needed when a reinsurance recovery stays open on its own)"
+              value={closing.note}
+              onChange={(e) => setClosing({ ...closing, note: e.target.value })}
+            />
+            <label className="wf-check-label">
+              <input
+                type="checkbox"
+                checked={closing.retain}
+                onChange={(e) => setClosing({ ...closing, retain: e.target.checked })}
+              />{" "}
+              Keep any expected reinsurance recovery open on its own
+            </label>
+            <div className="detail-actions">
+              <Btn variant="secondary" onClick={() => setClosing(null)}>
+                Back
+              </Btn>
+              <Btn
+                icon={CircleCheck}
+                disabled={busy || (closing.retain && !closing.note.trim())}
+                onClick={async () => {
+                  const ok = await call(
+                    "/close",
+                    { method: "POST", body: { note: closing.note.trim(), retainRecovery: closing.retain } },
+                    c.id + " is closed.",
+                  );
+                  if (ok) setClosing(null);
+                }}
+              >
+                Confirm close
+              </Btn>
+            </div>
+          </div>
+        )}
         {can("reopen") && holds(profile, "APPROVE_CLAIM") && (
           <ReasonAction
-            label="Reopen"
+            label={c.status === "Approved" ? "Reopen before payment" : "Reopen"}
             icon={RotateCcw}
             busy={busy}
             placeholder="Why the decision is being reviewed, e.g. the death certificate has now arrived"
@@ -1557,6 +1678,193 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             : "You assessed this claim, so a different person must approve it (four-eyes)."}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * The SH05 claim workspace beside the checks: the cover reconstructed as at the event date, the benefit calculation
+ * against the cover and the per-life and policy limits, the case reserve's movements, every decision (including those
+ * a reopening set aside) and the reinsurance recoveries on the claim. All from GET /portfolio/claims/{ref}/financials.
+ */
+function ClaimCalculation({ claim: c, financials: f, profile }) {
+  const cover = f.eventCover;
+  const left = (limit, used) => (limit == null || used == null ? null : Number(limit) - Number(used));
+  const lifeLeft = left(f.lifeLimit, f.lifeUsed);
+  const policyLeft = left(f.policyLimit, f.policyUsed);
+  // While the claim is open, nothing of it is reserved yet: the most it can be approved for is what is left.
+  const open = OPEN_CLAIM.includes(c.status);
+  const most = open ? Math.min(Number(c.amount), lifeLeft ?? Infinity, policyLeft ?? Infinity) : null;
+  const label = (d) => ({ APPROVED: "Approved", PARTIALLY_APPROVED: "Partially approved", REJECTED: "Declined", REOPENED: "Reopened" })[d] || d;
+  return (
+    <>
+      {cover && (
+        <>
+          <h3 className="section-title">Cover on the event date</h3>
+          <div className="detail-grid">
+            <Item label={"Policy on " + formatDate(cover.eventDate)} value={cover.policyStatusOnEventDate + (cover.coverInForce ? " · cover in force" : " · no cover")} />
+            <Item label="Cover from" value={formatDate(cover.coverStartDate)} />
+            <Item
+              label="Waiting period"
+              value={cover.waitingPeriodDays ? cover.waitingPeriodDays + " days, to " + formatDate(cover.waitingPeriodEnds) : "None"}
+            />
+            <Item label="Cover claimed" value={money(cover.coverAmount)} />
+            <Item label="Paid to (today)" value={cover.paidTo ? formatDate(cover.paidTo) : "Not recorded"} />
+            <Item label="Beneficiaries then" value={(cover.beneficiariesOnEventDate || []).join(", ") || "None designated"} />
+          </div>
+        </>
+      )}
+      <h3 className="section-title">Benefit calculation</h3>
+      <table className="wf-before-after">
+        <tbody>
+          <tr>
+            <th scope="row">Cover for {c.coveredLife || "the life"}</th>
+            <td>{money(c.amount)}</td>
+          </tr>
+          {lifeLeft != null && (
+            <tr>
+              <th scope="row">Benefit limit for {c.coveredLife || "the life"}</th>
+              <td>
+                {money(f.lifeLimit)} · used or reserved {money(f.lifeUsed)} · left {money(lifeLeft)}
+              </td>
+            </tr>
+          )}
+          {policyLeft != null && (
+            <tr>
+              <th scope="row">Policy limit</th>
+              <td>
+                {money(f.policyLimit)} · used or reserved {money(f.policyUsed)} · left {money(policyLeft)}
+              </td>
+            </tr>
+          )}
+          <tr>
+            <th scope="row">{open ? "Most that can be approved now" : "Approved payout"}</th>
+            <td>
+              <strong>{open ? money(most) : c.payoutAmount != null ? money(c.payoutAmount) : "—"}</strong>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {(f.movements?.length > 0 || f.decisions?.length > 0) && (
+        <>
+          <h3 className="section-title">Reserve and decisions</h3>
+          <ul className="wf-evidence">
+            {(f.movements || []).map((m, i) => (
+              <li key={"m" + i} className="optional">
+                Reserve {Number(m.change) >= 0 ? "+" : "−"}
+                {money(Math.abs(Number(m.change)))} → {money(m.balance)} · {m.reason}
+                <small>
+                  {m.by} · {formatDate(m.at)}
+                </small>
+              </li>
+            ))}
+            {(f.decisions || []).map((d) => (
+              <li key={"d" + d.sequence} className={d.supersededBy ? "optional" : "received"}>
+                {label(d.decision)}
+                {d.amount != null ? " · " + money(d.amount) : ""}
+                {d.reason ? " · " + d.reason : ""}
+                <small>
+                  {d.decidedBy} · {formatDate(d.decidedAt)}
+                  {d.supersededBy ? " · set aside by decision " + d.supersededBy : ""}
+                </small>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {f.recoveries?.length > 0 && (
+        <>
+          <h3 className="section-title">Reinsurance recoveries</h3>
+          <ul className="wf-evidence">
+            {f.recoveries.map((r) => (
+              <li key={r.ref} className={r.status === "RECEIVED" ? "received" : "missing"}>
+                {r.ref} · {r.treatyRef} · {money(r.amount)}
+                <small>
+                  {r.status === "RECEIVED" ? "received " + money(r.receivedAmount) : "expected from the reinsurer"}
+                </small>
+                {holds(profile, "READ_REINSURANCE") && <a href="#/reinsurance">Open in Reinsurance</a>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * What an approval changes (NS-UX-004): the claim's state, the payout against the cover, the case reserve and the
+ * benefit limits before and after, the payee, the checks and evidence it is approved on, and the reasons recorded.
+ */
+function ApprovalSummary({
+  claim: c,
+  amount,
+  financials: f,
+  softFailed,
+  overrideReason,
+  missingEvidence,
+  evidenceReason,
+  breakGlass,
+  fourEyesReason,
+}) {
+  const payee = c.payee || {};
+  const left = (limit, used) => (limit == null || used == null ? null : Number(limit) - Number(used));
+  const lifeLeft = left(f?.lifeLimit, f?.lifeUsed);
+  const policyLeft = left(f?.policyLimit, f?.policyUsed);
+  const mandatory = (c.evidence || []).filter((e) => e.mandatory);
+  const rows = [
+    ["Status", c.status, "Approved"],
+    ["Payout", c.payoutAmount != null ? money(c.payoutAmount) : "Not decided", money(amount) + (amount < c.amount ? " (partial of " + money(c.amount) + ")" : "")],
+    ["Case reserve", money(c.reserve), money(amount)],
+    ...(lifeLeft != null ? [["Benefit limit left for " + (c.coveredLife || "the life"), money(lifeLeft), money(lifeLeft - amount)]] : []),
+    ...(policyLeft != null ? [["Policy limit left", money(policyLeft), money(policyLeft - amount)]] : []),
+  ];
+  return (
+    <div className="wf-approval">
+      <table className="wf-before-after">
+        <thead>
+          <tr>
+            <th scope="col"></th>
+            <th scope="col">Before</th>
+            <th scope="col">After</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, before, after]) => (
+            <tr key={label}>
+              <th scope="row">{label}</th>
+              <td>{before}</td>
+              <td>
+                <strong>{after}</strong>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>
+        Pays <strong>{payee.name || "the payee"}</strong>
+        {payee.payoutMethod ? " by " + payee.payoutMethod + " " + (payee.accountRef || "") : ""}
+        {payee.verified ? " (details verified" + (payee.verifiedBy ? " by " + payee.verifiedBy : "") + ")" : ""}. The
+        amount is reserved against the limits now and used once the payout settles.
+      </p>
+      <ul className="wf-evidence">
+        <li className={softFailed.length ? "missing" : "received"}>
+          Checks: {softFailed.length ? softFailed.join(" and ") + " failed" : "all passed"}
+          {softFailed.length > 0 && <small>reason: {overrideReason || "—"}</small>}
+        </li>
+        <li className={missingEvidence.length ? "missing" : "received"}>
+          Evidence: {mandatory.length - missingEvidence.length} of {mandatory.length} required on file
+          {missingEvidence.length > 0 && (
+            <small>
+              missing {missingEvidence.join(", ")} · reason: {evidenceReason || "—"}
+            </small>
+          )}
+        </li>
+        <li className={breakGlass ? "missing" : "received"}>
+          Four-eyes: {c.recommendedBy ? "assessed by " + c.recommendedBy : "not assessed"}
+          {breakGlass && <small>break-glass override · reason: {fourEyesReason || "—"}</small>}
+        </li>
+      </ul>
     </div>
   );
 }

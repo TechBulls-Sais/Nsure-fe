@@ -98,6 +98,15 @@ async function readBody(response) {
   }
 }
 
+/**
+ * A fresh Idempotency-Key for one user action (NS-API-002): send it with a money-moving command so a repeat of the
+ * same request (a double click, a retry after a lost answer) returns the first result instead of acting twice.
+ */
+export function newIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+}
+
 export async function request(session, path, options = {}) {
   const headers = { Accept: "application/json" };
   if (session) headers.Authorization = authorization(session);
