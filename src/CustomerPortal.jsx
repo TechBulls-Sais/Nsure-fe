@@ -116,7 +116,12 @@ export default function CustomerPortal({
     Boolean(shop && !shop.error && (awaitingPayment.length || policies.some((p) => IN_FORCE_STATES.includes(p.status)))),
   );
   const [declared, markDeclared] = useDeclaredPolicies(customer?.id);
-  const payProps = { session, lock, reloadLock, onShop, notify, onNavigate, onDeclared: markDeclared };
+  // A payment answers with the refreshed portal; the "reserved, pay below" note from the purchase no longer applies.
+  const paidShop = (data) => {
+    onShop(data);
+    setMessage("");
+  };
+  const payProps = { session, lock, reloadLock, onShop: paidShop, notify, onNavigate, onDeclared: markDeclared };
   const chosenTier = (products.find((product) => product.name === choice)?.tiers || []).find(
     (tier) => tier.name === tierChoice,
   );

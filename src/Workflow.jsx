@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   BadgeCheck,
   Check,
@@ -266,12 +266,18 @@ export function ClaimDocuments({ claim, ...props }) {
  * issued once per policy, after the first premium starts cover; a new or renewed policy gets its own.
  */
 export function PolicyDocuments({ policy, ...props }) {
-  const issued = (policy.documents || []).some((d) => d.type === "Policy schedule" && d.status !== "SUPERSEDED");
+  const hasSchedule = (documents) =>
+    (documents || []).some((d) => d.type === "Policy schedule" && d.status !== "SUPERSEDED");
+  const issued = hasSchedule(policy.documents);
   return (
     <DocumentsPanel
       record={policy}
       open={false}
       canUpload={false}
+      // The schedule is filed by an event a few seconds after the first premium starts cover; until it arrives the
+      // panel says it is being prepared and looks again, rather than offering to issue a second one.
+      waitFor={(documents) => Boolean(policy.coverStartDate) && !hasSchedule(documents)}
+      waitingText="Preparing the policy schedule…"
       generate={{
         slug: "schedule",
         label: "Issue policy schedule",
@@ -289,7 +295,24 @@ export function PolicyDocuments({ policy, ...props }) {
   );
 }
 
-function DocumentsPanel({ session, record, open, generate, basePath, canUpload, canGenerate, onUploaded, notify }) {
+const WAIT_TRIES = 8;
+const WAIT_MS = 2000;
+const sameDocuments = (a, b) =>
+  a.length === b.length && a.every((doc, i) => doc.id === b[i]?.id && doc.status === b[i]?.status);
+
+function DocumentsPanel({
+  session,
+  record,
+  open,
+  generate,
+  basePath,
+  canUpload,
+  canGenerate,
+  onUploaded,
+  notify,
+  waitFor,
+  waitingText,
+}) {
   const documents = record.documents || [];
   const [type, setType] = useState(DOCUMENT_TYPES[0]);
   const [file, setFile] = useState(null);
@@ -297,6 +320,41 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
   const [inputKey, setInputKey] = useState(0);
   const [reissuing, setReissuing] = useState(null);
   const [reason, setReason] = useState("");
+  const [waiting, setWaiting] = useState(false);
+  // The record in the open dialog can be older than the server's list (documents filed by an event after a payment,
+  // or by another user), so the staff view reads the list again when it opens. The customer portal (/shop/) has no
+  // list endpoint; its page is refreshed as a whole.
+  const listable = !basePath.includes("/shop/");
+  const latest = useRef({ documents, onUploaded, waitFor });
+  latest.current = { documents, onUploaded, waitFor };
+  const reload = useCallback(async () => {
+    const { data } = await request(session, basePath);
+    if (!sameDocuments(data, latest.current.documents)) latest.current.onUploaded(data);
+    return data;
+  }, [session, basePath]);
+  useEffect(() => {
+    if (!listable) return undefined;
+    let active = true;
+    let timer = null;
+    let tries = 0;
+    const look = async () => {
+      try {
+        const data = await reload();
+        if (!active) return;
+        tries += 1;
+        const pending = Boolean(latest.current.waitFor?.(data)) && tries < WAIT_TRIES;
+        setWaiting(pending);
+        if (pending) timer = setTimeout(look, WAIT_MS);
+      } catch {
+        if (active) setWaiting(false);
+      }
+    };
+    look();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [listable, reload, record.status, record.coverStartDate]);
   // Staff may reissue the current policy schedule with a reason (Blueprint §8); the old one is kept as superseded.
   const mayReissue = (doc) =>
     canGenerate && !basePath.includes("/shop/") && doc.type === "Policy schedule" && doc.status !== "SUPERSEDED";
@@ -356,7 +414,13 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
       onUploaded(result.data);
       notify(generate.done);
     } catch (error) {
-      notify(error.message, "error");
+      // 409: it was issued meanwhile (automatically, or by someone else). Show it rather than an error.
+      if (error.status === 409 && listable) {
+        await reload().catch(() => {});
+        notify(error.message, "info");
+      } else {
+        notify(error.message, "error");
+      }
     } finally {
       setBusy(false);
     }
@@ -391,7 +455,12 @@ function DocumentsPanel({ session, record, open, generate, basePath, canUpload, 
 
   return (
     <div className="wf-docs">
-      {canGenerate && !(generate.blocked && generate.hideWhenBlocked) && (
+      {waiting && (
+        <p className="muted small" role="status">
+          {waitingText || "Loading documents…"}
+        </p>
+      )}
+      {canGenerate && !waiting && !(generate.blocked && generate.hideWhenBlocked) && (
         <div className="wf-doc-generate">
           <Btn variant="secondary" icon={FileText} disabled={busy || !!generate.blocked} onClick={runGenerate}>
             {generate.label}

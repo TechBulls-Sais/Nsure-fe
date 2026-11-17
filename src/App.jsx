@@ -1141,7 +1141,7 @@ export default function App() {
           subtitle="Here’s what’s happening across your business today."
         >
           <span className="date-chip">
-            <Icon name="CalendarDays" small /> 29 September 2026
+            <Icon name="CalendarDays" small /> {todayLabel(insurer?.timezone)}
           </span>
           {canDo(profile, "newApplication") && (
             <Button icon="Plus" onClick={() => setModal({ type: "application" })}>
@@ -2423,7 +2423,12 @@ export default function App() {
               canReviewEdd={can(profile, "EDD_CUSTOMER")}
               onEdd={async (record, decision, reason) => {
                 const updated = await reviewEdd(record, decision, reason);
-                if (updated) setModal({ type: "detail", entity: "customer", record: updated });
+                // From a customer, show the updated customer; from an application, stay on it so it can be issued.
+                if (updated) {
+                  setModal((current) =>
+                    current?.entity === "customer" ? { type: "detail", entity: "customer", record: updated } : current,
+                  );
+                }
                 return Boolean(updated);
               }}
               onKyc={async (record, decision, reason) => {
@@ -2917,6 +2922,16 @@ function formatDob(value) {
     month: "short",
     year: "numeric",
   });
+}
+// Today's date in the insurer's business timezone (GET /public/config), e.g. "17 November 2026".
+function todayLabel(timeZone) {
+  const options = { day: "numeric", month: "long", year: "numeric" };
+  try {
+    return new Date().toLocaleDateString("en-GB", timeZone ? { ...options, timeZone } : options);
+  } catch {
+    // An unknown timezone name: fall back to the browser's own.
+    return new Date().toLocaleDateString("en-GB", options);
+  }
 }
 function kycLabel(c) {
   if (c.kycStatus === "VERIFIED") return "Verified";
@@ -3736,6 +3751,9 @@ function Detail({
   // An application's identity check is its customer's KYC; a policy can only be issued once it is verified.
   const applicant = entity === "application" ? customers.find((c) => c.name === r.name) : null;
   const identityStatus = applicant ? kycLabel(applicant) : "Verified";
+  // The server refuses cover while a PEP customer's enhanced due diligence is open or rejected (BR-25), so issue
+  // waits for it here too: the reason is shown, and a reviewer can clear it without leaving the application.
+  const eddBlocking = Boolean(applicant && ["PENDING", "FAILED"].includes(applicant.eddStatus));
   // Extra policy fields the insurer's active configuration requires for this product, filled in before issue.
   const issuing = entity === "application" && r.status === "Ready to issue";
   const { form: issueForm, error: issueFormError } = usePolicyForm(session, issuing ? r.product : null);
@@ -3971,13 +3989,25 @@ function Detail({
                       Fill in {missingRequired.map((f) => f.label).join(", ")} to issue this policy.
                     </p>
                   )}
+                  {eddBlocking && (
+                    <p className="subtitle">
+                      {applicant.name}'s enhanced due diligence review{" "}
+                      {applicant.eddStatus === "FAILED" ? "was rejected" : "is still pending"}. It must be verified
+                      before this policy can be issued.
+                    </p>
+                  )}
                 </>
               )}
               <div className="detail-actions">
+                {issuing && eddBlocking && canReviewEdd && onEdd && applicant.kycStatus === "VERIFIED" && (
+                  <Button variant="secondary" icon="BadgeCheck" onClick={() => onEdd(applicant, "VERIFIED")}>
+                    Verify EDD
+                  </Button>
+                )}
                 {issuing && onIssue && (
                   <Button
                     icon="ShieldCheck"
-                    disabled={identityStatus !== "Verified" || missingRequired.length > 0}
+                    disabled={identityStatus !== "Verified" || eddBlocking || missingRequired.length > 0}
                     onClick={() =>
                       onIssue(
                         r,
