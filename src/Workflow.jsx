@@ -1054,6 +1054,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const [payout, setPayout] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [fourEyesReason, setFourEyesReason] = useState("");
+  const [evidenceReason, setEvidenceReason] = useState("");
   const [approveError, setApproveError] = useState("");
   const open = OPEN_CLAIM.includes(c.status);
   // Legal from the claim's state (the server's list); whether this user may take it is the permission check below.
@@ -1068,6 +1069,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const hardFailed = HARD_CHECKS.filter((name) => result(name) === "Fail");
   const notChecked = HARD_CHECKS.some((name) => result(name) === "Pending");
   const softFailed = SOFT_CHECKS.filter((name) => result(name) === "Fail");
+  // NS-SH05-003: mandatory evidence still outstanding does not block the claim, but approving it needs a reason.
+  const missingEvidence = (c.evidence || []).filter((e) => e.mandatory && !e.received).map((e) => e.documentType);
   // Why the claim cannot move towards payout; the server refuses the same cases.
   const blocked = hardFailed.length
     ? hardFailed.join(", ") + " failed, so there was no valid cover for this event. This claim can only be rejected."
@@ -1113,6 +1116,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             ...(payout ? { payoutAmount: Number(payout) } : {}),
             ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
             ...(breakGlass ? { fourEyesOverrideReason: fourEyesReason.trim() } : {}),
+            ...(missingEvidence.length ? { evidenceOverrideReason: evidenceReason.trim() } : {}),
           },
         });
         onUpdated(result.data);
@@ -1199,6 +1203,15 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             : ""}
           , so there is nothing to check it against.
         </p>
+      )}
+      {open && missingEvidence.length > 0 && (
+        <div className="notice wf-alert" role="status">
+          <ShieldAlert size={18} aria-hidden="true" />
+          <p>
+            <strong>Required evidence not yet on file:</strong> {missingEvidence.join(", ")}. The claim can still be
+            assessed; approving it before the evidence arrives needs a reason, which is kept with the claim.
+          </p>
+        </div>
       )}
       {open && blocked && (
         <div className="notice wf-alert">
@@ -1312,6 +1325,11 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           Approved although {softFailed.join(" and ") || "a check"} failed: {c.checkOverrideReason}
         </p>
       )}
+      {c.evidenceOverrideReason && (
+        <p className="muted small">
+          Approved before the required evidence was on file: {c.evidenceOverrideReason}
+        </p>
+      )}
       {c.status === "Rejected" && (
         <div className="notice">
           <X size={18} aria-hidden="true" />
@@ -1357,7 +1375,14 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           <Btn
             icon={BadgeCheck}
             disabled={busy || !payeeComplete || !!blocked}
-            title={blocked || (payeeComplete ? undefined : "Add the payee first")}
+            title={
+              blocked ||
+              (payeeComplete
+                ? missingEvidence.length
+                  ? "Required evidence outstanding: " + missingEvidence.join(", ")
+                  : undefined
+                : "Add the payee first")
+            }
             onClick={() => call("/assess", { method: "POST", body: {} }, c.id + " is recommended for approval.")}
           >
             Assess &amp; recommend
@@ -1373,6 +1398,19 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               value={overrideReason}
               onChange={(e) => setOverrideReason(e.target.value)}
               placeholder="e.g. Payee verified against the death certificate"
+            />
+          </label>
+        )}
+        {mayApprove && !blocked && missingEvidence.length > 0 && (
+          <label className="form-label wf-override">
+            <span>Reason for approving without {missingEvidence.join(", ")} (kept with the claim)</span>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              value={evidenceReason}
+              onChange={(e) => setEvidenceReason(e.target.value)}
+              placeholder="e.g. Original certificate seen at the branch; certified copy to follow"
             />
           </label>
         )}
@@ -1408,15 +1446,18 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
                 busy ||
                 !!blocked ||
                 (softFailed.length > 0 && !overrideReason.trim()) ||
+                (missingEvidence.length > 0 && !evidenceReason.trim()) ||
                 (breakGlass && !fourEyesReason.trim())
               }
               title={
                 blocked ||
                 (softFailed.length > 0 && !overrideReason.trim()
                   ? "Enter the reason for approving first"
-                  : breakGlass && !fourEyesReason.trim()
-                    ? "Enter the break-glass override reason first"
-                    : undefined)
+                  : missingEvidence.length > 0 && !evidenceReason.trim()
+                    ? "Enter the reason for approving without the required evidence first"
+                    : breakGlass && !fourEyesReason.trim()
+                      ? "Enter the break-glass override reason first"
+                      : undefined)
               }
               onClick={approve}
             >
