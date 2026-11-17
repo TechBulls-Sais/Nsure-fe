@@ -53,6 +53,15 @@ const BENEFIT = {
   SURRENDER: "Surrender",
   PAID_UP: "Paid-up",
 };
+// Why a contract ended (IL03: death, cancellation, expiry and other approved causes).
+const END_CAUSE = {
+  DEATH: "Death",
+  CANCELLATION: "Cancellation",
+  EXPIRY: "Expiry",
+  LAPSE: "Lapse",
+  OTHER: "Other",
+  LOAN_SETTLED: "Loan settled",
+};
 const FREQ = { MONTHLY: "Monthly", QUARTERLY: "Quarterly", SEMI_ANNUAL: "Half-yearly", ANNUAL: "Annually", PAID_UP: "Paid-up" };
 const badge = (map, key) => {
   const [label, tone] = map[key] || [key];
@@ -163,6 +172,39 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
   const [preview, setPreview] = useState(null);
   const v = view.data;
   const p = v?.policy;
+  // IL04 roster: each life's limit, use, claims, underwriting outcome and warnings, keyed by life id.
+  const standing = Object.fromEntries((v?.roster?.lives || []).map((s) => [s.lifeId, s]));
+  // Relationship history: a person who was covered more than once (removed and added again, or replaced).
+  const episodes = Object.values(
+    (v?.lives || []).reduce((byPerson, life) => {
+      const key = (life.fullName || "").toLowerCase() + "|" + (life.dateOfBirth || "");
+      (byPerson[key] = byPerson[key] || []).push(life);
+      return byPerson;
+    }, {}),
+  ).filter((list) => list.length > 1);
+  // IL03 cover history: sum assured and premium over time, from issue through each applied endorsement.
+  const applied = (v?.endorsements || [])
+    .filter((e) => e.status === "APPLIED")
+    .slice()
+    .sort((a, b) => String(a.effectiveDate).localeCompare(String(b.effectiveDate)) || String(a.ref).localeCompare(String(b.ref)));
+  const coverHistory = p
+    ? [
+        {
+          key: "issue",
+          from: p.coverStartDate || "—",
+          change: "Issued",
+          sumAssured: applied[0]?.oldSumAssured ?? p.sumAssured,
+          premium: applied[0]?.oldPremium ?? p.premium,
+        },
+        ...applied.map((e) => ({
+          key: e.ref,
+          from: e.effectiveDate,
+          change: (TYPE_LABEL[e.type] || e.type) + " · " + e.ref,
+          sumAssured: e.newSumAssured ?? e.oldSumAssured,
+          premium: e.newPremium ?? e.oldPremium,
+        })),
+      ]
+    : [];
   const manage = can(profile, "MANAGE_SERVICING");
   const approve = can(profile, "APPROVE_ENDORSEMENT");
   const inForce = p && ["Active", "Active - No Cover", "Reinstatement Pending"].includes(p.contractStatus);
@@ -199,7 +241,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
     } else {
       done = await action.run(
         () => request(session, base + "/termination", { method: "POST", body: { reason: form.cause, note: form.reason } }),
-        "Policy terminated",
+        form.cause === "CANCELLATION" ? "Policy cancelled" : "Policy terminated",
       );
     }
     if (done) {
@@ -257,7 +299,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             </div>
             <div>
               <small>Next premium due</small>
-              <strong>{p.nextPremiumDue || "—"}</strong>
+              <strong>{p.nextPremiumDue || (p.coverStatus === "Ended" ? "None: the policy has ended" : "—")}</strong>
             </div>
             <div>
               <small>Payer</small>
@@ -273,7 +315,10 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               <div>
                 <small>Ended</small>
                 <strong>
-                  {BENEFIT[p.terminationReason] || p.terminationReason.charAt(0) + p.terminationReason.slice(1).toLowerCase()} ·{" "}
+                  {END_CAUSE[p.terminationReason] ||
+                    BENEFIT[p.terminationReason] ||
+                    p.terminationReason.charAt(0) + p.terminationReason.slice(1).toLowerCase()}{" "}
+                  ·{" "}
                   {p.terminatedOn}
                 </strong>
               </div>
@@ -287,7 +332,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
 
           <Panel
             title="Insured lives"
-            subtitle="A removed life stays on the record. A life added again keeps its original waiting-period start."
+            subtitle="A removed life stays on the record. A life added again keeps its original waiting-period start. Limits show what claims have used, per life and for the whole policy."
             action={
               manage &&
               inForce && (
@@ -301,16 +346,59 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               )
             }
           >
+            {v.roster && (
+              <div className="ws-kv">
+                <div>
+                  <small>Policy limit (all lives)</small>
+                  <strong>{pula(v.roster.policyLimit)}</strong>
+                </div>
+                <div>
+                  <small>Used by claims</small>
+                  <strong>{pula(v.roster.policyUsed)}</strong>
+                </div>
+                <div>
+                  <small>Remaining</small>
+                  <strong>{pula(v.roster.policyRemaining)}</strong>
+                </div>
+              </div>
+            )}
+            {(v.roster?.warnings || []).map((w) => (
+              <p className="ws-hint" key={w}>
+                <Badge tone="amber">Eligibility</Badge> {w}
+              </p>
+            ))}
             <DataTable
               rows={v.lives}
               rowKey={(r) => r.id}
               searchFrom={99}
               empty="This policy covers the policyholder only"
               columns={[
-                { key: "fullName", label: "Life" },
+                {
+                  key: "fullName",
+                  label: "Life",
+                  render: (r) => (
+                    <>
+                      {r.fullName}
+                      {(standing[r.id]?.warnings || []).map((w) => (
+                        <div key={w}>
+                          <Badge tone="amber">{w}</Badge>
+                        </div>
+                      ))}
+                    </>
+                  ),
+                },
                 { key: "relationship", label: "Relationship" },
                 { key: "ageNow", label: "Age", align: "right", render: (r) => r.ageNow ?? "—" },
                 { key: "coverAmount", label: "Cover", align: "right", render: (r) => pula(r.coverAmount) },
+                {
+                  key: "limit",
+                  label: "Limit used / left",
+                  align: "right",
+                  render: (r) =>
+                    standing[r.id] ? pula(standing[r.id].used) + " / " + pula(standing[r.id].remaining) : "—",
+                },
+                { key: "claims", label: "Claims", align: "right", render: (r) => standing[r.id]?.claims ?? "—" },
+                { key: "underwriting", label: "Underwriting", render: (r) => standing[r.id]?.underwriting || "—" },
                 { key: "monthlyPremium", label: "Premium", align: "right", render: (r) => pula(r.monthlyPremium) },
                 {
                   key: "status",
@@ -355,6 +443,60 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                         </Button>
                       </div>
                     ),
+                },
+              ]}
+            />
+            {episodes.length > 0 && (
+              <>
+                <h3 className="section-title">Relationship history</h3>
+                {episodes.map((list) => (
+                  <p className="ws-hint" key={list[0].id}>
+                    <strong>{list[0].fullName}</strong>:{" "}
+                    {list
+                      .map(
+                        (e) =>
+                          e.relationship +
+                          " from " +
+                          (e.effectiveFrom || p.coverStartDate || "issue") +
+                          (e.effectiveTo ? " to " + e.effectiveTo : " (covered)") +
+                          (e.ceaseReason ? " · " + e.ceaseReason : ""),
+                      )
+                      .join(" → ")}
+                  </p>
+                ))}
+              </>
+            )}
+          </Panel>
+
+          <Panel title="Cover history" subtitle="Sum assured and premium over time: at issue, then after each applied change.">
+            <DataTable
+              rows={coverHistory}
+              rowKey={(r) => r.key}
+              searchFrom={99}
+              columns={[
+                { key: "from", label: "From" },
+                { key: "change", label: "Change" },
+                { key: "sumAssured", label: "Sum assured", align: "right", render: (r) => (r.sumAssured == null ? "—" : pula(r.sumAssured)) },
+                { key: "premium", label: "Premium", align: "right", render: (r) => (r.premium == null ? "—" : pula(r.premium)) },
+              ]}
+            />
+          </Panel>
+
+          <Panel title="Beneficiary history" subtitle="Every designation the policy has had, current and removed.">
+            <DataTable
+              rows={v.beneficiaryHistory || []}
+              rowKey={(r, i) => r.fullName + i}
+              searchFrom={99}
+              empty="No beneficiaries designated"
+              columns={[
+                { key: "fullName", label: "Beneficiary", render: (r) => r.fullName + (r.primary ? " (primary)" : "") },
+                { key: "relationship", label: "Relationship" },
+                { key: "effectiveFrom", label: "From", render: (r) => r.effectiveFrom || "—" },
+                {
+                  key: "removedFrom",
+                  label: "Status",
+                  render: (r) =>
+                    r.removedFrom ? <Badge>Removed {r.removedFrom + (r.removedBy ? " by " + r.removedBy : "")}</Badge> : <Badge tone="green">Current</Badge>,
                 },
               ]}
             />
@@ -665,8 +807,16 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 <select value={form.cause} onChange={(e) => setForm({ ...form, cause: e.target.value })}>
                   <option value="OTHER">Other</option>
                   <option value="DEATH">Death of the life insured</option>
+                  <option value="CANCELLATION">Cancellation</option>
+                  <option value="EXPIRY">Expiry (the contract term ended)</option>
                   <option value="MATURITY">Maturity</option>
                 </select>
+                {form.cause === "CANCELLATION" && (
+                  <small className="ws-hint">
+                    Runs the cancellation process: cover continues to the end of today, and within the cooling-off period the
+                    premiums are flagged as refundable.
+                  </small>
+                )}
               </Field>
             )}
             {form.kind !== "endorsement" && (

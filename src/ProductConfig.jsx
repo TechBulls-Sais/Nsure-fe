@@ -97,6 +97,23 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
   const [readOnly, setReadOnly] = useState(false);
   // Saving needs CREATE_PRODUCT for a new configuration and UPDATE_PRODUCT for a saved one.
   const canSave = !readOnly && (editing?.id ? canUpdate : canCreate);
+  // NS-SH02-003: only a saved configuration that is in review can be activated, and never by the person who made
+  // its content (the server refuses both; the button is not offered).
+  const madeByMe =
+    Boolean(profile?.username && editing?.madeBy) &&
+    editing.madeBy.toLowerCase() === profile.username.toLowerCase();
+  const inReview = Boolean(editing?.id) && editing.status === "In review";
+  const isActive = Boolean(editing?.id) && editing.status === "Active";
+  const mayActivate = canSave && canActivate && inReview && !madeByMe;
+  const activationNote = !editing?.id || !canActivate
+    ? null
+    : isActive
+      ? null
+      : !inReview
+        ? "Submit this configuration for review first. Another user activates it once reviewed."
+        : madeByMe
+          ? "You made this version, so another user must activate it."
+          : "Activate only as reviewed: activating cannot include changes.";
   const start = (record, copy = false) => {
     // Opening a saved configuration without UPDATE_PRODUCT shows it read-only.
     setReadOnly(Boolean(record) && !copy && !canUpdate);
@@ -182,8 +199,9 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
     return Object.keys(e).length === 0;
   };
   const save = async (status) => {
-    if (!canSave || (status === "Active" && !canActivate)) return;
-    if (status === "Draft") {
+    if (!canSave || (status === "Active" && !mayActivate)) return;
+    if (status === "Withdrawn" && !(canActivate && isActive)) return;
+    if (status === "Draft" || status === "Withdrawn") {
       if (!validate(0)) {
         setStep(0);
         return;
@@ -210,7 +228,9 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
     setEditing(null);
     notify(
       status === "Active"
-        ? "Product configuration saved."
+        ? "Product configuration activated."
+        : status === "Withdrawn"
+          ? "Product configuration withdrawn from sale."
         : status === "In review"
           ? "Product configuration submitted for review."
           : "Product draft saved.",
@@ -392,7 +412,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
           </div>
           <div className="table-footer">
             {filtered.length} configurations
-            <span>Changes stay in this session</span>
+            <span>Saved on the server · every save keeps a version</span>
           </div>
         </section>
       </>
@@ -811,6 +831,12 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
               </div>
             )}
           </StepReveal>
+          {step === 3 && canSave && activationNote && (
+            <p className="config-preview-note" role="note">
+              <ShieldCheck size={14} />
+              {activationNote}
+            </p>
+          )}
           <div className="config-form-footer">
             <button
               type="button"
@@ -823,7 +849,16 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
               {step > 0 ? "Back" : "Cancel"}
             </button>
             <div>
-              {step === 3 && canSave && canActivate && (
+              {step === 3 && canSave && isActive && canActivate && (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => save("Withdrawn")}
+                >
+                  Withdraw from sale
+                </button>
+              )}
+              {step === 3 && mayActivate && (
                 <button
                   type="button"
                   className="btn secondary"
