@@ -567,7 +567,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
                 required
                 value={email}
                 readOnly={Boolean(pending)}
-                placeholder={customerLogin ? "customer" : "admin"}
+                placeholder="Your username"
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
               />
@@ -1672,36 +1672,31 @@ export default function App() {
     );
   }
   function Schemes() {
+    // Figures are the scheme records' own (D-29): active by status, members and premium summed over active schemes.
+    const active = schemes.filter((s) => /^active$/i.test(s.status || "ACTIVE"));
     return (
       <>
         <Heading
           title="Stronger, together."
           subtitle="One connected home for employers, schemes, and their people."
-        >
-          <Button icon="Upload" onClick={() => setModal({ type: "census" })}>
-            Census import
-          </Button>
-        </Heading>
+        />
         <div className="stat-grid three">
           <Stat
             label="Active schemes"
-            value="3"
-            change="Growing"
-            note="together"
+            value={active.length}
+            change={schemes.length !== active.length ? schemes.length + " in total" : undefined}
+            note=""
             icon="Building2"
           />
           <Stat
             label="Covered members"
-            value="758"
-            change="12 new"
-            note="this week"
+            value={active.reduce((sum, s) => sum + Number(s.members || 0), 0).toLocaleString("en-GB")}
             icon="Users"
             color="purple"
           />
           <Stat
             label="Monthly scheme premium"
-            value="BWP 263,400"
-            change="6.8%"
+            value={money(active.reduce((sum, s) => sum + Number(s.premium || 0), 0))}
             icon="Wallet"
             color="blue"
           />
@@ -1711,7 +1706,7 @@ export default function App() {
             <article className="scheme-card panel" key={s.id}>
               <div className="scheme-card-top">
                 <span className={"avatar " + s.color}>{s.initials}</span>
-                <Badge>Active</Badge>
+                <Badge>{schemeStatus(s)}</Badge>
               </div>
               <h2>{s.name}</h2>
               <p className="subtitle">{s.sector}</p>
@@ -1739,11 +1734,10 @@ export default function App() {
           ))}
         </div>
         <div className="notice">
-          <Icon name="Lightbulb" />
+          <Icon name="Info" />
           <p>
-            <strong>A quick walkthrough:</strong> open a scheme to view its
-            members, then use the census import to explore row
-            validation.
+            Members, census imports and billing are managed in group scheme administration, which needs the
+            scheme permission (READ_SCHEME). This overview shows each scheme's record only.
           </p>
         </div>
       </>
@@ -1809,15 +1803,15 @@ export default function App() {
             </div>
           </Panel>
           <Panel
-            title="Start fresh"
-            subtitle="Reloading restores the original records."
+            title="Refresh"
+            subtitle="Records are kept on the server; reloading shows the latest of them."
           >
             <Button
               variant="secondary"
               icon="RotateCcw"
               onClick={() => setModal({ type: "reset" })}
             >
-              Reset data
+              Reload data
             </Button>
           </Panel>
         </div>
@@ -2037,7 +2031,7 @@ export default function App() {
             <Icon name="Menu" />
           </button>
           <div className="breadcrumb">
-            Workspace <Icon name="ChevronRight" small />
+            <span>Workspace</span> <Icon name="ChevronRight" small />
             <strong>{activeName}</strong>
           </div>
           <div className="topbar-actions">
@@ -2237,16 +2231,13 @@ export default function App() {
                   ? "Register a claim"
                   : modal.type === "detail"
                     ? modal.record.name
-                    : modal.type === "census"
-                      ? "Explore a census import"
-                      : modal.type === "reset"
-                          ? "Reset this workspace?"
+                    : modal.type === "reset"
+                          ? "Reload the workspace?"
                           : modal.type === "command"
                             ? "Your workspace, one shortcut away."
                             : "Nsure"
           }
           onClose={close}
-          wide={modal.type === "census"}
         >
           {modal.type === "command" && (
             <ActionSearch
@@ -2413,28 +2404,18 @@ export default function App() {
               }}
             />
           )}
-          {modal.type === "census" && (
-            <Census
-              onDone={() => {
-                close();
-                notify(
-                  "Preview completed: 3 accepted rows, 1 rejected. Live membership is unchanged.",
-                );
-              }}
-            />
-          )}
           {modal.type === "reset" && (
             <>
               <p>
-                This restores the original records and clears your
-                session changes. You stay signed in.
+                This reloads every record from the server. Saved changes stay as they are; nothing is reset or
+                deleted. Anything typed into a form and not yet saved is lost. You stay signed in.
               </p>
               <div className="modal-footer">
                 <Button variant="secondary" onClick={close}>
-                  Keep exploring
+                  Cancel
                 </Button>
                 <Button icon="RotateCcw" onClick={() => location.reload()}>
-                  Reset
+                  Reload
                 </Button>
               </div>
             </>
@@ -3068,6 +3049,11 @@ function todayLabel(timeZone) {
     // An unknown timezone name: fall back to the browser's own.
     return new Date().toLocaleDateString("en-GB", options);
   }
+}
+// A scheme's status as a label: its record's own, e.g. ACTIVE → Active.
+function schemeStatus(s) {
+  const status = s.status || "ACTIVE";
+  return status.charAt(0) + status.slice(1).toLowerCase();
 }
 function kycLabel(c) {
   if (c.kycStatus === "VERIFIED") return "Verified";
@@ -4108,7 +4094,7 @@ function Detail({
                   ["Members", r.members],
                   ["Monthly premium", money(r.premium)],
                   ["Renewal", r.renewal],
-                  ["Benefit", "Group Life Assurance"],
+                  ["Sector", r.sector || "Not recorded"],
                 ].map(([k, v]) => (
                   <div className="detail-item" key={k}>
                     <small>{k}</small>
@@ -4116,15 +4102,8 @@ function Detail({
                   </div>
                 ))}
               </div>
-              <h3 className="section-title">Member preview</h3>
-              {customers.slice(0, 3).map((c, i) => (
-                <div className="linked-record" key={c.id}>
-                  <Person name={c.name} sub={"MEM-00" + (i + 1)} />
-                  <Badge>{i === 2 ? "Under review" : "Active"}</Badge>
-                </div>
-              ))}
               <p className="muted">
-                Showing 3 of {r.members} members.
+                Members are listed in group scheme administration, for those who hold the scheme permission.
               </p>
             </>
           ) : (
@@ -4344,95 +4323,6 @@ function CustomerDocuments({ customer, policies }) {
         <Empty text="No documents yet" detail="Documents appear here once they are filed on this customer's policies." />
       )}
       {rows.length > 0 && <p className="muted small">Open the policy to view or download a document.</p>}
-    </>
-  );
-}
-function Census({ onDone }) {
-  const [loaded, setLoaded] = useState(false);
-  return (
-    <>
-      <p className="subtitle">
-        Import members for Okavango Holdings.
-      </p>
-      {!loaded ? (
-        <button className="file-drop" onClick={() => setLoaded(true)}>
-          <span className="stat-icon green">
-            <Icon name="Upload" />
-          </span>
-          <h3>Load the census file</h3>
-          <p>4 members</p>
-          <span className="btn primary">
-            Load members <Icon name="ArrowRight" small />
-          </span>
-        </button>
-      ) : (
-        <>
-          <div className="notice">
-            <Icon name="CircleCheck" />
-            <p>
-              <strong>Validation complete.</strong> 3 rows accepted · 1 row
-              needs correction. This is a preview only.
-            </p>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Row</th>
-                  <th>Member</th>
-                  <th>Category</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  ["1", "Dineo Motsumi", "Staff", "Accepted"],
-                  ["2", "Tshepo Dube", "Management", "Accepted"],
-                  ["3", "Boitumelo Sechele", "Staff", "Accepted"],
-                  ["4", "Onalenna Tlhagale", "Unknown", "Invalid category"],
-                ].map((row) => (
-                  <tr key={row[0]}>
-                    {row.map((v, i) => (
-                      <td key={i}>
-                        {i === 3 ? (
-                          <Badge>
-                            {v === "Accepted" ? "Verified" : "Rejected"}
-                          </Badge>
-                        ) : (
-                          v
-                        )}
-                        {i === 3 && v !== "Accepted" && (
-                          <div className="person-sub">Unknown category</div>
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="modal-footer">
-            <Button
-              variant="secondary"
-              icon="Download"
-              onClick={() =>
-                downloadCSV("census-results.csv", [
-                  ["Row", "Name", "Result", "Reason"],
-                  ["1", "Dineo Motsumi", "Accepted", ""],
-                  ["2", "Tshepo Dube", "Accepted", ""],
-                  ["3", "Boitumelo Sechele", "Accepted", ""],
-                  ["4", "Onalenna Tlhagale", "Rejected", "Unknown category"],
-                ])
-              }
-            >
-              Download results
-            </Button>
-            <Button icon="Check" onClick={onDone}>
-              Finish preview
-            </Button>
-          </div>
-        </>
-      )}
     </>
   );
 }
