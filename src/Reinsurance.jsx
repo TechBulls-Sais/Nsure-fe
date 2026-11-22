@@ -29,7 +29,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const endOfYear = () => new Date().getFullYear() + "-12-31";
 const share = (v) => (v === null || v === undefined ? "—" : (Number(v) * 100).toFixed(2) + "%");
-const typeLabel = (t) => (t === "SURPLUS" ? "Surplus" : t === "FACULTATIVE" ? "Facultative" : "Quota share");
+const typeLabel = (t) =>
+  t === "SURPLUS" ? "Surplus" : t === "FACULTATIVE" ? "Facultative" : t === "EXCESS_OF_LOSS" ? "Excess of loss" : "Quota share";
 
 export default function Reinsurance({ session, notify, profile }) {
   const [tab, setTab] = useState("treaties");
@@ -81,8 +82,10 @@ export default function Reinsurance({ session, notify, profile }) {
           ["cessions", "Cessions"],
           ["recoveries", "Recoveries"],
           ["bordereaux", "Bordereaux"],
+          ["reconciliation", "Reconciliation"],
         ]}
       />
+      {tab === "reconciliation" && <Reconciliation session={session} />}
       {tab === "exposures" && <Exposures session={session} />}
       {tab === "facultative" && <FacultativeQueue session={session} notify={notify} profile={profile} resource={facultative} onChange={treaties.reload} />}
       {tab === "treaties" && <Treaties session={session} notify={notify} profile={profile} resource={treaties} />}
@@ -105,9 +108,27 @@ const blankTreaty = () => ({
   cededPercent: "",
   retention: "",
   capacity: "",
+  commissionPercent: "",
+  premiumBasis: "ORIGINAL_TERMS",
+  reportingFrequency: "MONTHLY",
+  bordereauFormat: "CSV",
+  xlPriority: "",
+  xlLimit: "",
+  participantsText: "",
   effectiveFrom: today(),
   effectiveTo: endOfYear(),
 });
+
+// "Reinsurer, share" per line → participants; the first line is the lead.
+const parseParticipants = (text) =>
+  (text || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, i) => {
+      const at = line.lastIndexOf(",");
+      return { reinsurer: line.slice(0, at).trim(), sharePercent: line.slice(at + 1).trim(), lead: i === 0 };
+    });
 
 function Treaties({ session, notify, profile, resource }) {
   const products = useResource(session, "/public/products", []);
@@ -126,15 +147,36 @@ function Treaties({ session, notify, profile, resource }) {
 
   const save = async () => {
     const body = { ...form };
-    if (body.treatyType === "QUOTA_SHARE") delete body.retention;
-    else delete body.cededPercent;
+    if (body.treatyType !== "SURPLUS") delete body.retention;
+    if (body.treatyType !== "QUOTA_SHARE") delete body.cededPercent;
+    if (body.treatyType !== "EXCESS_OF_LOSS") {
+      delete body.xlPriority;
+      delete body.xlLimit;
+    }
     if (!body.capacity) delete body.capacity;
+    if (!body.commissionPercent) delete body.commissionPercent;
+    const participants = parseParticipants(body.participantsText);
+    delete body.participantsText;
+    if (participants.length) body.participants = participants;
     const done = await draft.run(
       () => request(session, "/reinsurance/treaties", { method: "POST", body }),
       "Treaty drafted. Another user must approve it before it cedes.",
     );
     if (done) {
       setForm(null);
+      resource.reload();
+    }
+  };
+
+  const [amending, setAmending] = useState(null);
+  const amend = async () => {
+    const body = Object.fromEntries(Object.entries(amending).filter(([k, v]) => v !== "" && k !== "ref" && k !== "treatyType"));
+    const done = await draft.run(
+      () => request(session, "/reinsurance/treaties/" + amending.ref + "/amend", { method: "POST", body }),
+      "Amendment drafted as the next version; another user approves it",
+    );
+    if (done) {
+      setAmending(null);
       resource.reload();
     }
   };
@@ -180,9 +222,19 @@ function Treaties({ session, notify, profile, resource }) {
               <select value={form.treatyType} onChange={(e) => setForm({ ...form, treatyType: e.target.value })}>
                 <option value="QUOTA_SHARE">Quota share</option>
                 <option value="SURPLUS">Surplus</option>
+                <option value="EXCESS_OF_LOSS">Excess of loss (per claim)</option>
               </select>
             </Field>
-            {form.treatyType === "QUOTA_SHARE" ? (
+            {form.treatyType === "EXCESS_OF_LOSS" ? (
+              <>
+                <Field label="Priority per claim (BWP)" hint="Applies to the insurer's retained claim">
+                  <input type="number" min="0.01" step="0.01" required value={form.xlPriority} onChange={(e) => setForm({ ...form, xlPriority: e.target.value })} />
+                </Field>
+                <Field label="Limit per claim (BWP)">
+                  <input type="number" min="0.01" step="0.01" required value={form.xlLimit} onChange={(e) => setForm({ ...form, xlLimit: e.target.value })} />
+                </Field>
+              </>
+            ) : form.treatyType === "QUOTA_SHARE" ? (
               <Field label="Ceded share (%)">
                 <input
                   type="number"
@@ -206,6 +258,30 @@ function Treaties({ session, notify, profile, resource }) {
                 />
               </Field>
             )}
+            <Field label="Reinsurance commission (%)">
+              <input type="number" min="0" max="100" step="0.01" value={form.commissionPercent} onChange={(e) => setForm({ ...form, commissionPercent: e.target.value })} />
+            </Field>
+            <Field label="Premium basis">
+              <select value={form.premiumBasis} onChange={(e) => setForm({ ...form, premiumBasis: e.target.value })}>
+                <option value="ORIGINAL_TERMS">Original terms</option>
+                <option value="RISK_PREMIUM">Risk premium</option>
+              </select>
+            </Field>
+            <Field label="Reporting">
+              <select value={form.reportingFrequency} onChange={(e) => setForm({ ...form, reportingFrequency: e.target.value })}>
+                <option value="MONTHLY">Monthly</option>
+                <option value="QUARTERLY">Quarterly</option>
+              </select>
+            </Field>
+            <Field label="Bordereau format">
+              <select value={form.bordereauFormat} onChange={(e) => setForm({ ...form, bordereauFormat: e.target.value })}>
+                <option>CSV</option>
+                <option>JSON</option>
+              </select>
+            </Field>
+            <Field label="Participants (one per line: reinsurer, share %; first is lead)" full hint="Shares must add up to exactly 100. Leave empty for the reinsurer above at 100%.">
+              <textarea rows={3} value={form.participantsText} onChange={(e) => setForm({ ...form, participantsText: e.target.value })} />
+            </Field>
             <Field label="Capacity per life (BWP ceded, optional)" hint="Above it the excess is referred for facultative placement">
               <input type="number" min="0.01" step="0.01" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
             </Field>
@@ -240,6 +316,34 @@ function Treaties({ session, notify, profile, resource }) {
           </FormGrid>
         </Drawer>
       )}
+      {amending && (
+        <Drawer title={"Amend " + amending.ref} description="The amendment is the treaty's next version. Once approved, this version stops the day before; cessions already made keep their original version." onClose={() => setAmending(null)}>
+          <FormGrid submitLabel="Draft amendment" busy={draft.busy} error={draft.error} onSubmit={amend}>
+            <Field label="Effective from">
+              <input type="date" required value={amending.effectiveFrom} onChange={(e) => setAmending({ ...amending, effectiveFrom: e.target.value })} />
+            </Field>
+            {amending.treatyType === "QUOTA_SHARE" && (
+              <Field label="New ceded share (%)">
+                <input type="number" min="0.01" max="100" step="0.01" value={amending.cededPercent} onChange={(e) => setAmending({ ...amending, cededPercent: e.target.value })} />
+              </Field>
+            )}
+            {amending.treatyType === "SURPLUS" && (
+              <Field label="New retention (BWP)">
+                <input type="number" min="0.01" step="0.01" value={amending.retention} onChange={(e) => setAmending({ ...amending, retention: e.target.value })} />
+              </Field>
+            )}
+            <Field label="Capacity per life (BWP)">
+              <input type="number" min="0.01" step="0.01" value={amending.capacity} onChange={(e) => setAmending({ ...amending, capacity: e.target.value })} />
+            </Field>
+            <Field label="Reinsurance commission (%)">
+              <input type="number" min="0" max="100" step="0.01" value={amending.commissionPercent} onChange={(e) => setAmending({ ...amending, commissionPercent: e.target.value })} />
+            </Field>
+            <Field label="Reason" full>
+              <input required maxLength={500} value={amending.reason} onChange={(e) => setAmending({ ...amending, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       <Panel
         title="Treaties"
         subtitle="Only an approved treaty in force cedes. The user who drafts a treaty cannot approve it, whatever their role. Approved treaties may not overlap for a product."
@@ -269,10 +373,22 @@ function Treaties({ session, notify, profile, resource }) {
               label: "Terms",
               sortValue: (r) => (r.treatyType === "SURPLUS" ? Number(r.retention) : Number(r.cededPercent)),
               render: (r) =>
-                (r.treatyType === "SURPLUS" ? "Retention " + pula(r.retention) : Number(r.cededPercent).toFixed(2) + "% ceded") +
+                (r.treatyType === "SURPLUS"
+                  ? "Retention " + pula(r.retention)
+                  : r.treatyType === "EXCESS_OF_LOSS"
+                    ? pula(r.xlLimit) + " xs " + pula(r.xlPriority) + " per claim"
+                    : Number(r.cededPercent).toFixed(2) + "% ceded") +
                 (r.capacity ? " · capacity " + pula(r.capacity) + " per life" : "") +
+                (r.commissionPercent != null ? " · commission " + Number(r.commissionPercent).toFixed(2) + "%" : "") +
+                (r.reportingFrequency ? " · " + r.reportingFrequency.toLowerCase() + " " + (r.bordereauFormat || "") : "") +
                 (r.policyRef ? " · policy " + r.policyRef : ""),
             },
+            {
+              key: "participants",
+              label: "Participants",
+              render: (r) => (r.participants || []).map((p) => p.reinsurer + " " + Number(p.sharePercent).toFixed(0) + "%" + (p.lead ? " (lead)" : "")).join(", "),
+            },
+            { key: "version", label: "Version", render: (r) => "v" + r.version + (r.amendsRef ? " amends " + r.amendsRef : "") },
             { key: "products", label: "Products", render: (r) => (r.products || []).join(", ") },
             {
               key: "period",
@@ -300,15 +416,21 @@ function Treaties({ session, notify, profile, resource }) {
               key: "act",
               label: "",
               render: (r) =>
-                r.status === "DRAFT" &&
-                can(profile, "APPROVE_TREATY") &&
-                (r.createdBy === me ? (
-                  <small className="ws-hint">Needs another approver</small>
-                ) : (
-                  <Button variant="secondary" icon={CheckCircle2} busy={approve.busy} onClick={() => approveTreaty(r)}>
-                    Approve
+                r.status === "APPROVED" && r.treatyType !== "FACULTATIVE" && can(profile, "MANAGE_REINSURANCE") ? (
+                  <Button variant="ghost" onClick={() => setAmending({ ref: r.ref, reason: "", effectiveFrom: today(), cededPercent: "", retention: "", capacity: "", commissionPercent: "", treatyType: r.treatyType })}>
+                    Amend
                   </Button>
-                )),
+                ) : (
+                  r.status === "DRAFT" &&
+                  can(profile, "APPROVE_TREATY") &&
+                  (r.createdBy === me ? (
+                    <small className="ws-hint">Needs another approver</small>
+                  ) : (
+                    <Button variant="secondary" icon={CheckCircle2} busy={approve.busy} onClick={() => approveTreaty(r)}>
+                      Approve
+                    </Button>
+                  ))
+                ),
             },
           ]}
         />
@@ -813,6 +935,50 @@ function Bordereaux({ session, notify, profile, treaties, onChange }) {
   const [form, setForm] = useState(null);
   const action = useAction(notify);
 
+  const [step, setStep] = useState(null);
+  const manage = can(profile, "MANAGE_REINSURANCE");
+  const lifecycle = async () => {
+    const paths = { ack: "/acknowledge", correction: "/correction", settle: "/settle" };
+    const done = await action.run(
+      () => request(session, "/reinsurance/bordereaux/" + step.ref + paths[step.kind], { method: "POST", body: step }),
+      "Bordereau " + step.ref + " updated",
+    );
+    if (done) {
+      setStep(null);
+      bordereaux.reload();
+    }
+  };
+  const correct = async (r) => {
+    const done = await action.run(
+      () => request(session, "/reinsurance/bordereaux/" + r.ref + "/correct", { method: "POST" }),
+      "Corrected and resubmitted",
+    );
+    if (done) bordereaux.reload();
+  };
+  const download = async (r) => {
+    const done = await action.run(() => request(session, "/reinsurance/bordereaux/" + r.ref + "/lines"));
+    if (!done) return;
+    const lines = done.data;
+    let content;
+    let type;
+    if (r.format === "JSON") {
+      content = JSON.stringify({ bordereau: r.ref, treaty: r.treatyRef, period: r.period, kind: r.kind, recordCount: r.recordCount, totalCededPremium: r.totalCededPremium, totalCededSum: r.totalCededSum, totalRecovery: r.totalRecovery, lines }, null, 2);
+      type = "application/json";
+    } else {
+      const cols = r.kind === "CLAIMS" ? ["ref", "policyRef", "claimRef", "claimAmount", "recoveryAmount"] : ["ref", "policyRef", "product", "receiptRef", "sumAssured", "cededSum", "premium", "cededPremium"];
+      content = ["# " + r.ref + " " + r.treatyRef + " " + r.period + " " + r.kind + " records " + r.recordCount, cols.join(",")]
+        .concat(lines.map((l) => cols.map((c) => (l[c] == null ? "" : l[c])).join(",")))
+        .join("\n");
+      type = "text/csv";
+    }
+    const url = URL.createObjectURL(new Blob([content], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = r.ref + (r.format === "JSON" ? ".json" : ".csv");
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const generate = async () => {
     const done = await action.run(
       () => request(session, "/reinsurance/bordereaux", { method: "POST", body: form }),
@@ -853,15 +1019,21 @@ function Bordereaux({ session, notify, profile, treaties, onChange }) {
                 required
               />
             </Field>
+            <Field label="Kind">
+              <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+                <option value="PREMIUM">Premium (cessions)</option>
+                <option value="CLAIMS">Claims (recoveries)</option>
+              </select>
+            </Field>
           </FormGrid>
         </Drawer>
       )}
       <Panel
         title="Bordereaux"
-        subtitle="Record counts and control totals as submitted to the reinsurer."
+        subtitle="Premium and claims bordereaux with record counts and control totals: submitted, acknowledged by the reinsurer, corrected and resubmitted when asked, then settled."
         action={
           can(profile, "MANAGE_REINSURANCE") && (
-            <Button icon={FileSpreadsheet} onClick={() => setForm({ treatyRef: approved[0]?.ref || "", period: thisMonth() })}>
+            <Button icon={FileSpreadsheet} onClick={() => setForm({ treatyRef: approved[0]?.ref || "", period: thisMonth(), kind: "PREMIUM" })}>
               Produce bordereau
             </Button>
           )
@@ -887,14 +1059,155 @@ function Bordereaux({ session, notify, profile, treaties, onChange }) {
             { key: "treatyRef", label: "Treaty", render: (r) => r.treatyRef + " · " + r.treatyName },
             { key: "reinsurer", label: "Reinsurer" },
             { key: "period", label: "Month" },
+            { key: "kind", label: "Kind", render: (r) => (r.kind === "CLAIMS" ? "Claims" : "Premium") },
             { key: "recordCount", label: "Records", align: "right" },
             { key: "totalCededPremium", label: "Ceded premium", align: "right", render: (r) => pula(r.totalCededPremium) },
             { key: "totalCededSum", label: "Ceded sum", align: "right", render: (r) => pula(r.totalCededSum) },
-            { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+            { key: "totalRecovery", label: "Recoveries", align: "right", render: (r) => (r.totalRecovery == null ? "—" : pula(r.totalRecovery)) },
+            { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ") + (r.correctionCount ? " (" + r.correctionCount + " correction)" : "")}</Badge> },
             { key: "createdAt", label: "Produced", render: (r) => when(r.createdAt) + " · " + r.createdBy },
+            {
+              key: "act",
+              label: "",
+              render: (r) => (
+                <span className="ws-row-actions">
+                  <Button variant="ghost" onClick={() => download(r)}>
+                    {r.format || "CSV"}
+                  </Button>
+                  {manage && ["SUBMITTED", "CORRECTED"].includes(r.status) && (
+                    <Button variant="secondary" onClick={() => setStep({ ref: r.ref, kind: "ack", reference: "" })}>
+                      Acknowledged
+                    </Button>
+                  )}
+                  {manage && ["SUBMITTED", "ACKNOWLEDGED", "CORRECTED"].includes(r.status) && (
+                    <Button variant="ghost" onClick={() => setStep({ ref: r.ref, kind: "correction", note: "" })}>
+                      Correction asked
+                    </Button>
+                  )}
+                  {manage && r.status === "CORRECTION_REQUESTED" && (
+                    <Button variant="secondary" busy={action.busy} onClick={() => correct(r)}>
+                      Correct and resubmit
+                    </Button>
+                  )}
+                  {manage && r.status === "ACKNOWLEDGED" && (
+                    <Button variant="secondary" onClick={() => setStep({ ref: r.ref, kind: "settle", reference: "", amount: String(r.kind === "CLAIMS" ? r.totalRecovery : r.totalCededPremium) })}>
+                      Settled
+                    </Button>
+                  )}
+                </span>
+              ),
+            },
           ]}
         />
       </Panel>
+      {step && (
+        <Drawer
+          title={(step.kind === "ack" ? "Acknowledgement of " : step.kind === "correction" ? "Correction asked on " : "Settlement of ") + step.ref}
+          description="Record what the reinsurer did."
+          onClose={() => setStep(null)}
+        >
+          <FormGrid submitLabel="Save" busy={action.busy} error={action.error} onSubmit={lifecycle}>
+            {step.kind === "correction" ? (
+              <Field label="What the reinsurer asked to correct" full>
+                <input required maxLength={500} value={step.note} onChange={(e) => setStep({ ...step, note: e.target.value })} />
+              </Field>
+            ) : (
+              <Field label="Reinsurer's reference">
+                <input required maxLength={60} value={step.reference} onChange={(e) => setStep({ ...step, reference: e.target.value })} />
+              </Field>
+            )}
+            {step.kind === "settle" && (
+              <Field label="Amount settled (BWP)">
+                <input type="number" step="0.01" required value={step.amount} onChange={(e) => setStep({ ...step, amount: e.target.value })} />
+              </Field>
+            )}
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// ── reconciliation and queues (NS-SH07-006) ─────────────────────────────────────────────────────
+
+function Reconciliation({ session }) {
+  const [period, setPeriod] = useState(thisMonth());
+  const recon = useResource(session, "/reinsurance/reconciliation?period=" + period, null);
+  const r = recon.data;
+  const queue = (rows, title, subtitle, empty) => (
+    <Panel title={title} subtitle={subtitle}>
+      <DataTable
+        rows={rows}
+        loading={recon.loading}
+        rowKey={(q) => q.ref}
+        empty={empty}
+        columns={[
+          { key: "ref", label: "Reference" },
+          { key: "policyRef", label: "Policy" },
+          { key: "detail", label: "Detail" },
+          { key: "amount", label: "Amount", align: "right", render: (q) => pula(q.amount) },
+          { key: "ageDays", label: "Age (days)", align: "right" },
+        ]}
+      />
+    </Panel>
+  );
+  return (
+    <>
+      <Panel
+        title="Gross, ceded and retained"
+        subtitle="Premium ceded per treaty in the month, against the ceded premium and recoveries the subledger posted."
+        action={<input type="month" aria-label="Month" value={period} onChange={(e) => setPeriod(e.target.value)} />}
+      >
+        <ErrorNote error={recon.error} />
+        {r && (
+          <div className="ws-kv">
+            <div>
+              <small>Gross premium (ceded products)</small>
+              <strong>{pula(r.grossPremium)}</strong>
+            </div>
+            <div>
+              <small>Ceded</small>
+              <strong>{pula(r.cededPremium)}</strong>
+            </div>
+            <div>
+              <small>Retained</small>
+              <strong>{pula(r.retainedPremium)}</strong>
+            </div>
+            <div>
+              <small>Subledger ceded (5200)</small>
+              <strong>{pula(r.ledgerCededPremium)}</strong>
+            </div>
+            <div>
+              <small>Difference</small>
+              <strong>
+                <Badge tone={Number(r.difference) === 0 ? "green" : "red"}>{pula(r.difference)}</Badge>
+              </strong>
+            </div>
+            <div>
+              <small>Recoveries recognised / posted (4200)</small>
+              <strong>
+                {pula(r.recoveriesRecognised)} / {pula(r.ledgerRecoveries)}
+              </strong>
+            </div>
+          </div>
+        )}
+        <DataTable
+          rows={r?.treaties}
+          loading={recon.loading}
+          rowKey={(t) => t.treatyRef}
+          empty="Nothing ceded this month"
+          columns={[
+            { key: "treatyRef", label: "Treaty", render: (t) => t.treatyRef + " · " + t.treatyName },
+            { key: "cessions", label: "Cessions", align: "right" },
+            { key: "grossPremium", label: "Gross", align: "right", render: (t) => pula(t.grossPremium) },
+            { key: "cededPremium", label: "Ceded", align: "right", render: (t) => pula(t.cededPremium) },
+            { key: "retainedPremium", label: "Retained", align: "right", render: (t) => pula(t.retainedPremium) },
+          ]}
+        />
+      </Panel>
+      {queue(r?.missingAgreements, "Missing agreements", "Policies issued on a product no approved treaty covered: nothing is ceded on them.", "Every policy has a treaty")}
+      {queue(r?.capacityBreaches, "Capacity breaches", "Risks above a treaty's capacity per life, waiting for facultative placement.", "No capacity breaches")}
+      {queue(r?.overdueRecoveries, "Overdue recoveries", "Recoveries still expected after the overdue period.", "No overdue recoveries")}
     </>
   );
 }
