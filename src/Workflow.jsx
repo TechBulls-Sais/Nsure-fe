@@ -21,6 +21,7 @@ import { fetchFile, newIdempotencyKey, request, uploadFile } from "./api";
 import { money } from "./data";
 import { useConfirm } from "./ui/overlay";
 import { can as holds } from "./ui/workspace";
+import { PayoutInstructions } from "./PayoutInstructions";
 import "./workflow.css";
 import "./access.css";
 
@@ -1089,6 +1090,10 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const [overrideReason, setOverrideReason] = useState("");
   const [fourEyesReason, setFourEyesReason] = useState("");
   const [evidenceReason, setEvidenceReason] = useState("");
+  // NS-SH05-004: a payout below the eligible amount is a partial approval with a reason; NS-SH05-002: a policy with
+  // underwriting terms needs a note that the event is not excluded by them.
+  const [decisionReason, setDecisionReason] = useState("");
+  const [exclusionNote, setExclusionNote] = useState("");
   const [closing, setClosing] = useState(null);
   const [approveError, setApproveError] = useState("");
   // Reserve history, benefit limits and decisions (GET .../financials), for the approval summary and the panel.
@@ -1117,6 +1122,10 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const softFailed = SOFT_CHECKS.filter((name) => result(name) === "Fail");
   // NS-SH05-003: mandatory evidence still outstanding does not block the claim, but approving it needs a reason.
   const missingEvidence = (c.evidence || []).filter((e) => e.mandatory && !e.received).map((e) => e.documentType);
+  const calc = financials?.calculation;
+  const mostPayable = calc ? Number(calc.mostPayable) : Number(c.amount);
+  const partialPayout = Boolean(payout) && Number(payout) < mostPayable;
+  const needsExclusionNote = Boolean(calc?.exclusions);
   // Why the claim cannot move towards payout; the server refuses the same cases.
   const blocked = hardFailed.length
     ? hardFailed.join(", ") + " failed, so there was no valid cover for this event. This claim can only be rejected."
@@ -1136,7 +1145,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
   const canEditPayee =
     (open || c.status === "Payout Failed") && (holds(profile, "UPDATE_CLAIM") || holds(profile, "ASSESS_CLAIM"));
   const approve = async () => {
-    const amount = payout ? Number(payout) : c.amount;
+    const amount = payout ? Number(payout) : mostPayable;
     const ok = await confirm({
       title: "Approve " + c.id + "?",
       message: (
@@ -1168,6 +1177,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             ...(softFailed.length ? { overrideReason: overrideReason.trim() } : {}),
             ...(breakGlass ? { fourEyesOverrideReason: fourEyesReason.trim() } : {}),
             ...(missingEvidence.length ? { evidenceOverrideReason: evidenceReason.trim() } : {}),
+            ...(decisionReason.trim() ? { reason: decisionReason.trim() } : {}),
+            ...(needsExclusionNote ? { exclusionNote: exclusionNote.trim() } : {}),
           },
         });
         onUpdated(result.data);
@@ -1186,6 +1197,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         <Item label="Covered life" value={c.coveredLife} />
         <Item label="Claimant" value={c.claimant + (c.claimantRelationship ? " (" + c.claimantRelationship + ")" : "")} />
         <Item label="Date of event" value={formatDate(c.eventDate)} />
+        {c.notificationSource && <Item label="Notified via" value={c.notificationSource.toLowerCase()} />}
         <Item label="Processing" value={c.processingType} />
         <Item label="Policy cover" value={money(c.amount)} />
         <Item
@@ -1238,7 +1250,29 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
                 {[r.ref, r.type, r.coveredLife, r.eventDate ? "event " + formatDate(r.eventDate) : "event date not recorded", r.status]
                   .filter(Boolean)
                   .join(" · ")}
-                {r.possibleDuplicate && <small>possibly the same event</small>}
+                {r.link ? (
+                  <small>
+                    {r.link === "SAME_EVENT" ? "linked as the same event" : "linked as a separate benefit"} by {r.linkedBy}:{" "}
+                    {r.linkNote}
+                  </small>
+                ) : (
+                  r.possibleDuplicate && <small>possibly the same event</small>
+                )}
+                {!r.link && (holds(profile, "ASSESS_CLAIM") || holds(profile, "UPDATE_CLAIM")) && (
+                  <span className="detail-actions">
+                    {["SAME_EVENT", "SEPARATE_BENEFIT"].map((type) => (
+                      <ReasonAction
+                        key={type}
+                        label={type === "SAME_EVENT" ? "Same event" : "Separate benefit"}
+                        busy={busy}
+                        placeholder="Why, e.g. funeral benefit beside the death benefit"
+                        onConfirm={(note) =>
+                          call("/links", { method: "POST", body: { relatedRef: r.ref, type, note } }, "Claims linked.")
+                        }
+                      />
+                    ))}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -1420,8 +1454,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         <div className="notice">
           <Clock3 size={18} aria-hidden="true" />
           <p>
-            {money(c.payoutAmount)} sent to {payee.name} · {c.payoutReference}. It counts as paid once the provider
-            confirms settlement.
+            {money(c.payoutAmount)} sent to {payee.name} · {c.payoutReference}. It counts as paid once the bank
+            confirms settlement (by its callback, a status enquiry, or a statement line confirmed below).
           </p>
         </div>
       )}
@@ -1433,6 +1467,25 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             again. The claim history records the provider's reason.
           </p>
         </div>
+      )}
+      {["Approved", "Payout Sent", "Payout Failed", "Paid"].includes(c.status) && (
+        <>
+          <h3 className="section-title">Payment instructions</h3>
+          <PayoutInstructions
+            session={session}
+            source="CLAIM"
+            sourceRef={c.id}
+            profile={profile}
+            notify={notify}
+            version={c.version}
+            onChanged={async () => {
+              // The bank's answer may have moved the claim (Paid, Payout Failed): show it as the server has it.
+              const all = await request(session, "/portfolio/claims");
+              const fresh = (all.data || []).find((row) => row.id === c.id);
+              if (fresh && fresh.version !== c.version) onUpdated(fresh);
+            }}
+          />
+        </>
       )}
 
       <div className="detail-actions">
@@ -1484,6 +1537,32 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             />
           </label>
         )}
+        {mayApprove && !blocked && needsExclusionNote && (
+          <label className="form-label wf-override">
+            <span>Why this event is not excluded by "{calc.exclusions}" (kept with the claim)</span>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              value={exclusionNote}
+              onChange={(e) => setExclusionNote(e.target.value)}
+              placeholder="e.g. Natural causes per the death certificate"
+            />
+          </label>
+        )}
+        {mayApprove && !blocked && partialPayout && (
+          <label className="form-label wf-override">
+            <span>Reason for paying less than the eligible {money(mostPayable)} (the claimant is told)</span>
+            <textarea
+              className="input"
+              rows={2}
+              maxLength={500}
+              value={decisionReason}
+              onChange={(e) => setDecisionReason(e.target.value)}
+              placeholder="e.g. Funeral costs already paid by the employer scheme"
+            />
+          </label>
+        )}
         {mayApprove && breakGlass && !blocked && (
           <label className="form-label wf-override wf-break-glass">
             <span>Break-glass override — reason (recorded on the claim)</span>
@@ -1504,8 +1583,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
               type="number"
               min="0.01"
               step="0.01"
-              max={c.amount}
-              placeholder={"Payout (default " + c.amount + ")"}
+              max={calc ? calc.eligible : c.amount}
+              placeholder={"Payout (default " + mostPayable + ")"}
               aria-label="Payout amount"
               value={payout}
               onChange={(e) => setPayout(e.target.value)}
@@ -1517,7 +1596,9 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
                 !!blocked ||
                 (softFailed.length > 0 && !overrideReason.trim()) ||
                 (missingEvidence.length > 0 && !evidenceReason.trim()) ||
-                (breakGlass && !fourEyesReason.trim())
+                (breakGlass && !fourEyesReason.trim()) ||
+                (partialPayout && !decisionReason.trim()) ||
+                (needsExclusionNote && exclusionNote.trim().length < 5)
               }
               title={
                 blocked ||
@@ -1715,6 +1796,36 @@ function ClaimCalculation({ claim: c, financials: f, profile }) {
         </>
       )}
       <h3 className="section-title">Benefit calculation</h3>
+      {f.calculation && (
+        <>
+          <table className="wf-before-after">
+            <tbody>
+              {f.calculation.lines.map((line) => (
+                <tr key={line.label}>
+                  <th scope="row">
+                    {line.label}
+                    <small className="muted"> · {line.reason}</small>
+                  </th>
+                  <td>{money(line.amount)}</td>
+                </tr>
+              ))}
+              <tr>
+                <th scope="row">Most payable now (eligible, within limits)</th>
+                <td>
+                  <strong>{money(f.calculation.mostPayable)}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          {f.calculation.exclusions && (
+            <p className="muted small">
+              Underwriting terms on the policy: <strong>{f.calculation.exclusions}</strong>. The approver records why the
+              event is not excluded{c.exclusionNote ? ": " + c.exclusionNote : "."}
+            </p>
+          )}
+          <p className="muted small">Calculation {f.calculation.version}. The decision keeps this trace with an input hash.</p>
+        </>
+      )}
       <table className="wf-before-after">
         <tbody>
           <tr>
@@ -1745,7 +1856,7 @@ function ClaimCalculation({ claim: c, financials: f, profile }) {
           </tr>
         </tbody>
       </table>
-      {(f.movements?.length > 0 || f.decisions?.length > 0) && (
+      {(f.movements?.length > 0 || f.decisions?.length > 0 || f.limitEntries?.length > 0) && (
         <>
           <h3 className="section-title">Reserve and decisions</h3>
           <ul className="wf-evidence">
@@ -1758,11 +1869,20 @@ function ClaimCalculation({ claim: c, financials: f, profile }) {
                 </small>
               </li>
             ))}
+            {(f.limitEntries || []).map((e, i) => (
+              <li key={"l" + i} className="optional">
+                Benefit limit {e.entry.toLowerCase()} {money(e.amount)}
+                <small>
+                  {e.by} · {formatDate(e.at)}
+                </small>
+              </li>
+            ))}
             {(f.decisions || []).map((d) => (
               <li key={"d" + d.sequence} className={d.supersededBy ? "optional" : "received"}>
                 {label(d.decision)}
                 {d.amount != null ? " · " + money(d.amount) : ""}
                 {d.reason ? " · " + d.reason : ""}
+                {d.calculation ? " · eligible " + money(d.calculation.eligible) + " (trace " + String(d.calculation.inputHash || "").slice(0, 8) + ")" : ""}
                 <small>
                   {d.decidedBy} · {formatDate(d.decidedAt)}
                   {d.supersededBy ? " · set aside by decision " + d.supersededBy : ""}
@@ -1870,7 +1990,18 @@ function ApprovalSummary({
 }
 
 /** Lodge a claim on a policy: who is claiming, what happened, and when. */
-export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = "Lodge claim", busy }) {
+// NS-SH05-001: where a staff-taken notification came from (the customer portal records PORTAL itself).
+const NOTIFICATION_SOURCES = [
+  ["STAFF", "Staff desk"],
+  ["PHONE", "Phone call"],
+  ["EMAIL", "Email"],
+  ["BRANCH", "Branch visit"],
+  ["INTERMEDIARY", "Intermediary"],
+  ["EMPLOYER", "Employer"],
+  ["LENDER", "Lender"],
+];
+
+export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = "Lodge claim", busy, staff = false }) {
   const today = new Date().toISOString().slice(0, 10);
   // With several policies, nothing is pre-selected: the claim is filed under the chosen policy's holder,
   // so defaulting to the first (newest) policy put claims under the wrong customer.
@@ -1953,6 +2084,18 @@ export function ClaimLodgeForm({ policies = [], onSave, onCancel, submitLabel = 
             title="The full name of the covered spouse, child or parent the claim is for"
           />
         </label>
+        {staff && (
+          <label className="form-label">
+            <span>Notified by</span>
+            <select name="source" className="input" defaultValue="STAFF">
+              {NOTIFICATION_SOURCES.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="form-label full">
           <span>What happened</span>
           <textarea name="description" className="textarea" rows={3} required maxLength={1000} />

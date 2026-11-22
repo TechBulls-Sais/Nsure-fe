@@ -153,6 +153,7 @@ import { can, DataTable, Tabs, ThemeSwitch, when } from "./ui/workspace";
 import PaymentTransactions from "./PaymentTransactions";
 import { CustomFieldInputs, PolicyAttributesPanel, cleanValues, usePolicyForm } from "./configuration/PolicyFields";
 import ConfigReleases from "./ConfigReleases";
+import { PayoutExceptionQueue } from "./PayoutInstructions";
 import { environmentLabel, useInsurer } from "./insurer";
 import { Dialog } from "./ui/overlay";
 import { useToast } from "./ui/toast";
@@ -1597,6 +1598,18 @@ export default function App() {
           {RecordsTable({ rows: visible(config.rows), type: config.type, total: config.rows.length })}
         </Panel>
         {kind === "claims" && <ClaimPayouts session={session} go={go} />}
+        {kind === "claims" && can(profile, "READ_CLAIM") && (
+          <PayoutExceptionQueue
+            session={session}
+            profile={profile}
+            notify={notify}
+            onOpen={(row) => {
+              const claim = row.sourceType === "CLAIM" && claims.find((c) => c.id === row.sourceRef);
+              if (claim) detail("claim", claim);
+              else if (row.sourceType === "CARE_CASH") go("care-cash");
+            }}
+          />
+        )}
           </>
         )}
         {kind === "applications" && canDo(profile, "newApplication") && (
@@ -2171,6 +2184,8 @@ export default function App() {
             <RateTables session={session} notify={notify} profile={profile} />
           ) : view === "product-config" ? (
             <ProductConfig
+              session={session}
+              products={products}
               profile={profile}
               records={productConfigs}
               setRecords={setProductConfigs}
@@ -2416,6 +2431,7 @@ export default function App() {
           )}
           {modal.type === "claim" && (
             <ClaimLodgeForm
+              staff
               policies={policies.filter((p) => ["Active", NO_COVER, "Lapsed"].includes(p.status))}
               onCancel={close}
               onSave={async (data) => {
@@ -2956,6 +2972,14 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
             {ratedTier && !draft && priced.error && (
               <p className="covered-lives-error" role="alert">
                 {priced.error}
+              </p>
+            )}
+            {ratedTier && !draft && priced.quote?.effectiveDate && (
+              <p className="muted small">
+                {/* NS-SH03-001: the explicit inputs the price was calculated on. */}
+                Priced on {priced.quote.effectiveDate} in {priced.quote.currency} · rate version{" "}
+                {priced.quote.rateTableVersion || "flat"} · product terms v{priced.quote.productVersion ?? "—"} · age basis{" "}
+                {String(priced.quote.ageBasis || "").toLowerCase().replaceAll("_", " ")}
               </p>
             )}
             {ratedTier && <LifeCoverList lives={draft ? draft.lives : priced.quote?.lives} />}
