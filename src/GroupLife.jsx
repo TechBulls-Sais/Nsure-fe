@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Plus, Upload } from "lucide-react";
-import { request } from "./api";
+import { fetchFile, request } from "./api";
 import {
   Badge,
   Button,
@@ -53,6 +53,17 @@ const badge = (map, key) => {
   return <Badge tone={tone}>{label}</Badge>;
 };
 const today = () => new Date().toISOString().slice(0, 10);
+/** Opens a generated PDF (scheme schedule, member certificate) in a new tab; the API needs the session header. */
+const openPdf = async (session, path, notify) => {
+  try {
+    const blob = await fetchFile(session, path);
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) {
+    notify?.(e.message, "error");
+  }
+};
 // D-41: a failed write is shown once, next to the action that failed (in the open drawer, or above the table for a
 // row button), so errors are not also raised as toasts that stack over the drawer's submit button.
 const inlineErrors = (notify) => (message, tone) => {
@@ -973,7 +984,15 @@ function SchemeDetail({ session, notify, profile, schemes }) {
           </p>
         )}
       </Panel>
-      <Panel title="Member certificates" subtitle="Only accepted cover is certified. Cover awaiting underwriting is shown as pending and is not yet in force.">
+      <Panel
+        title="Member certificates"
+        subtitle="Only accepted cover is certified; pending cover is shown as not in force. Each certificate lists its category's benefits and the accepted terms and wording it was generated from."
+        action={
+          <Button variant="secondary" onClick={() => openPdf(session, base + "/schedule", notify)}>
+            Scheme schedule (PDF)
+          </Button>
+        }
+      >
         <DataTable
           rows={certificates.data}
           loading={certificates.loading}
@@ -1093,10 +1112,22 @@ function SchemeDetail({ session, notify, profile, schemes }) {
               <small>Benefits</small>
               <strong>{certificate.benefits.map((b) => BENEFIT[b] || b).join(", ")}</strong>
             </div>
+            <div>
+              <small>Generated from</small>
+              <strong>
+                {[certificate.acceptedTerms, certificate.wording && "wording " + certificate.wording, certificate.categoryCode && "category " + certificate.categoryCode + " v" + certificate.categoryVersion].filter(Boolean).join(" · ") || "—"}
+              </strong>
+            </div>
+            {(certificate.loadingPercent || certificate.exclusions) && (
+              <div>
+                <small>Underwriting terms</small>
+                <strong>{[certificate.loadingPercent && Number(certificate.loadingPercent) + "% loading", certificate.exclusions].filter(Boolean).join(" · ")}</strong>
+              </div>
+            )}
           </div>
           <div className="ws-form-actions">
-            <Button variant="secondary" onClick={() => window.print()}>
-              Print certificate
+            <Button variant="secondary" onClick={() => openPdf(session, base + "/certificates/" + encodeURIComponent(certificate.memberKey) + "/document", notify)}>
+              Open certificate (PDF)
             </Button>
           </div>
         </Drawer>

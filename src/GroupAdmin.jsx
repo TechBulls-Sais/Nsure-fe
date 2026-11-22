@@ -2005,6 +2005,7 @@ function ClaimsTab({ session, notify, profile, detail }) {
     }
     if (c.status === "APPROVED") return can(profile, "SETTLE_CLAIM") ? [["PAY", "Record payment"]] : [];
     if (c.status === "IN_PAYMENT") return can(profile, "ASSESS_CLAIM") ? [["REVIEW", "Review"], ["CEASE", "Cease"]] : [];
+    if (c.status === "PAID" && Number(c.acceleratedAmount) > 0 && !c.reinstatedOn) return can(profile, "ASSESS_CLAIM") ? [["REINSTATE", "Reinstate cover"]] : [];
     return [];
   };
 
@@ -2043,6 +2044,17 @@ function ClaimsTab({ session, notify, profile, detail }) {
             { key: "approvedAmount", label: "Approved", align: "right", render: (c) => (c.approvedAmount != null ? pula(c.approvedAmount) : "—") },
             { key: "status", label: "Status", render: (c) => <Badge tone={CLAIM_TONES[c.status]}>{label(c.status)}</Badge> },
             { key: "nextReviewDate", label: "Next review", render: (c) => (c.nextReviewDate ? day(c.nextReviewDate) : "—") },
+            { key: "detail", label: "Terms applied", render: (c) => [
+              c.lifeInsured && label(c.lifeInsured) + (c.lifeName ? ` (${c.lifeName})` : ""),
+              c.conditionGroup && `condition ${label(c.conditionGroup)}`,
+              c.partial && "partial",
+              c.accident && "accident",
+              c.benefitLimit != null && `limit ${pula(c.benefitLimit)}`,
+              c.firstPaymentDate && `pays from ${day(c.firstPaymentDate)}`,
+              c.cessationDate && `ceases ${day(c.cessationDate)}`,
+              c.acceleratedAmount != null && `life cover reduced ${pula(c.acceleratedAmount)}`,
+              c.reinstatedOn && `reinstated ${day(c.reinstatedOn)}`,
+            ].filter(Boolean).join(" · ") || "—" },
             {
               key: "actions",
               label: "",
@@ -2089,7 +2101,47 @@ function ClaimsTab({ session, notify, profile, detail }) {
             <Field label="Event date">
               <input className="input" type="date" max={today()} value={form.eventDate} onChange={(e) => setForm({ ...form, eventDate: e.target.value })} required />
             </Field>
-            <Field label={form.benefitType === "INCOME_PROTECTION" ? "Monthly benefit (BWP)" : "Amount claimed (BWP)"} hint={form.benefitType === "INCOME_PROTECTION" ? undefined : "Up to the cover in force on the event date"}>
+            {form.benefitType === "FAMILY" && (
+              <>
+                <Field label="Life">
+                  <select className="select" value={form.life || "MEMBER"} onChange={(e) => setForm({ ...form, life: e.target.value })}>
+                    <option value="MEMBER">Member</option>
+                    <option value="SPOUSE">Spouse</option>
+                    <option value="CHILD">Child</option>
+                    <option value="STILLBIRTH">Stillbirth</option>
+                  </select>
+                </Field>
+                {form.life === "SPOUSE" && (
+                  <Field label="Spouse's name"><input className="input" value={form.lifeName || ""} onChange={(e) => setForm({ ...form, lifeName: e.target.value })} required /></Field>
+                )}
+                {form.life === "CHILD" && (
+                  <Field label="Child's age"><input className="input" type="number" min="0" max="40" value={form.childAge || ""} onChange={(e) => setForm({ ...form, childAge: e.target.value })} required /></Field>
+                )}
+                {form.life === "STILLBIRTH" && (
+                  <Field label="Weeks of pregnancy"><input className="input" type="number" min="1" max="45" value={form.gestationWeeks || ""} onChange={(e) => setForm({ ...form, gestationWeeks: e.target.value })} required /></Field>
+                )}
+              </>
+            )}
+            {form.benefitType === "CRITICAL_ILLNESS" && (
+              <Field label="Condition group" hint="Related conditions share one payment.">
+                <input className="input" value={form.conditionGroup || ""} onChange={(e) => setForm({ ...form, conditionGroup: e.target.value })} maxLength={60} required placeholder="e.g. CANCER, HEART, STROKE" />
+              </Field>
+            )}
+            {form.benefitType === "LUMP_SUM_DISABILITY" && (
+              <Field label="Partial disability" hint="Limited duties: the partial percentage of the benefit, reducing what remains.">
+                <select className="select" value={form.partial ? "yes" : "no"} onChange={(e) => setForm({ ...form, partial: e.target.value === "yes" })}>
+                  <option value="no">Full disability</option>
+                  <option value="yes">Partial (limited duties)</option>
+                </select>
+              </Field>
+            )}
+            <Field label="Accident" hint="Only an accident is covered inside the category's waiting period.">
+              <select className="select" value={form.accident ? "yes" : "no"} onChange={(e) => setForm({ ...form, accident: e.target.value === "yes" })}>
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </Field>
+            <Field label={form.benefitType === "INCOME_PROTECTION" ? "Monthly benefit (BWP)" : "Amount claimed (BWP)"} hint={form.benefitType === "INCOME_PROTECTION" ? "Up to the income percentage of salary; paid after the deferred period" : "Up to the benefit's limit under the terms in force on the event date"}>
               <input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
             </Field>
             <Field label="Note" full hint="No medical detail here: evidence stays with the claims assessor.">
@@ -2105,6 +2157,11 @@ function ClaimsTab({ session, notify, profile, detail }) {
           onClose={() => setDeciding(null)}
         >
           <FormGrid onSubmit={decide} busy={action.busy} error={action.error} submitLabel={label(deciding.action)}>
+            {deciding.action === "APPROVE" && deciding.claim.benefitType === "CRITICAL_ILLNESS" && (
+              <Field label="Survival confirmed on" hint="The survival period after diagnosis must have passed (30 days).">
+                <input className="input" type="date" max={today()} value={deciding.survivalConfirmedOn || ""} onChange={(e) => setDeciding({ ...deciding, survivalConfirmedOn: e.target.value })} required />
+              </Field>
+            )}
             {deciding.action === "APPROVE" && (
               <Field label="Approved amount (BWP)" hint={`Leave blank to approve the ${pula(deciding.claim.claimedAmount)} claimed`}>
                 <input className="input" type="number" min="0.01" step="0.01" value={deciding.amount} onChange={(e) => setDeciding({ ...deciding, amount: e.target.value })} />
@@ -2127,7 +2184,7 @@ function ClaimsTab({ session, notify, profile, detail }) {
                 maxLength={500}
                 value={deciding.note}
                 onChange={(e) => setDeciding({ ...deciding, note: e.target.value })}
-                required={["DECLINE", "REVIEW", "CEASE"].includes(deciding.action)}
+                required={["DECLINE", "REVIEW", "CEASE", "REINSTATE"].includes(deciding.action)}
               />
             </Field>
           </FormGrid>
