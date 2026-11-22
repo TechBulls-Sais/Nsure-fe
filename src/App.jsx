@@ -2974,6 +2974,14 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
                 {priced.error}
               </p>
             )}
+            {ratedTier && !draft && priced.quote?.effectiveDate && (
+              <p className="muted small">
+                {/* NS-SH03-001: the explicit inputs the price was calculated on. */}
+                Priced on {priced.quote.effectiveDate} in {priced.quote.currency} · rate version{" "}
+                {priced.quote.rateTableVersion || "flat"} · product terms v{priced.quote.productVersion ?? "—"} · age basis{" "}
+                {String(priced.quote.ageBasis || "").toLowerCase().replaceAll("_", " ")}
+              </p>
+            )}
             {ratedTier && <LifeCoverList lives={draft ? draft.lives : priced.quote?.lives} />}
             <label className="checkbox-label">
               <input
