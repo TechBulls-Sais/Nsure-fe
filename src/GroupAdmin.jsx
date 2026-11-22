@@ -715,6 +715,12 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
         {m.activelyAtWork === false && <span className="ga-muted"> · not at work when declared</span>}
       </>
     ) },
+    { key: "coverStatus", label: "Membership / cover", render: (m) => (
+      <span title={m.partyRef ? `Party ${m.partyRef}` : "Not resolved to a party"}>
+        {label(m.membershipStatus)} · {label(m.coverStatus)}
+        {m.partyRef && <span className="ga-muted"> · {m.partyRef}</span>}
+      </span>
+    ) },
     { key: "joinDate", label: "Cover dates", render: (m) => (
       <span className="ga-nowrap">{day(m.joinDate)}{m.exitDate ? ` – ${day(m.exitDate)}` : ""}</span>
     ) },
