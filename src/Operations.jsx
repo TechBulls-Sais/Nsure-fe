@@ -844,11 +844,22 @@ function Partners({ session, notify, profile, onChange }) {
     }
   };
   const saveAccount = async () => {
-    const done = await action.run(() => request(session, "/ops/portal-accounts", { method: "PUT", body: account }), "Portal access saved");
+    const body = { ...account, validUntil: account.validUntil || undefined };
+    const done = await action.run(() => request(session, "/ops/portal-accounts", { method: "PUT", body }), "Portal access saved");
     if (done) {
       accounts.setData(done.data);
       setAccount(null);
     }
+  };
+  // AT-SH11-02: removing the link closes the portal on the login's next request.
+  const removeAccount = async (r) => {
+    const reason = window.prompt("Why is " + r.username + "'s portal access removed?");
+    if (!reason) return;
+    const done = await action.run(
+      () => request(session, "/ops/portal-accounts/" + encodeURIComponent(r.username), { method: "DELETE", body: { reason } }),
+      "Portal access removed",
+    );
+    if (done) accounts.setData(done.data);
   };
   return (
     <>
@@ -882,7 +893,7 @@ function Partners({ session, notify, profile, onChange }) {
       {can(profile, "READ_USER") && (
         <Panel
           title="Portal access"
-          subtitle="Each partner login is tied to one intermediary, scheme or lender, and sees nothing else."
+          subtitle="Each partner login is tied to one intermediary, scheme or lender, and sees nothing else. Access closes at once when the partner is suspended, the link ends or it is removed."
           action={
             can(profile, "UPDATE_USER") && (
               <Button onClick={() => setAccount({ username: "", portalType: "AGENT", scopeRef: "" })}>Link a login</Button>
@@ -898,14 +909,20 @@ function Partners({ session, notify, profile, onChange }) {
               { key: "username", label: "Login" },
               { key: "portalType", label: "Portal", render: (r) => label(r.portalType) },
               { key: "scopeRef", label: "Sees only", render: (r) => r.scopeRef || "Not linked" },
+              { key: "validUntil", label: "Until", render: (r) => r.validUntil || "No end date" },
               {
                 key: "act",
                 label: "",
                 render: (r) =>
                   can(profile, "UPDATE_USER") && (
-                    <Button variant="secondary" onClick={() => setAccount({ ...r, scopeRef: r.scopeRef || "" })}>
-                      Change
-                    </Button>
+                    <div className="ws-row-actions">
+                      <Button variant="secondary" onClick={() => setAccount({ ...r, scopeRef: r.scopeRef || "", validUntil: r.validUntil || "" })}>
+                        Change
+                      </Button>
+                      <Button variant="secondary" onClick={() => removeAccount(r)}>
+                        Remove
+                      </Button>
+                    </div>
                   ),
               },
             ]}
@@ -936,6 +953,9 @@ function Partners({ session, notify, profile, onChange }) {
             </Field>
             <Field label="Sees only" hint="Intermediary, scheme or lender reference">
               <input value={account.scopeRef} onChange={(e) => setAccount({ ...account, scopeRef: e.target.value })} required />
+            </Field>
+            <Field label="Access until (optional)">
+              <input type="date" value={account.validUntil || ""} onChange={(e) => setAccount({ ...account, validUntil: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>

@@ -5349,3 +5349,5 @@ p {
 .party-checklist li > span { width: 20px; text-align: center; font-weight: 700; color: var(--muted); }
 .party-checklist li.is-done > span { color: var(--green); }
 .party-upload { display: grid; gap: 6px; margin-top: 10px; font-size: 13px; max-width: 420px; }
+.recovery-form { margin-top: 12px; display: grid; gap: 10px; }
+.recovery-form h3 { margin: 0; font-size: 16px; }

@@ -641,6 +641,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
               New to Nsure? <a href="#/signup">Create an account</a>
             </p>
           )}
+          {customerLogin && !pending && <PasswordRecovery />}
           <div className="notice">
             <Icon name="ShieldCheck" />
             <p>
@@ -653,6 +654,107 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * NS-SH11-001 customer account recovery: a code goes to the mobile number registered on the account, then a new
+ * password is set. The answer never says whether an account exists; staff ask their administrator.
+ */
+function PasswordRecovery() {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [sent, setSent] = useState(null);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!open) {
+    return (
+      <p className="signup-link">
+        <button type="button" className="link-button" onClick={() => setOpen(true)}>
+          Forgot your password?
+        </button>
+      </p>
+    );
+  }
+  const run = async (fn) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      await fn();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="login-form recovery-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(async () => {
+          if (!sent) {
+            const r = await request(null, "/public/password-reset/otp", { method: "POST", body: { username } });
+            setSent(r.data);
+          } else {
+            await request(null, "/public/password-reset", {
+              method: "POST",
+              body: { challenge: sent.challenge, code, password },
+            });
+            setSent(null);
+            setCode("");
+            setPassword("");
+            setMessage("Your password is changed. Sign in with the new one.");
+          }
+        });
+      }}
+    >
+      <h3>Reset your password</h3>
+      {!sent ? (
+        <Field label="Username">
+          <input className="input" required value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+        </Field>
+      ) : (
+        <>
+          <p className="login-note">If the account exists, a code was sent to {sent.sentTo}.</p>
+          {sent.demoCode && (
+            <div className="login-hint">
+              <Icon name="Info" small />
+              <span>
+                Demo installation: no SMS is sent. Use the code <strong>{sent.demoCode}</strong>.
+              </span>
+            </div>
+          )}
+          <Field label="Code">
+            <input
+              className="input"
+              required
+              inputMode="numeric"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              autoComplete="one-time-code"
+            />
+          </Field>
+          <Field label="New password (at least 8 characters)">
+            <input className="input" type="password" minLength={8} required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+          </Field>
+        </>
+      )}
+      {message && (
+        <p className="login-note" role="status">
+          {message}
+        </p>
+      )}
+      <Button type="submit" disabled={busy}>
+        {busy ? "Please wait…" : sent ? "Set the new password" : "Send a code"}
+      </Button>
+      <button type="button" className="link-button" onClick={() => setOpen(false)}>
+        Back to sign-in
+      </button>
+    </form>
   );
 }
 
