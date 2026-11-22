@@ -32,6 +32,15 @@ import {
   when,
 } from "./ui/workspace";
 import "./group-admin.css";
+import {
+  AdjustmentsSection,
+  BillingExceptionsPanel,
+  CoverHistoryDrawer,
+  HeldRowReview,
+  STAGE_BADGE,
+  SponsorAccountPanel,
+  downloadCensusTemplate,
+} from "./GroupBilling";
 
 // Group administration (GL01-GL05): schemes and benefit categories, members as cover episodes with underwriting of
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
@@ -48,7 +57,7 @@ const MEMBER_TONES = {
   CEASED: "gray",
   SUSPENDED: "amber",
 };
-const ROW_TONES = { VALID: "green", APPLIED: "green", INVALID: "red", REJECTED: "red" };
+const ROW_TONES = { VALID: "green", APPLIED: "green", INVALID: "red", REJECTED: "red", HELD: "amber" };
 const INVOICE_TONES = { ISSUED: "blue", PARTIALLY_PAID: "amber", PAID: "green" };
 
 const label = (value) =>
@@ -317,10 +326,15 @@ export default function GroupAdmin({ session, notify, profile }) {
             { key: "outstanding", label: "Outstanding", align: "right", render: (i) => <strong className="ga-bad">{pula(i.outstanding)}</strong> },
             { key: "disputedAmount", label: "Disputed", align: "right", render: (i) => (Number(i.disputedAmount) > 0 ? pula(i.disputedAmount) : "—") },
             { key: "daysOverdue", label: "Days overdue", align: "right" },
+            { key: "graceEnds", label: "Grace ends", render: (i) => day(i.graceEnds) },
+            { key: "stage", label: "Stage", render: (i) => STAGE_BADGE(i.stage) },
+            { key: "blockers", label: "Before any lapse", render: (i) =>
+              i.pendingLapse ? `Lapse ${i.pendingLapse} awaiting decision` : i.blockers?.length ? i.blockers.join("; ") : "—" },
             { key: "status", label: "Status", render: (i) => <Badge tone={INVOICE_TONES[i.status]}>{label(i.status)}</Badge> },
           ]}
         />
       </Panel>
+      <BillingExceptionsPanel session={session} notify={notify} profile={profile} />
     </div>
   );
 }
@@ -669,6 +683,7 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
   const [status, setStatus] = useState("ON_COVER");
   const [search, setSearch] = useState("");
   const [deciding, setDeciding] = useState(null);
+  const [history, setHistory] = useState(null);
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -702,6 +717,15 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
       Number(m.pendingCover) > 0 ? <strong className="ga-pending">{pula(m.pendingCover)}</strong> : "—" },
     { key: "monthlyPremium", label: "Premium / month", align: "right", render: (m) => pula(m.monthlyPremium) },
   ];
+  columns.push({
+    key: "history",
+    label: "",
+    render: (m) => (
+      <Button variant="secondary" onClick={() => setHistory(m)}>
+        Cover history
+      </Button>
+    ),
+  });
   if (underwrite) {
     columns.push({
       key: "actions",
@@ -723,6 +747,7 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
 
   return (
     <>
+      {history && <CoverHistoryDrawer session={session} member={history} onClose={() => setHistory(null)} />}
       {deciding && (
         <UnderwritingPanel
           session={session}
@@ -901,7 +926,9 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     externalBatchId: `${scheme.ref}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`,
     mode: "PARTIAL",
     csv: "",
+    correctsBatchRef: "",
   }));
+  const [reviewing, setReviewing] = useState(null);
   const [fileName, setFileName] = useState("");
   const upload = useAction(inlineErrors(notify));
   const commit = useAction(inlineErrors(notify));
@@ -932,18 +959,9 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
     };
   }, [session, batchRef]);
 
-  const template = () => {
-    const codes = detail.categories.map((c) => c.code);
-    const first = codes[0] || "STAFF";
-    const lines = [
-      `${CENSUS_HEADER},${CENSUS_OPTIONAL}`,
-      `EMP-1001,Kagiso,Sebina,1988-04-12,${first},180000,JOIN,${today()},Y,${today()},HR-1`,
-      `EMP-1002,Naledi,Kgosi,1992-09-03,${codes[1] || first},240000,JOIN,${today()},Y,,HR-2`,
-      `EMP-0999,,,,,,LEAVE,${today()},,,HR-3`,
-      `EMP-0998,,,,,210000,SALARY,${today()},Y,,HR-4`,
-    ];
-    saveTextFile(`census-template-${scheme.ref}.csv`, lines.join("\n") + "\n");
-  };
+  // The template comes from the server's published, versioned template (NS-GL04-001).
+  const template = () =>
+    downloadCensusTemplate(session, scheme.ref, detail.categories, saveTextFile).catch((e) => upload.setError(e.message));
 
   const pickFile = (e) => {
     const file = e.target.files?.[0];
@@ -966,7 +984,7 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
       () =>
         request(session, `/group/schemes/${scheme.ref}/census-batches`, {
           method: "POST",
-          body: form,
+          body: { ...form, correctsBatchRef: form.correctsBatchRef || undefined },
         }),
       "Census staged for review — nothing is live until you commit",
     );
@@ -997,8 +1015,13 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                 {" "}and <strong>{batch.invalidRows}</strong> invalid row(s) are rejected
               </>
             )}
-            . Joiners go on cover, leavers cease and salary changes re-rate cover and premium from each row's effective
-            date.
+            . Joiners go on cover, leavers cease, salary and category changes re-rate cover from each row's effective
+            date, and months already invoiced get supplementary adjustments.
+            {batch.heldRows > 0 && (
+              <>
+                {" "}<strong>{batch.heldRows}</strong> held row(s) wait for an authorised review.
+              </>
+            )}
           </>
         ),
       confirmLabel: batch.mode === "ATOMIC" ? "Commit all rows" : `Commit ${batch.validRows} row(s)`,
@@ -1049,7 +1072,17 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                 <option value="ATOMIC">Atomic — all or nothing</option>
               </select>
             </Field>
-            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}, optionally followed by ${CENSUS_OPTIONAL}. A joiner declared not actively at work (N) has all cover referred to underwriting; a rowKey already applied is never applied again.`}>
+            <Field label="Corrects batch" hint="Optional: a correction batch whose rows name the original line in correctsLine.">
+              <select className="select" value={form.correctsBatchRef} onChange={(e) => setForm((f) => ({ ...f, correctsBatchRef: e.target.value }))}>
+                <option value="">Not a correction</option>
+                {detail.censusBatches.filter((b) => b.invalidRows > 0 || b.rejectedRows > 0 || b.heldRows > 0).map((b) => (
+                  <option key={b.ref} value={b.ref}>
+                    {b.ref} · {b.externalBatchId}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="CSV file" full hint={fileName ? `Loaded ${fileName}` : `Header: ${CENSUS_HEADER}, optionally followed by ${CENSUS_OPTIONAL},nationalId,relationship,correctsLine. Actions JOIN, LEAVE, SALARY and CATEGORY. A joiner declared not actively at work (N) has all cover referred to underwriting; a rowKey already applied is never applied again; backdated rows behind an admitted claim or far into invoiced months are held for review.`}>
               <label className="btn secondary ga-file">
                 <FileSpreadsheet className="icon icon-sm" aria-hidden="true" />
                 Choose .csv file
@@ -1092,6 +1125,7 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
               `${b.totalRows} (${b.validRows} / ${b.invalidRows})` },
             { key: "outcome", label: "Accepted / rejected", sortValue: (b) => (b.status === "COMMITTED" ? b.acceptedRows : null),
               render: (b) => (b.status === "COMMITTED" ? `${b.acceptedRows} / ${b.rejectedRows}` : "—") },
+            { key: "heldRows", label: "Held", align: "right", render: (b) => (b.heldRows ? <Badge tone="amber">{b.heldRows} to review</Badge> : "—") },
             { key: "submittedAt", label: "Submitted", render: (b) => `${when(b.submittedAt)} · ${b.submittedBy}` },
           ]}
         />
@@ -1155,6 +1189,23 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                   </div>
                 )}
                 <div>
+                  <small>Held for review</small>
+                  <strong className={batch.heldRows ? "ga-pending" : ""}>{batch.heldRows}</strong>
+                </div>
+                <div>
+                  <small>Template version</small>
+                  <strong>
+                    v{batch.schemaVersion || "1"}
+                    {batch.correctsBatchRef ? ` · corrects ${batch.correctsBatchRef}` : ""}
+                  </strong>
+                </div>
+                <div>
+                  <small>Monthly premium on these rows</small>
+                  <strong title={batch.prorationBasis}>
+                    {pula(batch.premiumBefore)} → {pula(batch.premiumAfter)}
+                  </strong>
+                </div>
+                <div>
                   <small>File hash (SHA-256)</small>
                   <strong className="ws-mono" title={batch.fileHash}>{batch.fileHash.slice(0, 16)}…</strong>
                 </div>
@@ -1182,6 +1233,20 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                     ]}
                   />
                 </section>
+              )}
+              {reviewing && (
+                <HeldRowReview
+                  session={session}
+                  notify={notify}
+                  batch={batch}
+                  row={reviewing}
+                  onCancel={() => setReviewing(null)}
+                  onDone={(next) => {
+                    setReviewing(null);
+                    setBatch(next);
+                    reload();
+                  }}
+                />
               )}
               {atomicBlocked && (
                 <ErrorNote error="This ATOMIC batch has invalid rows, so it cannot be committed. Correct the file and submit it under a new batch id." />
@@ -1217,7 +1282,21 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
                   { key: "action", label: "Action" },
                   { key: "effectiveDate", label: "Effective" },
                   { key: "status", label: "Outcome", render: (r) => <Badge tone={ROW_TONES[r.status]}>{label(r.status)}</Badge> },
-                  { key: "error", label: "Errors", render: (r) => (r.error ? <span className="ga-row-error">{r.error}</span> : "—") },
+                  { key: "premium", label: "Premium / month", align: "right", sortValue: (r) => Number(r.premiumAfter ?? 0) - Number(r.premiumBefore ?? 0),
+                    render: (r) => (r.premiumAfter != null ? `${pula(r.premiumBefore)} → ${pula(r.premiumAfter)}` : "—") },
+                  { key: "error", label: "Errors / review", render: (r) =>
+                    r.error ? <span className="ga-row-error">{r.error}</span>
+                    : r.holdReason ? (
+                      <span className="ga-row-hold">
+                        {r.holdReason}
+                        {r.reviewedBy && ` · reviewed by ${r.reviewedBy}: ${r.reviewNote}`}
+                        {r.status === "HELD" && can(profile, "UNDERWRITE_MEMBER") && batch.submittedBy !== session?.username && (
+                          <Button variant="secondary" onClick={() => setReviewing(r)}>Review</Button>
+                        )}
+                      </span>
+                    )
+                    : r.adjustmentRefs ? `Adjusted ${r.adjustmentRefs}`
+                    : r.correctedBy ? `Corrected by ${r.correctedBy}` : "—" },
                 ]}
               />
             </>
@@ -1307,6 +1386,7 @@ function BillingTab({ session, notify, profile, detail, loading, reload }) {
           ]}
         />
       </Panel>
+      <SponsorAccountPanel session={session} notify={notify} profile={profile} scheme={scheme} onChange={reload} />
       {invoice && (
         <InvoiceDetail
           key={invoice.ref}
@@ -1363,7 +1443,7 @@ function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
     <Drawer
       size="lg"
       title={`Invoice ${invoice.ref} · ${invoice.period}`}
-      description={`${day(invoice.periodStart)} – ${day(invoice.periodEnd)} · premium = accepted cover ÷ 1 000 × rate × days covered ÷ days in month`}
+      description={`${day(invoice.periodStart)} – ${day(invoice.periodEnd)} · ${invoice.prorationBasis === "MID_MONTH" ? "a whole month for cover in force on the 15th" : "premium = accepted cover ÷ 1 000 × rate × days covered ÷ days in month"} on each day's cover period and category rate (demo basis)`}
       onClose={onClose}
     >
       <section className="ga-drawer-section">
@@ -1433,10 +1513,13 @@ function InvoiceDetail({ session, notify, bill, invoice, reload, onClose }) {
           </FormGrid>
         )}
       </section>
+      <AdjustmentsSection invoice={invoice} />
       <section className="ga-drawer-section">
         <h3>Sponsor receipts</h3>
         <p className="subtitle">
-          Paid {pula(invoice.paidAmount)} of {pula(invoice.amount)} · {pula(invoice.outstanding)} outstanding
+          Paid {pula(invoice.paidAmount)} of {pula(invoice.amount)}
+          {Number(invoice.adjustmentAmount) !== 0 && ` (${Number(invoice.adjustmentAmount) > 0 ? "+" : ""}${pula(invoice.adjustmentAmount)} adjustments)`} ·{" "}
+          {pula(invoice.outstanding)} outstanding
         </p>
         <DataTable
           rows={invoice.receipts}
