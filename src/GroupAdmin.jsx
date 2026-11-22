@@ -32,7 +32,7 @@ import {
   when,
 } from "./ui/workspace";
 import "./group-admin.css";
-import { ActivationWizard } from "./GroupLife";
+import { ActivationWizard, openPdf } from "./GroupLife";
 
 // Group administration (GL01-GL05): schemes and benefit categories, members as cover episodes with underwriting of
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
@@ -2197,7 +2197,7 @@ function ClaimsTab({ session, notify, profile, detail }) {
 // ── master-policy timeline and resolved rules ───────────────────────────────────────────────────
 
 /** The master policy in date order (GL01) and the rule set its categories and benefits resolve to (GL02). */
-function TimelineTab({ session, detail }) {
+function TimelineTab({ session, notify, detail }) {
   const ref = encodeURIComponent(detail.scheme.ref);
   const timeline = useResource(session, `/group-life/schemes/${ref}/timeline`, []);
   const rules = useResource(session, `/group-life/schemes/${ref}/resolved-rules`, null);
@@ -2211,7 +2211,17 @@ function TimelineTab({ session, detail }) {
   const setup = detail.scheme.setup || {};
   return (
     <>
-      <Panel title="Contract" subtitle="The master policy's set-up terms and what it was activated on (NS-GL01-003/004).">
+      <Panel
+        title="Contract"
+        subtitle="The master policy's set-up terms and what it was activated on."
+        action={
+          detail.scheme.status !== "SETUP" && (
+            <Button variant="secondary" icon={Download} onClick={() => openPdf(session, `/group-life/schemes/${ref}/schedule`, notify)}>
+              Scheme schedule (PDF)
+            </Button>
+          )
+        }
+      >
         <div className="ws-kv">
           <div><small>Accepted terms</small><strong>{detail.scheme.quoteRef || "—"}</strong></div>
           <div><small>Wording</small><strong>{setup.wordingRef ? `${setup.wordingRef} v${setup.wordingVersion}` : "—"}</strong></div>

@@ -54,7 +54,7 @@ const badge = (map, key) => {
 };
 const today = () => new Date().toISOString().slice(0, 10);
 /** Opens a generated PDF (scheme schedule, member certificate) in a new tab; the API needs the session header. */
-const openPdf = async (session, path, notify) => {
+export const openPdf = async (session, path, notify) => {
   try {
     const blob = await fetchFile(session, path);
     const url = URL.createObjectURL(blob);
