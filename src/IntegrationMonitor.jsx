@@ -119,6 +119,7 @@ export default function IntegrationMonitor({ session, notify, profile }) {
           ["batches", "Batches"],
           ["reconciliation", "Reconciliation"],
           ["inbound", "Inbound payments"],
+          ["screening", "KYC/AML screening"],
           ["log", "Operator log"],
         ]}
       />
@@ -136,6 +137,7 @@ export default function IntegrationMonitor({ session, notify, profile }) {
       {tab === "inbound" && (
         <Inbound session={session} notify={notify} profile={profile} onChange={dashboard.reload} />
       )}
+      {tab === "screening" && <Screening session={session} notify={notify} profile={profile} />}
       {tab === "log" && <OperatorLog key={refresh} session={session} />}
     </>
   );
@@ -582,6 +584,115 @@ function Reconciliation({ session }) {
         </Panel>
       ))}
     </>
+  );
+}
+
+/** §11 Identity/KYC/AML through the simulated screening provider, with Compliance's referral decisions. */
+function Screening({ session, notify, profile }) {
+  const checks = useResource(session, "/integration/screening", []);
+  const customers = useResource(session, can(profile, "READ_CUSTOMER") ? "/portfolio/customers" : null, []);
+  const [customer, setCustomer] = useState("");
+  const [deciding, setDeciding] = useState(null);
+  const action = useAction(notify);
+  const me = session?.username;
+  const requestCheck = async () => {
+    const r = await action.run(() => request(session, "/integration/screening", { method: "POST", body: { customerRef: customer } }));
+    if (r) {
+      notify(r.data.ref + ": " + r.data.status.toLowerCase() + (r.data.detail ? " · " + r.data.detail : ""), "success");
+      setCustomer("");
+      checks.reload();
+    }
+  };
+  const retry = async () => {
+    const r = await action.run(() => request(session, "/integration/screening/retry", { method: "POST" }));
+    if (r) {
+      notify(r.data.answered + " pending check(s) answered", "success");
+      checks.reload();
+    }
+  };
+  const decide = async () => {
+    const { ref, ...body } = deciding;
+    const r = await action.run(() => request(session, `/integration/screening/${ref}/disposition`, { method: "POST", body }), "Referral decided");
+    if (r) {
+      setDeciding(null);
+      checks.reload();
+    }
+  };
+  return (
+    <Panel
+      title="KYC/AML screening"
+      subtitle="Simulated screening provider (no provider is selected yet): names containing a demo watch-list entry ('sanctioned', 'watchlist', 'politically exposed') come back as possible matches. Each request is matched to one outcome with an evidence reference and expiry; while the provider is unavailable a check stays pending and is re-sent. Compliance decides referrals; the result informs, but never changes, the customer's KYC decision."
+      action={
+        can(profile, "KYC_CUSTOMER") && (
+          <Button variant="secondary" icon={RefreshCw} busy={action.busy} onClick={retry}>
+            Re-send pending
+          </Button>
+        )
+      }
+    >
+      <ErrorNote error={checks.error || (!deciding && action.error)} />
+      {can(profile, "KYC_CUSTOMER") && (
+        <FormGrid submitLabel="Request screening" busy={action.busy} onSubmit={requestCheck}>
+          <Field label="Customer" full>
+            <select value={customer} onChange={(e) => setCustomer(e.target.value)} required>
+              <option value="">Choose…</option>
+              {(customers.data || []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id} · {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </FormGrid>
+      )}
+      <DataTable
+        rowKey={(r) => r.ref}
+        rows={checks.data}
+        loading={checks.loading}
+        empty="No screening checks yet"
+        searchPlaceholder="Search check, customer, status…"
+        columns={[
+          { key: "requestedAt", label: "Requested", render: (r) => when(r.requestedAt) },
+          { key: "ref", label: "Check" },
+          { key: "customerName", label: "Customer", render: (r) => r.customerName + " · " + r.customerRef },
+          { key: "status", label: "Outcome", render: (r) => <Badge tone={r.status === "CLEAR" ? "green" : r.status === "PENDING" || r.status === "REFERRED" || r.status === "EXPIRED" ? "amber" : "red"}>{r.status.toLowerCase()}</Badge> },
+          { key: "evidenceRef", label: "Evidence", render: (r) => r.evidenceRef || "—" },
+          { key: "expiresOn", label: "Expires", render: (r) => r.expiresOn || "—" },
+          { key: "attempts", label: "Attempts", align: "right" },
+          { key: "detail", label: "Detail", render: (r) => (r.dispositionNote ? r.detail + " · Decision: " + r.dispositionNote + " (" + r.disposedBy + ")" : r.detail || "—") },
+          {
+            key: "act",
+            label: "",
+            render: (r) =>
+              r.referralStatus === "OPEN" &&
+              (r.requestedBy === me ? (
+                <small className="ws-hint">Needs another person</small>
+              ) : (
+                can(profile, "DISPOSE_SCREENING") && (
+                  <Button variant="secondary" onClick={() => setDeciding({ ref: r.ref, name: r.customerName, outcome: "CLEARED", note: "" })}>
+                    Decide referral
+                  </Button>
+                )
+              )),
+          },
+        ]}
+      />
+      {deciding && (
+        <Drawer title={"Referral " + deciding.ref} description={deciding.name + ": clear the possible match or confirm it. The decision is kept as audit evidence."} onClose={() => setDeciding(null)}>
+          <FormGrid submitLabel="Record decision" busy={action.busy} error={action.error} onSubmit={decide}>
+            <Field label="Decision" full>
+              <select value={deciding.outcome} onChange={(e) => setDeciding({ ...deciding, outcome: e.target.value })}>
+                <option value="CLEARED">Not the listed person: clear</option>
+                <option value="CONFIRMED_MATCH">Confirmed match</option>
+              </select>
+            </Field>
+            <Field label="Basis of the decision" full>
+              <textarea rows={3} value={deciding.note} onChange={(e) => setDeciding({ ...deciding, note: e.target.value })} required minLength={10} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </Panel>
   );
 }
 
