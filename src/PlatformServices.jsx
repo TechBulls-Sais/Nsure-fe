@@ -52,7 +52,7 @@ export default function PlatformServices({ session, notify, profile }) {
       <Tabs value={tab} onChange={setTab} tabs={tabs} />
       {tab === "parties" && <Parties session={session} notify={notify} profile={profile} />}
       {tab === "wordings" && <Wordings session={session} notify={notify} profile={profile} />}
-      {tab === "extracts" && <Extracts session={session} notify={notify} />}
+      {tab === "extracts" && <Extracts session={session} notify={notify} profile={profile} />}
       {tab === "assistants" && <Assistants session={session} notify={notify} profile={profile} />}
     </>
   );
@@ -246,15 +246,35 @@ function Wordings({ session, notify, profile }) {
   );
 }
 
-function Extracts({ session, notify }) {
+function Extracts({ session, notify, profile }) {
   const runs = useResource(session, "/platform/extracts", []);
   const metrics = useResource(session, "/platform/metrics", []);
   const action = useAction(notify);
+  const [proposal, setProposal] = useState(null);
+  const me = session?.username;
+  const propose = async () => {
+    const { key, ...body } = proposal;
+    const done = await action.run(
+      () => request(session, "/platform/metrics/" + key + "/versions", { method: "POST", body }),
+      "New definition proposed; someone else approves it",
+    );
+    if (done) {
+      setProposal(null);
+      metrics.reload();
+    }
+  };
+  const approveMetric = async (m) => {
+    const done = await action.run(
+      () => request(session, "/platform/metrics/" + m.key + "/versions/" + m.version + "/approval", { method: "POST" }),
+      m.name + " v" + m.version + " approved",
+    );
+    if (done) metrics.reload();
+  };
   const run = async (extractType) => {
     const done = await action.run(() => request(session, "/platform/extracts", { method: "POST", body: { extractType } }));
     if (done) {
       downloadCsv(done.data.ref + "-" + extractType.toLowerCase() + ".csv", done.data.rows);
-      notify(done.data.ref + ": " + done.data.recordCount + " records, control total " + pula(done.data.controlTotal), "success");
+      notify(done.data.ref + ": " + done.data.recordCount + " records, control total " + pula(done.data.controlTotal) + (done.data.masked ? " (customer references masked)" : ""), "success");
       runs.reload();
     }
   };
@@ -290,21 +310,84 @@ function Extracts({ session, notify }) {
           ]}
         />
       </Panel>
-      <Panel title="Metric dictionary" subtitle="Every figure on a dashboard or report is defined here: what is counted, on which date, and who owns the definition.">
+      <Panel
+        title="Metric dictionary"
+        subtitle="Every dashboard figure is defined here: numerator and denominator, event or accounting date, window, exclusions, currency and owner. A change is a new version that applies once someone else approves it; persistency and the claims ratio need actuarial approval."
+      >
+        <ErrorNote error={metrics.error} />
         <DataTable
           rows={metrics.data}
           loading={metrics.loading}
-          rowKey={(r) => r.name}
-          searchFrom={99}
+          rowKey={(r) => r.key + "-" + r.version}
+          searchPlaceholder="Search metrics…"
           columns={[
-            { key: "name", label: "Metric" },
+            { key: "name", label: "Metric", render: (r) => r.name + " v" + r.version },
             { key: "definition", label: "Definition" },
-            { key: "unit", label: "Unit" },
-            { key: "timeBasis", label: "Time basis" },
+            { key: "numerator", label: "Numerator ÷ denominator", render: (r) => r.numerator + (r.denominator ? " ÷ " + r.denominator : "") },
+            { key: "timeBasis", label: "Date basis", render: (r) => (r.dateBasis === "ACCOUNTING" ? "Accounting · " : "Event · ") + r.timeBasis },
+            { key: "timeWindow", label: "Window" },
+            { key: "exclusions", label: "Exclusions", render: (r) => r.exclusions || "—" },
             { key: "owner", label: "Owner" },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => (
+                <Badge tone={r.status === "APPROVED" ? "green" : r.status === "PENDING_APPROVAL" ? "amber" : undefined}>
+                  {r.status === "PENDING_APPROVAL" ? "Awaiting approval" : r.status.charAt(0) + r.status.slice(1).toLowerCase()}
+                </Badge>
+              ),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (r) => (
+                <div className="ws-row-actions">
+                  {r.status === "PENDING_APPROVAL" && can(profile, "APPROVE_METRIC") && r.proposedBy !== me && (
+                    <Button variant="secondary" busy={action.busy} onClick={() => approveMetric(r)}>
+                      Approve
+                    </Button>
+                  )}
+                  {r.status === "PENDING_APPROVAL" && r.proposedBy === me && <small className="ws-hint">Needs another approver</small>}
+                  {r.status !== "SUPERSEDED" && can(profile, "MANAGE_METRIC") && (
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setProposal({ key: r.key, name: r.name, definition: r.definition, numerator: r.numerator, denominator: r.denominator || "", timeWindow: r.timeWindow, exclusions: r.exclusions || "", changeNote: "" })
+                      }
+                    >
+                      Propose change
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
           ]}
         />
       </Panel>
+      {proposal && (
+        <Drawer title={"New version of " + proposal.name} description="It applies to the dashboards once someone else approves it." onClose={() => setProposal(null)}>
+          <FormGrid submitLabel="Propose" busy={action.busy} error={action.error} onSubmit={propose}>
+            <Field label="Definition" full>
+              <textarea rows={3} value={proposal.definition} onChange={(e) => setProposal({ ...proposal, definition: e.target.value })} required />
+            </Field>
+            <Field label="Numerator" full>
+              <input value={proposal.numerator} onChange={(e) => setProposal({ ...proposal, numerator: e.target.value })} required />
+            </Field>
+            <Field label="Denominator" full>
+              <input value={proposal.denominator} onChange={(e) => setProposal({ ...proposal, denominator: e.target.value })} />
+            </Field>
+            <Field label="Time window">
+              <input value={proposal.timeWindow} onChange={(e) => setProposal({ ...proposal, timeWindow: e.target.value })} required />
+            </Field>
+            <Field label="Exclusions">
+              <input value={proposal.exclusions} onChange={(e) => setProposal({ ...proposal, exclusions: e.target.value })} />
+            </Field>
+            <Field label="What changes and why" full>
+              <textarea rows={2} value={proposal.changeNote} onChange={(e) => setProposal({ ...proposal, changeNote: e.target.value })} required minLength={5} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
     </>
   );
 }

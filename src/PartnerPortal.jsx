@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { request } from "./api";
 import { Badge, Button, DataTable, Drawer, ErrorNote, Field, FormGrid, Heading, Panel, Stat, pula, useAction, useResource, when } from "./ui/workspace";
 
@@ -59,6 +59,22 @@ export default function PartnerPortal({ session, notify }) {
     );
   }
   const type = p.portalType;
+  // AT-SH13-03: the export is cut to this partner's own portfolio on the server, whichever template is chosen.
+  const exportPortfolio = async (template) => {
+    const done = await action.run(() => request(session, "/reports/partner-portfolio?template=" + template));
+    if (done) {
+      const rows = done.data.rows;
+      const keys = rows.length ? Object.keys(rows[0]) : [];
+      const esc = (v) => '"' + String(v ?? "").replaceAll('"', '""') + '"';
+      const csv = [keys.join(","), ...rows.map((r) => keys.map((k) => esc(r[k])).join(","))].join("\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = done.data.ref + "-portfolio.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify(done.data.ref + ": " + done.data.recordCount + " rows · " + done.data.scope, "success");
+    }
+  };
   return (
     <>
       <Heading
@@ -66,6 +82,14 @@ export default function PartnerPortal({ session, notify }) {
         title={TITLE[type]}
         subtitle={(p.partner?.name || p.scopeRef || "") + " · you see only your own records. Every request you send gets a reference."}
       >
+        <Button variant="secondary" icon={Download} busy={action.busy} onClick={() => exportPortfolio("MY_BOOK")}>
+          Export my portfolio
+        </Button>
+        {type === "AGENT" && (
+          <Button variant="secondary" icon={Download} busy={action.busy} onClick={() => exportPortfolio("ALL_POLICIES")}>
+            Export with the all-policies template
+          </Button>
+        )}
         <Button icon={Plus} onClick={() => setForm({ requestType: REQUESTS[type][0][0], detail: "" })}>
           New request
         </Button>
