@@ -154,7 +154,8 @@ import PaymentTransactions from "./PaymentTransactions";
 import { CustomFieldInputs, PolicyAttributesPanel, cleanValues, usePolicyForm } from "./configuration/PolicyFields";
 import ConfigReleases from "./ConfigReleases";
 import { environmentLabel, useInsurer } from "./insurer";
-import { Dialog } from "./ui/overlay";
+import { Dialog, Drawer } from "./ui/overlay";
+import { CustomerView360, DuplicateReview, PartyContacts, PartyKyc, PartyRelationships } from "./PartyMaster";
 import { useToast } from "./ui/toast";
 import CustomerPortal from "./CustomerPortal";
 import {
@@ -1446,6 +1447,10 @@ export default function App() {
         customers={customers}
         search={search}
         setSearch={setSearch}
+        session={session}
+        profile={profile}
+        notify={notify}
+        onReload={() => request(session, "/portfolio/customers").then((r) => setCustomers(r.data)).catch(() => {})}
         canReviewKyc={can(profile, "KYC_CUSTOMER")}
         canReviewEdd={can(profile, "EDD_CUSTOMER")}
         onEdd={reviewEdd}
@@ -2493,6 +2498,22 @@ export default function App() {
                   ? (record) => setModal({ type: "application", draft: record })
                   : null
               }
+              onCustomerUpdated={async (updated) => {
+                // A KYC verification returns the customer; an approved contact change is re-read from the list.
+                let record = updated;
+                if (!record && modal.record?.id) {
+                  try {
+                    const all = await request(session, "/portfolio/customers");
+                    setCustomers(all.data);
+                    record = all.data.find((c) => c.id === modal.record.id);
+                  } catch {
+                    record = null;
+                  }
+                } else if (record) {
+                  setCustomers((rows) => rows.map((row) => (row.id === record.id ? record : row)));
+                }
+                if (record) setModal({ type: "detail", entity: "customer", record });
+              }}
               notify={notify}
             />
           )}
@@ -3119,8 +3140,14 @@ function CustomerDirectory({
   onView,
   onKyc,
   onExport,
+  session,
+  profile,
+  notify,
+  onReload,
 }) {
   const [selected, setSelected] = useState(() => new Set());
+  // SH01 duplicate-review queue: possible duplicates and merges waiting for a data steward.
+  const [reviewing, setReviewing] = useState(false);
   const [hidden, setHidden] = useState(() => new Set());
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -3260,6 +3287,11 @@ function CustomerDirectory({
             onChange={(e) => setSearch(e.target.value)}
           />
         </label>
+        {session && (
+          <button type="button" className="cd-action-btn" onClick={() => setReviewing(true)}>
+            <Icon name="Users" small /> Duplicate review
+          </button>
+        )}
         <div className="cd-action" ref={menuRef}>
           <button
             type="button"
@@ -3405,6 +3437,15 @@ function CustomerDirectory({
           )}
         </div>
       </div>
+      {reviewing && (
+        <Drawer
+          title="Duplicate review"
+          description="Possible duplicate customers and merges waiting for a data steward."
+          onClose={() => setReviewing(false)}
+        >
+          <DuplicateReview session={session} profile={profile} notify={notify} onMerged={onReload} />
+        </Drawer>
+      )}
     </div>
   );
 }
@@ -3978,6 +4019,7 @@ function Detail({
   canReviewEdd,
   onEdd,
   onResume,
+  onCustomerUpdated,
 }) {
   const [tab, setTab] = useState("Overview");
   // Policies, claims, applications and customer reviews have a real workflow log; the rest show only their own dates.
@@ -4043,7 +4085,13 @@ function Detail({
       </div>
       <div className="tabs">
         {/* Documents only where the record has real documents; an application's evidence is on its overview. */}
-        {["Overview", ...(["customer", "policy", "claim"].includes(entity) ? ["Documents"] : []), "Activity"].map((t) => (
+        {[
+          "Overview",
+          // SH01 customer workspace: KYC checklist, contacts with independent approval, relationship editor.
+          ...(entity === "customer" ? ["Identity & KYC", "Contacts", "Relationships"] : []),
+          ...(["customer", "policy", "claim"].includes(entity) ? ["Documents"] : []),
+          "Activity",
+        ].map((t) => (
           <button
             key={t}
             className={"filter-tab " + (tab === t ? "active" : "")}
@@ -4124,6 +4172,7 @@ function Detail({
                   ))}
                 </>
               )}
+              <CustomerView360 session={session} customer={r} key={"view-" + r.id + (r.version ?? "")} />
               {linkedClaims.length > 0 && (
                 <>
                   <h3 className="section-title">Their claims</h3>
@@ -4330,6 +4379,12 @@ function Detail({
             </>
           )}
         </>
+      ) : tab === "Identity & KYC" && entity === "customer" ? (
+        <PartyKyc session={session} profile={profile} notify={notify} customer={r} onChanged={onCustomerUpdated} />
+      ) : tab === "Contacts" && entity === "customer" ? (
+        <PartyContacts session={session} profile={profile} notify={notify} customer={r} onChanged={onCustomerUpdated} />
+      ) : tab === "Relationships" && entity === "customer" ? (
+        <PartyRelationships session={session} profile={profile} notify={notify} customer={r} />
       ) : tab === "Documents" && entity === "claim" ? (
         <ClaimDocuments
           session={session}

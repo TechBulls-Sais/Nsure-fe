@@ -5337,3 +5337,14 @@ p {
     flex-shrink: 0;
   }
 }
+
+/* SH01 party master screens (PartyMaster.jsx): checklist, inline forms, notes. */
+.party-stack { display: grid; gap: 12px; }
+.party-sub { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.party-form { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.party-note { margin: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); }
+.party-note.is-warn { border-color: color-mix(in srgb, #d97706 45%, transparent); }
+.party-checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.party-checklist li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); }
+.party-checklist li > span { width: 20px; text-align: center; font-weight: 700; color: var(--muted); }
+.party-checklist li.is-done > span { color: var(--green); }

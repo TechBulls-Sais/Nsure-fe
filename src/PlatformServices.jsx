@@ -64,7 +64,7 @@ function Parties({ session, notify, profile }) {
   const [form, setForm] = useState(null);
   const action = useAction(notify);
   const submit = async () => {
-    const done = await action.run(() => request(session, "/platform/parties/merges", { method: "POST", body: form }), "Records merged");
+    const done = await action.run(() => request(session, "/platform/parties/merges", { method: "POST", body: form }), "Merge requested. A data steward who is someone else approves it in Customers > Duplicate review.");
     if (done) {
       setForm(null);
       pairs.reload();
