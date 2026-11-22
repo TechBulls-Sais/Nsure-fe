@@ -843,6 +843,26 @@ function Partners({ session, notify, profile, onChange }) {
       onChange();
     }
   };
+  // Spec 04 partner submissions: processed through the owning module with its own permission; the partner sees the result.
+  const processRequest = async (r) => {
+    const customerRef =
+      r.requestType === "NEW_APPLICATION" && !String(r.payload || "").includes('"customerRef"')
+        ? window.prompt("The agent named a new client. Add them as a customer, then enter their customer reference:")
+        : null;
+    const done = await action.run(
+      () =>
+        request(session, "/ops/portal-requests/" + r.recordRef + "/process", {
+          method: "POST",
+          body: customerRef ? { customerRef } : {},
+        }),
+      null,
+    );
+    if (done) {
+      notify(done.data.result, "success");
+      requests.reload();
+      onChange();
+    }
+  };
   const saveAccount = async () => {
     const body = { ...account, validUntil: account.validUntil || undefined };
     const done = await action.run(() => request(session, "/ops/portal-accounts", { method: "PUT", body }), "Portal access saved");
@@ -874,7 +894,16 @@ function Partners({ session, notify, profile, onChange }) {
             { key: "recordRef", label: "Reference" },
             { key: "portalType", label: "From", render: (r) => label(r.portalType) + " · " + (r.scopeRef || "") },
             { key: "requestType", label: "Request", render: (r) => label(r.requestType) },
-            { key: "detail", label: "Detail" },
+            {
+              key: "detail",
+              label: "Detail",
+              render: (r) => (
+                <>
+                  {r.detail}
+                  {r.result && <small className="ws-hint"> · {r.result}</small>}
+                </>
+              ),
+            },
             { key: "createdAt", label: "Received", render: (r) => r.createdBy + " · " + when(r.createdAt) },
             { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "DONE" ? "green" : "amber"}>{r.status === "DONE" ? "Completed" : "Open"}</Badge> },
             {
@@ -882,9 +911,16 @@ function Partners({ session, notify, profile, onChange }) {
               label: "",
               render: (r) =>
                 r.status === "OPEN" && (
-                  <Button variant="secondary" onClick={() => setClosing({ ...r, note: "" })}>
-                    Answer
-                  </Button>
+                  <div className="ws-row-actions">
+                    {r.payload && ["NEW_APPLICATION", "CENSUS", "JOINER_LEAVER", "NEW_LOAN", "BALANCE_UPDATE"].includes(r.requestType) && (
+                      <Button busy={action.busy} onClick={() => processRequest(r)}>
+                        Process
+                      </Button>
+                    )}
+                    <Button variant="secondary" onClick={() => setClosing({ ...r, note: "" })}>
+                      Answer
+                    </Button>
+                  </div>
                 ),
             },
           ]}
