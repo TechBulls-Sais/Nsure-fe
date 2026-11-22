@@ -1159,6 +1159,7 @@ const RECON_LABELS = {
   CURRENCY_MISMATCH: "Currency differs",
   DUPLICATE: "Twice on the statement",
   NOT_ON_STATEMENT: "Here, not on the statement",
+  LATE_SETTLEMENT: "Settled late (closed or unconfirmed here)",
 };
 
 /** Statement lines "reference,amount[,currency][,valueDate]", one per line; a header line is skipped. */
@@ -1305,6 +1306,19 @@ function Reconciliation({ session, notify, profile }) {
             { key: "lines", label: "Lines", align: "right" },
             { key: "matched", label: "Matched", align: "right" },
             { key: "openExceptions", label: "Open", align: "right" },
+            {
+              key: "totals",
+              label: "Control totals",
+              render: (s) =>
+                s.totals ? (
+                  <small className="ws-hint">
+                    statement {pula(s.totals.statementTotal)} · matched {pula(s.totals.matchedTotal)} · receipts here {pula(s.totals.receiptsTotal)} ·
+                    allocated {pula(s.totals.allocationsTotal)} · ledger cash {pula(s.totals.ledgerCash)} · difference {pula(s.totals.statementLessReceipts)}
+                  </small>
+                ) : (
+                  "—"
+                ),
+            },
             { key: "uploadedBy", label: "By", render: (s) => s.uploadedBy + " · " + when(s.uploadedAt) },
           ]}
         />
@@ -2019,6 +2033,7 @@ function Billing({ session, notify, profile }) {
             columns={[
               { key: "ref", label: "Instalment" },
               { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "dueDate", label: "Due" },
               { key: "billed", label: "Billed", align: "right", render: (r) => pula(r.billed) },
               { key: "adjustments", label: "Adjustments", align: "right", render: (r) => pula(r.adjustments) },
               { key: "allocated", label: "Paid", align: "right", render: (r) => pula(r.allocated) },
@@ -2038,6 +2053,22 @@ function Billing({ session, notify, profile }) {
           />
         )}
       </Panel>
+      {account?.schedule?.length > 0 && (
+        <Panel title={"Due schedule ahead · " + account.policyRef} subtitle="Projected from the contract frequency; a debit order falls due on its debit day, moved to the next working day of the business calendar.">
+          <DataTable
+            rows={account.schedule}
+            rowKey={(r) => r.periodStart}
+            searchFrom={99}
+            empty="Nothing projected"
+            columns={[
+              { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "dueDate", label: "Due" },
+              { key: "amount", label: "Premium", align: "right", render: (r) => pula(r.amount) },
+              { key: "currency", label: "Currency" },
+            ]}
+          />
+        </Panel>
+      )}
       {account && (
         <Panel title={"Receipts on " + account.policyRef} subtitle="A receipt the bank returned, reversed or charged back is reversed only when a second person approves.">
           <DataTable
