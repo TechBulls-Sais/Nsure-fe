@@ -151,6 +151,8 @@ import IntegrationMonitor from "./IntegrationMonitor";
 import ManagementReports from "./ManagementReports";
 import { can, DataTable, Tabs, ThemeSwitch, when } from "./ui/workspace";
 import PaymentTransactions from "./PaymentTransactions";
+import { EvidenceQueue, QuoteComparison } from "./NewBusiness";
+import "./new-business.css";
 import { CustomFieldInputs, PolicyAttributesPanel, cleanValues, usePolicyForm } from "./configuration/PolicyFields";
 import ConfigReleases from "./ConfigReleases";
 import { environmentLabel, useInsurer } from "./insurer";
@@ -702,6 +704,8 @@ export default function App() {
   const [receipts, setReceipts] = useState([]);
   // Collections page: premium receipts, or the payment transactions behind them (spec 13, READ_PAYMENT).
   const [collectionsTab, setCollectionsTab] = useState("receipts");
+  // IL01 workspace: the application workbench, the missing-evidence queue and quote comparison.
+  const [applicationsTab, setApplicationsTab] = useState("workbench");
   const [shop, setShop] = useState(null);
   const [notifications, setNotifications] = useState(true);
   const [compact, setCompact] = useState(false);
@@ -1450,7 +1454,7 @@ export default function App() {
         canReviewEdd={can(profile, "EDD_CUSTOMER")}
         onEdd={reviewEdd}
         onAddCustomer={canDo(profile, "newCustomer") ? () => setModal({ type: "customer" }) : null}
-        onAddPolicy={canDo(profile, "newPolicy") ? (c) => setModal({ type: "policy", customer: c.id }) : null}
+        onAddPolicy={canDo(profile, "newApplication") ? (c) => setModal({ type: "application", customer: c.id }) : null}
         onView={(c) => detail("customer", c)}
         onKyc={reviewKyc}
         onExport={(rows) => {
@@ -1489,7 +1493,8 @@ export default function App() {
         sub: "Every policy, every person, all in one place.",
         rows: policies,
         type: "policy",
-        action: canDo(profile, "newPolicy") ? "Add policy" : null,
+        // NS-IL01-005: every policy is issued from an underwritten application, so new cover starts there.
+        action: canDo(profile, "newApplication") ? "New application" : null,
         statuses: ["All", ...POLICY_STATES],
       },
       claims: {
@@ -1510,6 +1515,7 @@ export default function App() {
       },
     }[kind];
     const paymentsTab = kind === "collections" && collectionsTab === "payments" && can(profile, "READ_PAYMENT");
+    const newBusinessTab = kind === "applications" && applicationsTab !== "workbench" ? applicationsTab : null;
     return (
       <>
         <Heading title={config.title} subtitle={config.sub}>
@@ -1528,11 +1534,7 @@ export default function App() {
               onClick={() =>
                 setModal({
                   type:
-                    kind === "claims"
-                      ? "claim"
-                      : kind === "policies"
-                        ? "policy"
-                        : "application",
+                    kind === "claims" ? "claim" : "application",
                 })
               }
             >
@@ -1540,6 +1542,36 @@ export default function App() {
             </Button>
           )}
         </Heading>
+        {kind === "applications" && (
+          <Tabs
+            tabs={[
+              ["workbench", "Applications"],
+              ["evidence", "Missing evidence"],
+              ["compare", "Compare quotes"],
+            ]}
+            value={applicationsTab}
+            onChange={setApplicationsTab}
+          />
+        )}
+        {newBusinessTab === "evidence" && (
+          <EvidenceQueue
+            session={session}
+            onOpen={(ref) => {
+              const record = applications.find((a) => a.id === ref);
+              if (record) detail("application", record);
+            }}
+          />
+        )}
+        {newBusinessTab === "compare" && (
+          <QuoteComparison
+            session={session}
+            customers={customers.filter((c) => c.kycStatus === "VERIFIED")}
+            products={products}
+            notify={notify}
+            profile={profile}
+            onDraftCreated={(created) => setApplications((rows) => [created, ...rows])}
+          />
+        )}
         {kind === "collections" && can(profile, "READ_PAYMENT") && (
           <Tabs
             tabs={[
@@ -1550,7 +1582,7 @@ export default function App() {
             onChange={setCollectionsTab}
           />
         )}
-        {paymentsTab ? (
+        {newBusinessTab ? null : paymentsTab ? (
           <PaymentTransactions session={session} notify={notify} />
         ) : (
           <>
@@ -2343,6 +2375,7 @@ export default function App() {
             <ApplicationForm
               session={session}
               defaultProduct={modal.product}
+              defaultCustomer={modal.customer}
               customers={customers}
               products={products}
               onCancel={close}
@@ -2356,32 +2389,6 @@ export default function App() {
                   close();
                   go("applications");
                   notify("Application saved.");
-                } catch (error) {
-                  notify(error.message, "error");
-                }
-              }}
-            />
-          )}
-          {modal.type === "policy" && (
-            <PolicyForm
-              session={session}
-              customers={customers}
-              products={products}
-              defaultCustomer={modal.customer}
-              onCancel={close}
-              onSave={async (data) => {
-                try {
-                  const { issueKey, ...body } = data;
-                  const created = await request(session, "/portfolio/policies", {
-                    method: "POST",
-                    idempotencyKey: issueKey,
-                    body,
-                  });
-                  setPolicies((rows) => [created.data, ...rows.filter((row) => row.id !== created.data.id)]);
-                  close();
-                  go("policies");
-                  // NS-IL01-006: a staff issue is an offer; recording the first premium starts cover.
-                  notify("Offer " + created.data.id + " created. Record the first premium to start cover.");
                 } catch (error) {
                   notify(error.message, "error");
                 }
@@ -2486,7 +2493,7 @@ export default function App() {
                 return Boolean(updated);
               }}
               onAddPolicy={
-                canDo(profile, "newPolicy") ? (record) => setModal({ type: "policy", customer: record.id }) : null
+                canDo(profile, "newApplication") ? (record) => setModal({ type: "application", customer: record.id }) : null
               }
               onResume={
                 can(profile, "UPDATE_APPLICATION")
@@ -2504,7 +2511,16 @@ export default function App() {
 
 // draft: a saved draft application to resume (NS-UX-001). Its customer and priced cover are fixed by its quote; the
 // form reopens on the details step so the payer, disclosures and declaration can be completed and submitted.
-function ApplicationForm({ session, defaultProduct, customers, products = [], draft = null, onSave, onCancel }) {
+function ApplicationForm({
+  session,
+  defaultProduct,
+  defaultCustomer,
+  customers,
+  products = [],
+  draft = null,
+  onSave,
+  onCancel,
+}) {
   const [step, setStep] = useState(draft ? 2 : 0);
   const [data, setData] = useState(() => {
     if (draft) {
@@ -2520,10 +2536,11 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
     const p = products.find((item) => item.name === defaultProduct) ||
       popularProduct(products) || { name: "", cover: "0", premium: "0" };
     const tier = defaultTier(p);
+    const first = customers.find((c) => c.id === defaultCustomer) || customers[0];
     return {
       // Chosen by reference: two customers can share a name (NS-SH01-001).
-      customerRef: customers[0]?.id || "",
-      name: customers[0]?.name || "",
+      customerRef: first?.id || "",
+      name: first?.name || "",
       product: p.name,
       tier: tier?.name || "",
       amount: tier ? tier.cover : amountOf(p.cover),
@@ -2546,8 +2563,25 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
     channel: "DIRECT",
     intermediaryCode: "",
     disclosures: {},
+    occupation: "",
+    proposerName: "",
+    proposerRelationship: "",
+    proposerRef: "",
+    payerRef: "",
+    beneficiaries: [],
   });
   const [questions, setQuestions] = useState([]);
+  // NS-IL01-003: payer and proposer relationships come from the insurer's eligible list.
+  const [relationships, setRelationships] = useState([]);
+  useEffect(() => {
+    let live = true;
+    request(session, "/portfolio/application-relationships")
+      .then((r) => live && setRelationships(r.data || []))
+      .catch(() => live && setRelationships([]));
+    return () => {
+      live = false;
+    };
+  }, [session]);
   // Resuming: what the draft already captured, read back from its checklist.
   const [resumed, setResumed] = useState(draft ? null : {});
   const [resumeError, setResumeError] = useState("");
@@ -2568,6 +2602,18 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
           channel: c.channel || "DIRECT",
           intermediaryCode: c.intermediaryCode || "",
           disclosures: Object.fromEntries((c.disclosures || []).filter((d) => d.answer).map((d) => [d.code, d.answer])),
+          occupation: c.occupation || "",
+          proposerName: c.proposerRef ? "" : c.proposerName || "",
+          proposerRelationship: c.proposerRelationship || "",
+          proposerRef: c.proposerRef || "",
+          payerRef: c.payerRef || "",
+          beneficiaries: (c.beneficiaries || []).map((b) => ({
+            fullName: b.fullName,
+            relationship: b.relationship,
+            nationalId: b.nationalId || "",
+            mobile: b.mobile || "",
+            primary: b.primary,
+          })),
         });
         setConsent(Boolean(c.declaredAt));
         setResumed(c);
@@ -2593,11 +2639,20 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
     { customerRef: data.customerRef, product: data.product, tier: data.tier, lives: livesBody(completeLives(lives)) },
     Boolean(ratedTier && data.customerRef && !draft),
   );
+  // Blank party references and an empty beneficiary list are left out, so nothing on record is overwritten by them.
+  const partyFields = {
+    proposerRef: details.proposerRef || undefined,
+    proposerName: details.proposerRef ? undefined : details.proposerName,
+    payerRef: details.payerRef || undefined,
+    payerName: details.payerRef ? undefined : details.payerName,
+    beneficiaries: details.beneficiaries.filter((b) => b.fullName.trim()),
+  };
   const save = (status) =>
     draft
       ? onSave({
           status,
           ...details,
+          ...partyFields,
           // Bank details left blank on a debit order keep the ones on record.
           ...(details.mandateMethod === "DEBIT_ORDER" && !details.mandateAccount.trim() ? { mandateAccount: undefined } : {}),
           ...(details.mandateMethod === "DEBIT_ORDER" && !details.mandateInstitution.trim()
@@ -2610,6 +2665,7 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
       ...data,
       status,
       ...details,
+      ...partyFields,
       mandateDebitDay: details.mandateDebitDay || undefined,
       declarationAccepted: consent,
       ...(ratedTier ? { lives: livesBody(lives) } : {}),
@@ -2806,22 +2862,101 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
             </p>
             <div className="form-grid">
               <label className="form-label">
-                <span>Payer (if not the policyholder)</span>
+                <span>Occupation of the life insured</span>
                 <input
                   className="input"
-                  value={details.payerName}
-                  onChange={(e) => setDetails({ ...details, payerName: e.target.value })}
+                  value={details.occupation}
+                  placeholder="e.g. Teacher"
+                  maxLength={100}
+                  onChange={(e) => setDetails({ ...details, occupation: e.target.value })}
                 />
               </label>
               <label className="form-label">
+                <span>Payer is an existing customer</span>
+                <select
+                  className="input"
+                  value={details.payerRef}
+                  onChange={(e) => setDetails({ ...details, payerRef: e.target.value })}
+                >
+                  <option value="">No: type the payer's name</option>
+                  {customers
+                    .filter((c) => c.id !== data.customerRef)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.id})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {!details.payerRef && (
+                <label className="form-label">
+                  <span>Payer (if not the policyholder)</span>
+                  <input
+                    className="input"
+                    value={details.payerName}
+                    onChange={(e) => setDetails({ ...details, payerName: e.target.value })}
+                  />
+                </label>
+              )}
+              <label className="form-label">
                 <span>Payer's relationship</span>
-                <input
+                <select
                   className="input"
                   value={details.payerRelationship}
-                  placeholder="e.g. Spouse, Employer"
                   onChange={(e) => setDetails({ ...details, payerRelationship: e.target.value })}
-                />
+                >
+                  <option value="">{details.payerName || details.payerRef ? "Choose" : "Not needed"}</option>
+                  {relationships.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
               </label>
+              <label className="form-label">
+                <span>Proposer (if not the life insured)</span>
+                <select
+                  className="input"
+                  value={details.proposerRef}
+                  onChange={(e) => setDetails({ ...details, proposerRef: e.target.value })}
+                >
+                  <option value="">Not a customer, or the life insured</option>
+                  {customers
+                    .filter((c) => c.id !== data.customerRef)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.id})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {!details.proposerRef && (
+                <label className="form-label">
+                  <span>Proposer's name</span>
+                  <input
+                    className="input"
+                    value={details.proposerName}
+                    onChange={(e) => setDetails({ ...details, proposerName: e.target.value })}
+                  />
+                </label>
+              )}
+              {(details.proposerRef || details.proposerName) && (
+                <label className="form-label">
+                  <span>Proposer's relationship</span>
+                  <select
+                    className="input"
+                    value={details.proposerRelationship}
+                    onChange={(e) => setDetails({ ...details, proposerRelationship: e.target.value })}
+                  >
+                    <option value="">Choose</option>
+                    {relationships.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className="form-label">
                 <span>Payment mandate</span>
                 <select
@@ -2895,6 +3030,99 @@ function ApplicationForm({ session, defaultProduct, customers, products = [], dr
                 </label>
               )}
             </div>
+            <h3>Beneficiaries</h3>
+            <p className="subtitle">Who is paid on a death claim. They are added to the policy when it is issued.</p>
+            {details.beneficiaries.map((b, i) => (
+              <div className="form-grid" key={i}>
+                <label className="form-label">
+                  <span>Full name</span>
+                  <input
+                    className="input"
+                    value={b.fullName}
+                    onChange={(e) =>
+                      setDetails({
+                        ...details,
+                        beneficiaries: details.beneficiaries.map((x, j) => (j === i ? { ...x, fullName: e.target.value } : x)),
+                      })
+                    }
+                  />
+                </label>
+                <label className="form-label">
+                  <span>Relationship</span>
+                  <select
+                    className="input"
+                    value={b.relationship}
+                    onChange={(e) =>
+                      setDetails({
+                        ...details,
+                        beneficiaries: details.beneficiaries.map((x, j) =>
+                          j === i ? { ...x, relationship: e.target.value } : x,
+                        ),
+                      })
+                    }
+                  >
+                    <option value="">Choose</option>
+                    {relationships.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="form-label">
+                  <span>Mobile</span>
+                  <input
+                    className="input"
+                    value={b.mobile}
+                    onChange={(e) =>
+                      setDetails({
+                        ...details,
+                        beneficiaries: details.beneficiaries.map((x, j) => (j === i ? { ...x, mobile: e.target.value } : x)),
+                      })
+                    }
+                  />
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="radio"
+                    name="primary-beneficiary"
+                    checked={Boolean(b.primary)}
+                    onChange={() =>
+                      setDetails({
+                        ...details,
+                        beneficiaries: details.beneficiaries.map((x, j) => ({ ...x, primary: j === i })),
+                      })
+                    }
+                  />
+                  Primary
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      setDetails({ ...details, beneficiaries: details.beneficiaries.filter((_, j) => j !== i) })
+                    }
+                  >
+                    Remove
+                  </Button>
+                </label>
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="secondary"
+              icon="Plus"
+              onClick={() =>
+                setDetails({
+                  ...details,
+                  beneficiaries: [
+                    ...details.beneficiaries,
+                    { fullName: "", relationship: "", nationalId: "", mobile: "", primary: !details.beneficiaries.length },
+                  ],
+                })
+              }
+            >
+              Add beneficiary
+            </Button>
             <h3>Disclosures</h3>
             {questions.map((q) => (
               <label className="form-label full" key={q.code}>
@@ -3172,7 +3400,7 @@ function CustomerDirectory({
   const actions = [
     onAddCustomer && { label: "Add customer", icon: "UserPlus", onClick: onAddCustomer },
     onAddPolicy && {
-      label: "Add policy",
+      label: "New application",
       icon: "ShieldCheck",
       disabled: !single || single.kycStatus !== "VERIFIED",
       hint: !single
@@ -3817,147 +4045,6 @@ function CustomerForm({ onSave, onCancel }) {
     </form>
   );
 }
-function PolicyForm({ session, customers, products = [], defaultCustomer, onSave, onCancel }) {
-  const ready = customers.filter((customer) => customer.kycStatus === "VERIFIED");
-  // The customer to start with is given by reference, never by name.
-  const first = ready.find((customer) => customer.id === defaultCustomer) || ready[0];
-  const initialProduct = products[0] || { name: "", cover: "0", premium: "0" };
-  // The customer is chosen by reference: two customers can share a name (NS-SH01-001).
-  const [customerRef, setCustomerRef] = useState(first?.id || "");
-  // One key per form: a double submit returns the same offer instead of creating two (NS-IL01-006).
-  const [issueKey] = useState(() => crypto.randomUUID());
-  const customerName = ready.find((customer) => customer.id === customerRef)?.name || "";
-  const [productName, setProductName] = useState(initialProduct.name);
-  const product = products.find((item) => item.name === productName) || initialProduct;
-  const tiers = productTiers(product);
-  const [tierName, setTierName] = useState(defaultTier(initialProduct)?.name || "");
-  const tier = tiers.find((item) => item.name === tierName) || null;
-  const rated = tier?.priceIsFrom ? tier : null;
-  const [lives, setLives] = useState([]);
-  // The insurer's approved extra fields for this product (none unless a configuration release defines them).
-  const { form: policyForm, error: policyFormError } = usePolicyForm(session, product.name);
-  const [custom, setCustom] = useState({});
-  const priced = useLifeQuote(
-    session,
-    "/portfolio/quote",
-    { customerRef, product: product.name, tier: tierName, lives: livesBody(completeLives(lives)) },
-    Boolean(rated && customerRef),
-  );
-  if (!ready.length) {
-    return (
-      <>
-        <p className="subtitle">
-          Mark KYC successful on a customer before a policy can be added.
-        </p>
-        <div className="modal-footer">
-          <Button type="button" variant="secondary" onClick={onCancel}>
-            Close
-          </Button>
-        </div>
-      </>
-    );
-  }
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSave({
-          issueKey,
-          customerRef,
-          name: customerName,
-          product: product.name,
-          tier: tier?.name,
-          amount: tier ? tier.cover : amountOf(product.cover),
-          premium: tier ? tier.premium : amountOf(product.premium),
-          ...(rated ? { lives: livesBody(lives) } : {}),
-          ...(policyForm?.formVersionId
-            ? { formVersionId: policyForm.formVersionId, customAttributes: cleanValues(custom) }
-            : {}),
-        });
-      }}
-    >
-      <p className="subtitle">
-        Only customers with successful KYC can receive a policy.
-      </p>
-      <div className="field-grid">
-        <Field label="Customer">
-          <Select
-            className="select"
-            value={customerRef}
-            onChange={(event) => setCustomerRef(event.target.value)}
-          >
-            {ready.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name} · {customer.id}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Product">
-          <Select
-            className="select"
-            value={productName}
-            onChange={(event) => {
-              const next = products.find((item) => item.name === event.target.value);
-              setProductName(event.target.value);
-              setTierName(defaultTier(next)?.name || "");
-              setLives([]);
-              setCustom({});
-            }}
-          >
-            {products.map((item) => (
-              <option key={item.name}>{item.name}</option>
-            ))}
-          </Select>
-        </Field>
-        {tiers.length > 0 && (
-          <Field label="Tier">
-            <Select
-              className="select"
-              value={tierName}
-              onChange={(event) => {
-                setTierName(event.target.value);
-                if (!tiers.find((item) => item.name === event.target.value)?.priceIsFrom) setLives([]);
-              }}
-            >
-              {tiers.map((item) => (
-                <option key={item.name} value={item.name}>
-                  {tierOptionLabel(item, product)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        )}
-      </div>
-      <CustomFieldInputs form={policyForm} values={custom} onChange={setCustom} />
-      {policyFormError && <p className="subtitle">Extra policy fields could not be loaded: {policyFormError}</p>}
-      <div className="quote-summary">
-        <span>{tier ? tier.name + " cover" : "Cover"}</span>
-        <strong>
-          {tier
-            ? money(tier.cover) + (product.coverUnit ? " / " + product.coverUnit : "")
-            : product.cover}
-        </strong>
-        <p>
-          {rated
-            ? "Priced per covered life by age from rate table " + rated.rateTable
-            : "Monthly premium " + (tier ? money(tier.premium) : product.premium)}
-        </p>
-      </div>
-      {rated && (
-        <CoveredLives tier={rated} mainName={customerName} lives={lives} onChange={setLives} {...priced} />
-      )}
-      <div className="modal-footer">
-        <Button type="button" variant="secondary" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" icon="ShieldCheck">
-          Add policy
-        </Button>
-      </div>
-    </form>
-  );
-}
 function Detail({
   entity,
   record: r,
@@ -4164,7 +4251,7 @@ function Detail({
                     disabled={r.kycStatus !== "VERIFIED"}
                     onClick={() => onAddPolicy(r)}
                   >
-                    Add policy
+                    New application
                   </Button>
                 )}
               </div>

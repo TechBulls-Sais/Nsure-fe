@@ -2179,8 +2179,9 @@ export function ApplicationChecklist({ session, application: a, profile, notify,
     <div className="wf-panel">
       <h3 className="section-title">Application details</h3>
       <div className="detail-grid">
-        <Item label="Proposer" value={state.proposer} />
-        <Item label="Payer" value={state.payer} />
+        <Item label="Proposer" value={state.proposer + (state.proposerRef ? " · " + state.proposerRef : "")} />
+        <Item label="Payer" value={state.payer + (state.payerRef ? " · " + state.payerRef : "")} />
+        <Item label="Occupation" value={state.occupation || "Not recorded"} />
         <Item
           label="Payment mandate"
           value={
@@ -2216,6 +2217,23 @@ export function ApplicationChecklist({ session, application: a, profile, notify,
           }
         />
       </div>
+      {state.beneficiaries?.length > 0 && (
+        <>
+          <h3 className="section-title">Nominated beneficiaries</h3>
+          <ul className="wf-evidence">
+            {state.beneficiaries.map((b, i) => (
+              <li key={i} className="received">
+                <BadgeCheck size={15} aria-hidden="true" />
+                {b.fullName}
+                <small>
+                  {b.relationship}
+                  {b.primary ? " · primary" : ""} · added to the policy at issue
+                </small>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {state.submissionProblems.length > 0 && (
         <div className="notice">
           <Clock3 size={18} aria-hidden="true" />
