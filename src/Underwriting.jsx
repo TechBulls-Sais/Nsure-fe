@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { CheckCircle2, FilePlus2, Pencil, RotateCcw } from "lucide-react";
+import { CheckCircle2, FilePlus2, Pencil, RotateCcw, ShieldAlert, Timer } from "lucide-react";
 import { request } from "./api";
 import {
   Badge,
@@ -37,6 +37,17 @@ const DECISION = {
   POSTPONE: "Postpone",
   DECLINE: "Decline",
 };
+const SCREENING = {
+  NOT_SCREENED: ["Not screened", undefined],
+  CLEAR: ["No match", "green"],
+  HIT: ["Possible match", "red"],
+  CLEARED: ["Match cleared", "green"],
+  CONFIRMED: ["Match confirmed", "red"],
+};
+const screeningBadge = (s) => {
+  const [label, tone] = SCREENING[s] || [s];
+  return <Badge tone={tone}>{label}</Badge>;
+};
 const statusBadge = (s) => {
   const [label, tone] = STATUS[s] || [s];
   return <Badge tone={tone}>{label}</Badge>;
@@ -54,6 +65,21 @@ export default function Underwriting({ session, notify, profile }) {
     cases.reload();
     summary.reload();
   };
+  const review = useAction(notify);
+  const runReview = async () => {
+    const done = await review.run(() => request(session, "/underwriting/review-due", { method: "POST" }));
+    if (done) {
+      const { reopened = [], reminded = [] } = done.data || {};
+      notify(
+        "Daily review run: " +
+          reopened.length +
+          " decision(s) reopened for reassessment, " +
+          reminded.length +
+          " evidence reminder(s) sent.",
+      );
+      reload();
+    }
+  };
 
   return (
     <>
@@ -61,7 +87,20 @@ export default function Underwriting({ session, notify, profile }) {
         eyebrow="NEW BUSINESS"
         title="Underwriting"
         subtitle="Applications assessed against each product's underwriting rules, the evidence asked of each life, and the decisions and offers made on referred cases."
-      />
+      >
+        {can(profile, "UNDERWRITE_APPLICATION") && (
+          <Button
+            variant="secondary"
+            icon={Timer}
+            disabled={review.busy}
+            title="Reopens expired decisions and ended postponements, and reminds evidence that is due (runs daily)"
+            onClick={runReview}
+          >
+            Run daily review
+          </Button>
+        )}
+      </Heading>
+      <ErrorNote error={review.error} />
       <div className="stat-grid">
         <Stat label="Awaiting decision" value={s.referred ?? 0} tone="amber" loading={loading} />
         <Stat label="Evidence pending" value={s.evidencePending ?? 0} tone="amber" loading={loading} />
@@ -191,6 +230,14 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
   const c = d?.underwritingCase;
   const canDecide = can(profile, "UNDERWRITE_APPLICATION");
   const canAnswer = canDecide || can(profile, "UPDATE_APPLICATION");
+  const canScreen = can(profile, "CLEAR_SCREENING");
+  const allowedDecisions = Object.entries(DECISION).filter(
+    ([key]) => !c?.myDecisionTypes || c.myDecisionTypes.includes(key),
+  );
+  const maxLoading = Math.min(
+    Number(d?.rules?.maxLoadingPercent ?? 500),
+    c?.myMaxLoadingPercent == null ? 500 : Number(c.myMaxLoadingPercent),
+  );
 
   const post = async (suffix, body, message) => {
     const done = await action.run(() => request(session, path + suffix, { method: "POST", body }), message);
@@ -204,8 +251,21 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
     if (form.kind === "evidence") {
       return post(
         "/evidence",
-        { requirement: form.requirement, lifeName: form.lifeName, restricted: form.restricted, dueDate: form.dueDate },
+        {
+          requirement: form.requirement,
+          lifeName: form.lifeName,
+          lifeId: form.lifeId || undefined,
+          restricted: form.restricted,
+          dueDate: form.dueDate,
+        },
         "Evidence requested",
+      );
+    }
+    if (form.kind === "screening") {
+      return post(
+        "/screening",
+        { outcome: form.outcome, note: form.note },
+        form.outcome === "CLEARED" ? "Screening match cleared" : "Screening match confirmed",
       );
     }
     if (form.kind === "resolve") {
@@ -252,6 +312,12 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
         ),
     },
     { key: "dueDate", label: "Due" },
+    {
+      key: "reminders",
+      label: "Reminders",
+      align: "right",
+      render: (r) => (r.reminderCount ? r.reminderCount + " · " + when(r.lastRemindedAt) : "—"),
+    },
     {
       key: "note",
       label: "Detail",
@@ -309,10 +375,54 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
               <strong>{c.ruleSetVersion}</strong>
             </div>
             <div>
-              <small>Your authority</small>
+              <small>Occupation</small>
+              <strong>{c.occupation || "Not recorded"}</strong>
+            </div>
+            <div>
+              <small>Screening</small>
+              {screeningBadge(c.screeningStatus)}
+            </div>
+            <div>
+              <small>Your authority (total cover)</small>
               <strong>{c.myAuthority == null ? "Not limited" : pula(c.myAuthority)}</strong>
             </div>
+            {(c.myMaxLoadingPercent != null || c.myDecisionTypes) && (
+              <div>
+                <small>Your decision types</small>
+                <strong>
+                  {(c.myDecisionTypes || Object.keys(DECISION)).map((t) => DECISION[t]?.split(" ")[0] || t).join(", ")}
+                  {c.myMaxLoadingPercent != null ? " · loading up to " + Number(c.myMaxLoadingPercent) + "%" : ""}
+                </strong>
+              </div>
+            )}
           </div>
+
+          {["HIT", "CLEARED", "CONFIRMED"].includes(c.screeningStatus) && (
+            <Panel
+              title="Sanctions and PEP screening"
+              subtitle="Simulated screening against the demo lists (no screening provider is connected). A possible match blocks acceptance and issue until compliance answers it."
+              action={
+                canScreen &&
+                c.screeningStatus === "HIT" && (
+                  <Button
+                    variant="secondary"
+                    icon={ShieldAlert}
+                    onClick={() => setForm({ kind: "screening", outcome: "CLEARED", note: "" })}
+                  >
+                    Answer the match
+                  </Button>
+                )
+              }
+            >
+              <p className="ws-hint">{c.screeningDetail}</p>
+              {c.screeningResolvedBy && (
+                <p className="ws-hint">
+                  {c.screeningStatus === "CLEARED" ? "Cleared" : "Confirmed"} by {c.screeningResolvedBy} ·{" "}
+                  {when(c.screeningResolvedAt)}
+                </p>
+              )}
+            </Panel>
+          )}
 
           {c.referralReasons.length > 0 && (
             <Panel title="Why it was referred">
@@ -355,6 +465,16 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                     <strong>{c.postponeUntil}</strong>
                   </div>
                 )}
+                {c.decisionValidUntil && (
+                  <div>
+                    <small>Decision stands until</small>
+                    {c.decisionExpired ? (
+                      <Badge tone="red">Expired {c.decisionValidUntil}</Badge>
+                    ) : (
+                      <strong>{c.decisionValidUntil}</strong>
+                    )}
+                  </div>
+                )}
                 {c.offerStatus !== "NONE" && (
                   <div>
                     <small>Applicant's answer</small>
@@ -390,6 +510,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                       kind: "evidence",
                       requirement: "",
                       lifeName: c.customerName,
+                      lifeId: d.lives[0]?.id ? String(d.lives[0].id) : "",
                       restricted: false,
                       dueDate: inDays(14),
                     })
@@ -517,7 +638,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                 onClick={() =>
                   setForm({
                     kind: "decision",
-                    decision: "ACCEPT_STANDARD",
+                    decision: allowedDecisions[0]?.[0] || "ACCEPT_STANDARD",
                     loadingPercent: "",
                     exclusion: "",
                     postponeUntil: inDays(90),
@@ -531,8 +652,8 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
           </div>
           {canDecide && !c.withinMyAuthority && open && c.status !== "ACCEPTED" && (
             <p className="ws-hint">
-              The sum assured is above your authority of {pula(c.myAuthority)}. A senior underwriter must decide this
-              case.
+              The total cover with this application ({pula(c.aggregateExposure)}) is above your authority of{" "}
+              {pula(c.myAuthority)}. A senior underwriter must decide this case.
             </p>
           )}
         </>
@@ -547,6 +668,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
               decision: "Underwriting decision",
               offer: "Applicant's answer to offer v" + c.offerVersion,
               reopen: "Reopen the case",
+              screening: "Answer the screening match",
             }[form.kind]
           }
           onClose={() => setForm(null)}
@@ -562,9 +684,27 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                     required
                   />
                 </Field>
-                <Field label="Life">
-                  <input value={form.lifeName} onChange={(e) => setForm({ ...form, lifeName: e.target.value })} required />
-                </Field>
+                {d.lives.length > 0 ? (
+                  <Field label="Life">
+                    <select
+                      value={form.lifeId}
+                      onChange={(e) => {
+                        const life = d.lives.find((l) => String(l.id) === e.target.value);
+                        setForm({ ...form, lifeId: e.target.value, lifeName: life?.fullName || form.lifeName });
+                      }}
+                    >
+                      {d.lives.map((l) => (
+                        <option key={l.id} value={String(l.id)}>
+                          {l.fullName} ({l.relationship})
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label="Life">
+                    <input value={form.lifeName} onChange={(e) => setForm({ ...form, lifeName: e.target.value })} required />
+                  </Field>
+                )}
                 <Field label="Due by">
                   <input
                     type="date"
@@ -607,7 +747,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
               <>
                 <Field label="Decision" full>
                   <select value={form.decision} onChange={(e) => setForm({ ...form, decision: e.target.value })}>
-                    {Object.entries(DECISION).map(([key, label]) => (
+                    {allowedDecisions.map(([key, label]) => (
                       <option key={key} value={key}>
                         {label}
                       </option>
@@ -617,7 +757,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                 {form.decision === "ACCEPT_WITH_TERMS" && (
                   <>
                     <Field
-                      label="Premium loading (%)"
+                      label={"Premium loading (%, up to " + maxLoading + ")"}
                       hint={
                         form.loadingPercent
                           ? "Offer premium " +
@@ -628,7 +768,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                       <input
                         type="number"
                         min="0"
-                        max="500"
+                        max={maxLoading}
                         step="0.01"
                         value={form.loadingPercent}
                         onChange={(e) => setForm({ ...form, loadingPercent: e.target.value })}
@@ -686,6 +826,25 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
                 </Field>
               </>
             )}
+            {form.kind === "screening" && (
+              <>
+                <Field label="Outcome" full>
+                  <select value={form.outcome} onChange={(e) => setForm({ ...form, outcome: e.target.value })}>
+                    <option value="CLEARED">Not the listed person: clear the match</option>
+                    <option value="CONFIRMED">The listed person: confirm the match (declines the application)</option>
+                  </select>
+                </Field>
+                <Field label="How the match was checked" full>
+                  <textarea
+                    value={form.note}
+                    onChange={(e) => setForm({ ...form, note: e.target.value })}
+                    rows={3}
+                    placeholder="e.g. Date of birth and identity number differ from the listed person"
+                    required
+                  />
+                </Field>
+              </>
+            )}
             {form.kind === "reopen" && (
               <Field label="Why the case is reopened" full>
                 <textarea
@@ -707,24 +866,47 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose }) {
 
 function Rules({ session, notify, profile }) {
   const rules = useResource(session, "/underwriting/rules", []);
+  const changes = useResource(session, "/underwriting/rule-changes", []);
   const [form, setForm] = useState(null);
+  const [verdict, setVerdict] = useState(null); // {change, approve, note}
   const save = useAction(notify);
   const submit = async () => {
     const done = await save.run(
-      () => request(session, "/underwriting/rules/" + form.id, { method: "PUT", body: form }),
-      "Rules updated",
+      () =>
+        request(session, "/underwriting/rules/" + form.id, {
+          method: "PUT",
+          body: { ...form, referDisclosureCodes: form.referDisclosureCodesText },
+        }),
+      "Change proposed: a second person must approve it before it applies",
     );
     if (done) {
       setForm(null);
       rules.reload();
+      changes.reload();
     }
   };
+  const decide = async () => {
+    const done = await save.run(
+      () =>
+        request(session, "/underwriting/rule-changes/" + verdict.change.id + "/decision", {
+          method: "POST",
+          body: { approve: verdict.approve, note: verdict.note },
+        }),
+      verdict.approve ? "Rule change approved and applied" : "Rule change rejected",
+    );
+    if (done) {
+      setVerdict(null);
+      rules.reload();
+      changes.reload();
+    }
+  };
+  const me = profile?.username;
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
   return (
     <>
       <Panel
         title="Underwriting rules"
-        subtitle="A case inside every limit is accepted by the rules. Changing a rule set gives it a new version, and each case keeps the version it was assessed under."
+        subtitle="A case inside every limit is accepted by the rules. A change is proposed as a new version and applies only when a second person approves it; each case keeps the version it was assessed under. Seeded values are demo defaults pending the insurer's approved rules."
       >
         <ErrorNote error={rules.error} />
         <DataTable
@@ -758,28 +940,142 @@ function Rules({ session, notify, profile }) {
               key: "refer",
               label: "Refer disclosures",
               render: (r) =>
-                [r.referTobacco && "Tobacco", r.referTreatment && "Treatment"].filter(Boolean).join(", ") || "None",
+                [r.referTobacco && "Tobacco", r.referTreatment && "Treatment", ...(r.referDisclosureCodes || [])]
+                  .filter(Boolean)
+                  .join(", ") || "None",
+            },
+            { key: "referOccupations", label: "Refer occupations", render: (r) => r.referOccupations || "None" },
+            {
+              key: "maxLoadingPercent",
+              label: "Loading up to",
+              align: "right",
+              render: (r) => Number(r.maxLoadingPercent) + "%",
+            },
+            {
+              key: "decisionValidityDays",
+              label: "Decision stands",
+              align: "right",
+              render: (r) => r.decisionValidityDays + " days",
             },
             {
               key: "act",
               label: "",
               render: (r) =>
-                can(profile, "MANAGE_UNDERWRITING") && (
-                  <Button variant="secondary" icon={Pencil} onClick={() => setForm({ ...r, versionLabel: "" })}>
-                    Change
-                  </Button>
+                r.pendingChange ? (
+                  can(profile, "MANAGE_UNDERWRITING") && r.pendingChange.proposedBy !== me ? (
+                    <Button
+                      variant="secondary"
+                      icon={CheckCircle2}
+                      onClick={() => setVerdict({ change: r.pendingChange, approve: true, note: "" })}
+                    >
+                      Review {r.pendingChange.versionLabel}
+                    </Button>
+                  ) : (
+                    <Badge tone="amber">{r.pendingChange.versionLabel} awaits approval</Badge>
+                  )
+                ) : (
+                  can(profile, "MANAGE_UNDERWRITING") && (
+                    <Button
+                      variant="secondary"
+                      icon={Pencil}
+                      onClick={() =>
+                        setForm({
+                          ...r,
+                          versionLabel: "",
+                          referDisclosureCodesText: (r.referDisclosureCodes || []).join(", "),
+                          referOccupations: r.referOccupations || "",
+                        })
+                      }
+                    >
+                      Propose change
+                    </Button>
+                  )
                 ),
             },
           ]}
         />
       </Panel>
+      <Panel title="Rule changes" subtitle="Every proposed version, who proposed it and who approved or rejected it.">
+        <ErrorNote error={changes.error} />
+        <DataTable
+          rows={changes.data}
+          loading={changes.loading}
+          rowKey={(r) => r.id}
+          searchFrom={99}
+          empty="No rule changes proposed yet"
+          columns={[
+            { key: "product", label: "Product", render: (r) => r.product || "All other products" },
+            { key: "versionLabel", label: "Version" },
+            {
+              key: "what",
+              label: "Changes",
+              render: (r) =>
+                Object.entries(r.proposal || {})
+                  .filter(([k, v]) => r.previous && String(r.previous[k]) !== String(v))
+                  .map(([k, v]) => k + ": " + (r.previous?.[k] ?? "—") + " → " + v)
+                  .join("; ") || "—",
+            },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => (
+                <Badge tone={r.status === "APPROVED" ? "green" : r.status === "REJECTED" ? "red" : "amber"}>
+                  {r.status === "PENDING" ? "Awaiting approval" : r.status === "APPROVED" ? "Approved" : "Rejected"}
+                </Badge>
+              ),
+            },
+            { key: "proposedBy", label: "Proposed by", render: (r) => r.proposedBy + " · " + when(r.proposedAt) },
+            {
+              key: "decidedBy",
+              label: "Decided by",
+              render: (r) => (r.decidedBy ? r.decidedBy + " · " + when(r.decidedAt) : "—"),
+            },
+          ]}
+        />
+      </Panel>
+      {verdict && (
+        <Drawer
+          title={"Review rule change " + verdict.change.versionLabel}
+          description={"Proposed by " + verdict.change.proposedBy + ". Approving applies it to every case assessed from now on."}
+          onClose={() => setVerdict(null)}
+        >
+          <FormGrid submitLabel="Save decision" busy={save.busy} error={save.error} onSubmit={decide}>
+            <Field label="Proposed values" full>
+              <ul className="uw-list">
+                {Object.entries(verdict.change.proposal || {}).map(([k, v]) => (
+                  <li key={k}>
+                    {k}: {String(verdict.change.previous?.[k] ?? "—")} → <strong>{String(v)}</strong>
+                  </li>
+                ))}
+              </ul>
+            </Field>
+            <Field label="Decision" full>
+              <select
+                value={verdict.approve ? "yes" : "no"}
+                onChange={(e) => setVerdict({ ...verdict, approve: e.target.value === "yes" })}
+              >
+                <option value="yes">Approve and apply</option>
+                <option value="no">Reject</option>
+              </select>
+            </Field>
+            <Field label={verdict.approve ? "Note (optional)" : "Why it is rejected"} full>
+              <textarea
+                value={verdict.note}
+                onChange={(e) => setVerdict({ ...verdict, note: e.target.value })}
+                rows={3}
+                required={!verdict.approve}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {form && (
         <Drawer
-          title={"Change rules: " + (form.product || "All other products")}
-          description="Cases already assessed keep the version they were assessed under."
+          title={"Propose a rules change: " + (form.product || "All other products")}
+          description="A second person must approve the new version before it applies. Cases already assessed keep the version they were assessed under."
           onClose={() => setForm(null)}
         >
-          <FormGrid submitLabel="Save new version" busy={save.busy} error={save.error} onSubmit={submit}>
+          <FormGrid submitLabel="Propose new version" busy={save.busy} error={save.error} onSubmit={submit}>
             <Field label="New version label" full>
               <input value={form.versionLabel} onChange={set("versionLabel")} placeholder="e.g. UW-2026.2" required />
             </Field>
@@ -808,6 +1104,18 @@ function Rules({ session, notify, profile }) {
                 <span>Current treatment for a serious illness</span>
               </label>
             </Field>
+            <Field label="Other disclosure codes that refer on YES" hint="Comma-separated question codes, e.g. HAZARDOUS_PURSUITS" full>
+              <input value={form.referDisclosureCodesText} onChange={set("referDisclosureCodesText")} />
+            </Field>
+            <Field label="Occupations that refer" hint="Comma-separated words or phrases, e.g. miner, pilot" full>
+              <input value={form.referOccupations} onChange={set("referOccupations")} />
+            </Field>
+            <Field label="Largest loading (%)">
+              <input type="number" min="0" max="500" step="0.01" value={form.maxLoadingPercent} onChange={set("maxLoadingPercent")} required />
+            </Field>
+            <Field label="A decision stands for (days)">
+              <input type="number" min="1" max="730" value={form.decisionValidityDays} onChange={set("decisionValidityDays")} required />
+            </Field>
           </FormGrid>
         </Drawer>
       )}
@@ -826,7 +1134,11 @@ function Authorities({ session, notify, profile }) {
       () =>
         request(session, "/underwriting/authorities/" + form.roleId, {
           method: "PUT",
-          body: { maxSumAssured: form.maxSumAssured },
+          body: {
+            maxSumAssured: form.maxSumAssured,
+            maxLoadingPercent: form.maxLoadingPercent,
+            decisionTypes: form.decisionTypes,
+          },
         }),
       "Authority limit saved",
     );
@@ -839,7 +1151,7 @@ function Authorities({ session, notify, profile }) {
     <>
       <Panel
         title="Underwriting authority"
-        subtitle="The largest sum assured each underwriting role may decide. A case above a person's limit must be decided by someone with a higher one."
+        subtitle="What each underwriting role may decide: the largest total cover (aggregate exposure, all cover in force plus the application), the largest loading and the decision types. A case outside a person's authority must be decided by someone with more."
       >
         <ErrorNote error={rows.error} />
         <DataTable
@@ -856,6 +1168,17 @@ function Authorities({ session, notify, profile }) {
               align: "right",
               render: (r) => (r.maxSumAssured == null ? "Not limited" : pula(r.maxSumAssured)),
             },
+            {
+              key: "maxLoadingPercent",
+              label: "Loading up to",
+              align: "right",
+              render: (r) => (r.maxLoadingPercent == null ? "Not limited" : Number(r.maxLoadingPercent) + "%"),
+            },
+            {
+              key: "decisionTypes",
+              label: "Decision types",
+              render: (r) => (r.decisionTypes ? r.decisionTypes.map((t) => DECISION[t] || t).join(", ") : "All"),
+            },
             { key: "updatedBy", label: "Changed by", render: (r) => (r.updatedBy ? r.updatedBy + " · " + when(r.updatedAt) : "—") },
             {
               key: "act",
@@ -865,7 +1188,15 @@ function Authorities({ session, notify, profile }) {
                   <Button
                     variant="secondary"
                     icon={Pencil}
-                    onClick={() => setForm({ roleId: r.roleId, role: r.role, maxSumAssured: r.maxSumAssured ?? "" })}
+                    onClick={() =>
+                      setForm({
+                        roleId: r.roleId,
+                        role: r.role,
+                        maxSumAssured: r.maxSumAssured ?? "",
+                        maxLoadingPercent: r.maxLoadingPercent ?? "",
+                        decisionTypes: r.decisionTypes || Object.keys(DECISION),
+                      })
+                    }
                   >
                     Change
                   </Button>
@@ -877,7 +1208,7 @@ function Authorities({ session, notify, profile }) {
       {form && (
         <Drawer title={"Authority of " + form.role} onClose={() => setForm(null)}>
           <FormGrid submitLabel="Save" busy={save.busy} error={save.error} onSubmit={submit}>
-            <Field label="May decide up to (BWP sum assured)" hint="Leave blank for no limit" full>
+            <Field label="May decide up to (BWP total cover)" hint="Leave blank for no limit" full>
               <input
                 type="number"
                 min="1"
@@ -885,6 +1216,34 @@ function Authorities({ session, notify, profile }) {
                 value={form.maxSumAssured}
                 onChange={(e) => setForm({ ...form, maxSumAssured: e.target.value })}
               />
+            </Field>
+            <Field label="Largest loading (%)" hint="Blank: not limited">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.maxLoadingPercent}
+                onChange={(e) => setForm({ ...form, maxLoadingPercent: e.target.value })}
+              />
+            </Field>
+            <Field label="Decision types" full>
+              {Object.entries(DECISION).map(([key, label]) => (
+                <label key={key} className="ri-product">
+                  <input
+                    type="checkbox"
+                    checked={form.decisionTypes.includes(key)}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        decisionTypes: e.target.checked
+                          ? [...form.decisionTypes, key]
+                          : form.decisionTypes.filter((t) => t !== key),
+                      })
+                    }
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
             </Field>
           </FormGrid>
         </Drawer>
