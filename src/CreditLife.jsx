@@ -387,7 +387,9 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
       disbursement: ["/disbursement", "Disbursement recorded"],
       balance: ["/balances", "Balance recorded"],
       resolve: ["/balance-exception/resolve", "Exception resolved"],
-      claim: ["/claim", "Claim allocation recorded"],
+      claim: ["/claim", "Claim allocation recorded: a second person verifies the payee"],
+      verify: ["/claim/verification", "Payee verified"],
+      pay: ["/claim/payment", "Claim payment recorded"],
       settle: ["/settlement", "Loan settled"],
       refinance: ["/refinance", "Loan refinanced"],
     };
@@ -522,7 +524,33 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
                     {l.policyRef} · {l.policyStatus}
                   </strong>
                 </div>
+                <div>
+                  <small>Balance valued at</small>
+                  <strong>{l.valuationDate || l.claimEventDate || "—"}</strong>
+                </div>
+                <div>
+                  <small>Payment</small>
+                  <Badge tone={l.claimStatus === "PAID" ? "green" : l.claimStatus === "VERIFIED" ? "blue" : "amber"}>
+                    {l.claimStatus === "PAID"
+                      ? "Paid · " + l.claimPaidReference
+                      : l.claimStatus === "VERIFIED"
+                        ? "Payee verified, ready to pay"
+                        : l.claimStatus === "PENDING_VERIFICATION"
+                          ? "Payee awaiting verification"
+                          : "Recorded"}
+                  </Badge>
+                </div>
               </div>
+              {manage && l.claimStatus === "PENDING_VERIFICATION" && (
+                <div className="ws-form-actions">
+                  <Button onClick={() => setForm({ kind: "verify", note: "" })}>Verify payee</Button>
+                </div>
+              )}
+              {manage && l.claimStatus === "VERIFIED" && (
+                <div className="ws-form-actions">
+                  <Button onClick={() => setForm({ kind: "pay", paymentReference: "" })}>Record payment</Button>
+                </div>
+              )}
               <DataTable
                 rows={[
                   {
@@ -530,14 +558,20 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
                     payee: l.lenderName,
                     basis: "Lender · outstanding balance on loan " + l.lenderLoanId,
                     amount: l.lenderAmount,
-                    verified: l.payeeVerifiedBy ? "Payment details verified by " + l.payeeVerifiedBy + " · " + when(l.payeeVerifiedAt) : "—",
+                    verified:
+                      (l.lenderAccount ? l.lenderAccount + " · " : "") +
+                      (l.payeeVerifiedBy
+                        ? "verified by " + l.payeeVerifiedBy + " · " + when(l.payeeVerifiedAt)
+                        : "awaiting a second person's verification (recorded by " + (l.claimRecordedBy || "—") + ")"),
                   },
                   {
                     key: "estate",
-                    payee: "Estate or beneficiary of " + l.borrowerName,
-                    basis: "Any surplus of the sum assured over the balance",
+                    payee: l.surplusPayeeName || "Estate or beneficiary of " + l.borrowerName,
+                    basis:
+                      "Any surplus of the sum assured over the balance" +
+                      (l.surplusPayeeRelationship ? " · " + l.surplusPayeeRelationship : ""),
                     amount: l.estateAmount,
-                    verified: "Paid through the claim's beneficiary process",
+                    verified: l.payeeVerifiedBy ? "verified with the lender's payee" : "—",
                   },
                 ]}
                 rowKey={(r) => r.key}
@@ -649,7 +683,18 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
                   )}
                   <Button
                     variant="secondary"
-                    onClick={() => setForm({ kind: "claim", eventDate: today(), claimRef: "", cause: "DEATH", accidental: false, payeeVerified: false })}
+                    onClick={() =>
+                      setForm({
+                        kind: "claim",
+                        eventDate: today(),
+                        claimRef: "",
+                        cause: "DEATH",
+                        accidental: false,
+                        lenderAccount: "",
+                        surplusPayeeName: "",
+                        surplusPayeeRelationship: "",
+                      })
+                    }
                   >
                     Record claim
                   </Button>
@@ -674,6 +719,8 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
               balance: "Record a balance",
               resolve: "Resolve the balance exception",
               claim: "Record a claim on this loan",
+              verify: "Verify the claim's payee",
+              pay: "Record the claim payment",
               settle: "Settle the loan early",
               refinance: "Refinance the loan",
             }[form.kind]
@@ -729,24 +776,65 @@ function LoanDrawer({ session, notify, profile, loanRef, onClose, onOpen }) {
                     ))}
                   </select>
                 </Field>
-                {l.coverStart && form.eventDate && form.eventDate < addMonths(l.coverStart, l.waitingMonths) && (
-                  <Field label="Waiting period" full>
-                    <label className="ri-product">
-                      <input type="checkbox" checked={form.accidental} onChange={set("accidental")} />
-                      <span>
-                        The event was accidental. It falls within the {l.waitingMonths}-month waiting period (to{" "}
-                        {addMonths(l.coverStart, l.waitingMonths)}), when only accidental events are covered.
-                      </span>
-                    </label>
-                  </Field>
-                )}
-                <Field label="Payee" full>
-                  <label className="ri-product">
-                    <input type="checkbox" checked={form.payeeVerified} onChange={set("payeeVerified")} />
-                    <span>The lender's payment details have been verified</span>
-                  </label>
+                {(() => {
+                  // NS-IL05-003: each benefit has its own waiting period, set when the loan was sold.
+                  const waiting =
+                    {
+                      PERMANENT_DISABILITY: l.pdWaitingMonths,
+                      TEMPORARY_DISABILITY: l.tdWaitingMonths,
+                      CRITICAL_ILLNESS: l.ciWaitingMonths,
+                    }[form.cause] ?? l.waitingMonths;
+                  return (
+                    l.coverStart &&
+                    form.eventDate &&
+                    form.eventDate < addMonths(l.coverStart, waiting) && (
+                      <Field label="Waiting period" full>
+                        {form.cause === "CRITICAL_ILLNESS" ? (
+                          <span className="ws-hint">
+                            Within the {waiting}-month critical illness waiting period (to {addMonths(l.coverStart, waiting)}):
+                            not covered, whatever the cause.
+                          </span>
+                        ) : (
+                          <label className="ri-product">
+                            <input type="checkbox" checked={form.accidental} onChange={set("accidental")} />
+                            <span>
+                              The event was accidental. It falls within the {waiting}-month waiting period (to{" "}
+                              {addMonths(l.coverStart, waiting)}), when only accidental events are covered.
+                            </span>
+                          </label>
+                        )}
+                      </Field>
+                    )
+                  );
+                })()}
+                <Field label="Lender's account to pay" full>
+                  <input
+                    value={form.lenderAccount}
+                    onChange={set("lenderAccount")}
+                    placeholder="e.g. settlement account and reference"
+                    required
+                  />
                 </Field>
+                <Field label="Surplus payee (if any)" hint="Blank: the estate, unless the product names a beneficiary">
+                  <input value={form.surplusPayeeName} onChange={set("surplusPayeeName")} />
+                </Field>
+                <Field label="Relationship to the borrower">
+                  <input value={form.surplusPayeeRelationship} onChange={set("surplusPayeeRelationship")} />
+                </Field>
+                <p className="ws-hint" style={{ gridColumn: "1 / -1" }}>
+                  A second person verifies the lender's account and the surplus payee before the claim is paid.
+                </p>
               </>
+            )}
+            {form.kind === "verify" && (
+              <Field label="How the payment details were verified" full>
+                <textarea value={form.note} onChange={set("note")} rows={3} required />
+              </Field>
+            )}
+            {form.kind === "pay" && (
+              <Field label="Payment reference" full>
+                <input value={form.paymentReference} onChange={set("paymentReference")} required />
+              </Field>
             )}
             {form.kind === "settle" && (
               <>
@@ -801,19 +889,23 @@ function Lenders({ session, notify, profile, onChange }) {
       }
       return;
     }
-    const rows = form.rows
+    const cells = form.rows
       .split("\n")
       .map((line) => line.split(",").map((x) => x.trim()))
-      .filter((cells) => cells.length >= 3 && cells[0])
-      .map(([lenderLoanId, effectiveDate, balance]) => ({ lenderLoanId, effectiveDate, balance }));
+      .filter((c) => c.length >= 3 && c[0]);
+    // AT-IL05-02: a settlement file closes each loan once; sending it again closes nothing more.
+    const settlement = form.kind === "settlements";
+    const rows = settlement
+      ? cells.map(([lenderLoanId, settlementReference, settlementDate]) => ({ lenderLoanId, settlementReference, settlementDate }))
+      : cells.map(([lenderLoanId, effectiveDate, balance]) => ({ lenderLoanId, effectiveDate, balance }));
     const done = await save.run(() =>
-      request(session, "/credit/lenders/" + form.lenderRef + "/balances", {
+      request(session, "/credit/lenders/" + form.lenderRef + (settlement ? "/settlements" : "/balances"), {
         method: "POST",
-        body: { batchReference: form.batchReference, rows },
+        body: settlement ? { fileReference: form.batchReference, rows } : { batchReference: form.batchReference, rows },
       }),
     );
     if (done) {
-      setResult(done.data);
+      setResult({ ...done.data, kind: settlement ? "Settlement file " : "Balance file " });
       setForm(null);
       onChange();
     }
@@ -848,13 +940,24 @@ function Lenders({ session, notify, profile, onChange }) {
               label: "",
               render: (r) =>
                 manage && (
-                  <Button
-                    variant="secondary"
-                    icon={Upload}
-                    onClick={() => setForm({ kind: "file", lenderRef: r.ref, lenderName: r.name, batchReference: "", rows: "" })}
-                  >
-                    Balance file
-                  </Button>
+                  <span className="ws-row-actions">
+                    <Button
+                      variant="secondary"
+                      icon={Upload}
+                      onClick={() => setForm({ kind: "file", lenderRef: r.ref, lenderName: r.name, batchReference: "", rows: "" })}
+                    >
+                      Balance file
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      icon={Upload}
+                      onClick={() =>
+                        setForm({ kind: "settlements", lenderRef: r.ref, lenderName: r.name, batchReference: "", rows: "" })
+                      }
+                    >
+                      Settlement file
+                    </Button>
+                  </span>
                 ),
             },
           ]}
@@ -862,8 +965,18 @@ function Lenders({ session, notify, profile, onChange }) {
       </Panel>
       {result && (
         <Panel
-          title={"Balance file " + result.batchReference}
-          subtitle={result.applied + " applied · " + result.duplicates + " already received · " + result.conflicts + " held · " + result.unknown + " unknown"}
+          title={(result.kind || "Balance file ") + result.batchReference}
+          subtitle={
+            result.applied +
+            (result.kind === "Settlement file " ? " settled" : " applied") +
+            " · " +
+            result.duplicates +
+            " already received · " +
+            result.conflicts +
+            " held or blocked · " +
+            result.unknown +
+            " unknown"
+          }
         >
           <DataTable
             rows={result.results}
@@ -874,7 +987,11 @@ function Lenders({ session, notify, profile, onChange }) {
               {
                 key: "outcome",
                 label: "Result",
-                render: (r) => <Badge tone={r.outcome === "APPLIED" ? "green" : r.outcome === "DUPLICATE" ? undefined : "red"}>{r.outcome.replace("_", " ").toLowerCase()}</Badge>,
+                render: (r) => (
+                  <Badge tone={["APPLIED", "SETTLED"].includes(r.outcome) ? "green" : r.outcome === "DUPLICATE" ? undefined : "red"}>
+                    {r.outcome.replace("_", " ").toLowerCase()}
+                  </Badge>
+                ),
               },
               { key: "note", label: "Note", render: (r) => r.note || "—" },
             ]}
@@ -883,8 +1000,18 @@ function Lenders({ session, notify, profile, onChange }) {
       )}
       {form && (
         <Drawer
-          title={form.kind === "lender" ? "Add a lender" : "Balance file from " + form.lenderName}
-          description={form.kind === "file" ? "One loan per line: lender's loan id, balance date (YYYY-MM-DD), outstanding balance." : undefined}
+          title={
+            form.kind === "lender"
+              ? "Add a lender"
+              : (form.kind === "settlements" ? "Settlement file from " : "Balance file from ") + form.lenderName
+          }
+          description={
+            form.kind === "file"
+              ? "One loan per line: lender's loan id, balance date (YYYY-MM-DD), outstanding balance."
+              : form.kind === "settlements"
+                ? "One loan per line: lender's loan id, settlement reference, settlement date (YYYY-MM-DD). A loan already settled under the same reference is not closed again."
+                : undefined
+          }
           onClose={() => setForm(null)}
         >
           <FormGrid submitLabel={form.kind === "lender" ? "Add lender" : "Process file"} busy={save.busy} error={save.error} onSubmit={submit}>
@@ -907,7 +1034,7 @@ function Lenders({ session, notify, profile, onChange }) {
                     className="ws-textarea"
                     value={form.rows}
                     onChange={(e) => setForm({ ...form, rows: e.target.value })}
-                    placeholder={"LSH-1001, " + today() + ", 98500.00"}
+                    placeholder={form.kind === "settlements" ? "LSH-1001, SET-1001, " + today() : "LSH-1001, " + today() + ", 98500.00"}
                     required
                   />
                 </Field>
@@ -1015,7 +1142,7 @@ function Rule({ session, notify, profile }) {
             <div>
               <small>Entry age</small>
               <strong>
-                {r.minEntryAge}–{r.maxExitAge}
+                {r.minEntryAge}–{r.maxEntryAge}
               </strong>
             </div>
             <div>
@@ -1060,12 +1187,75 @@ function Rule({ session, notify, profile }) {
               <small>Refund deduction</small>
               <strong>{Number(r.refundDeductionPercent)}% of the unearned premium</strong>
             </div>
+            <div>
+              <small>Benefit waiting periods</small>
+              <strong>
+                Death {r.waitingMonths} · PD {r.pdWaitingMonths} · TD {r.tdWaitingMonths} · CI {r.ciWaitingMonths} months
+              </strong>
+            </div>
+            <div>
+              <small>Optional benefit loadings</small>
+              <strong>
+                TD +{Number(r.tdRatePerMille)} · CI +{Number(r.ciRatePerMille)} per 1,000
+              </strong>
+            </div>
+            <div>
+              <small>Optional benefit amounts</small>
+              <strong>
+                TD {r.tdBenefitMonths} instalments · CI {Number(r.ciBenefitPercent)}% of the balance
+              </strong>
+            </div>
+            <div>
+              <small>Claim balance valued at</small>
+              <strong>{r.valuationBasis === "NOTIFICATION_DATE" ? "The date the claim is notified" : "The event date"}</strong>
+            </div>
+            <div>
+              <small>Surplus paid to</small>
+              <strong>{r.surplusPayee === "NOMINATED_BENEFICIARY" ? "The nominated beneficiary" : "The estate"}</strong>
+            </div>
           </div>
         )}
+        <p className="ws-hint">Seeded figures are demo defaults pending the insurer's approved credit terms.</p>
       </Panel>
       {form && (
         <Drawer title="Change the Individual Credit rule" description="Loans already registered keep the premium and benefits they were given." onClose={() => setForm(null)}>
           <FormGrid submitLabel="Save" busy={save.busy} error={save.error} onSubmit={submit}>
+            <Field label="Maximum entry age">
+              <input type="number" min="0" max="120" value={form.maxEntryAge} onChange={set("maxEntryAge")} required />
+            </Field>
+            <Field label="Permanent disability waiting (months)">
+              <input type="number" min="0" value={form.pdWaitingMonths} onChange={set("pdWaitingMonths")} required />
+            </Field>
+            <Field label="Temporary disability waiting (months)">
+              <input type="number" min="0" value={form.tdWaitingMonths} onChange={set("tdWaitingMonths")} required />
+            </Field>
+            <Field label="Critical illness waiting (months)">
+              <input type="number" min="0" value={form.ciWaitingMonths} onChange={set("ciWaitingMonths")} required />
+            </Field>
+            <Field label="Temporary disability loading (per 1,000)">
+              <input type="number" min="0" step="0.0001" value={form.tdRatePerMille} onChange={set("tdRatePerMille")} required />
+            </Field>
+            <Field label="Critical illness loading (per 1,000)">
+              <input type="number" min="0" step="0.0001" value={form.ciRatePerMille} onChange={set("ciRatePerMille")} required />
+            </Field>
+            <Field label="Temporary disability pays (instalments)">
+              <input type="number" min="1" value={form.tdBenefitMonths} onChange={set("tdBenefitMonths")} required />
+            </Field>
+            <Field label="Critical illness pays (% of balance)">
+              <input type="number" min="1" max="100" step="0.01" value={form.ciBenefitPercent} onChange={set("ciBenefitPercent")} required />
+            </Field>
+            <Field label="Claim balance valued at">
+              <select value={form.valuationBasis} onChange={set("valuationBasis")}>
+                <option value="EVENT_DATE">The event date</option>
+                <option value="NOTIFICATION_DATE">The date the claim is notified</option>
+              </select>
+            </Field>
+            <Field label="Surplus paid to">
+              <select value={form.surplusPayee} onChange={set("surplusPayee")}>
+                <option value="ESTATE">The estate</option>
+                <option value="NOMINATED_BENEFICIARY">The nominated beneficiary</option>
+              </select>
+            </Field>
             <Field label="Minimum entry age">
               <input type="number" value={form.minEntryAge} onChange={set("minEntryAge")} required />
             </Field>
