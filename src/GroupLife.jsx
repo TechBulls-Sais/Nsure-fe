@@ -98,10 +98,12 @@ export default function GroupLife({ session, notify, profile }) {
           ["quotes", "Quotations"],
           ["schemes", "Benefits, certificates & loans"],
           ["events", "Renewals & closures"],
+          ["rates", "Rate tables & sponsors"],
         ]}
       />
       {tab === "quotes" && <Quotes session={session} notify={notify} profile={profile} resource={quotes} onChange={reload} />}
       {tab === "schemes" && <SchemeDetail session={session} notify={notify} profile={profile} schemes={schemes.data || []} />}
+      {tab === "rates" && <RatesAndSponsors session={session} notify={notify} profile={profile} />}
       {tab === "events" && (
         <SchemeEvents session={session} notify={notify} profile={profile} resource={events} schemes={schemes.data || []} onChange={reload} />
       )}
@@ -112,17 +114,43 @@ export default function GroupLife({ session, notify, profile }) {
 // ── quotations ──────────────────────────────────────────────────────────────────────────────────
 
 const blankQuote = () => ({
+  sponsorRef: "",
   sponsorName: "",
   sector: "",
   lives: "",
   salaryRoll: "",
   benefits: ["GLA"],
-  ratingBasis: "SALARY",
+  ratingBasis: "SUM_ASSURED",
+  rateSource: "TABLE",
   salaryMultiple: 2,
   ratePerMille: "",
+  adjustmentPercent: "",
+  expensePercent: "",
+  commissionPercent: "",
+  profitPercent: "",
+  validityDays: "",
   freeCoverLimit: "",
+  census: "",
+  categories: [],
   notes: "",
 });
+const RATE_UNIT = {
+  SALARY: "per 1,000 of salary a year",
+  SUM_ASSURED: "per 1,000 of sum assured a year",
+  PER_MEMBER: "per member a year",
+  LOAN_BALANCE: "per 1,000 of loan balance a year",
+};
+const CENSUS_TEMPLATE = "memberKey,dateOfBirth,category,salary,loanBalance";
+/** The quote form as the API wants it: empty optional fields left out, loadings grouped as assumptions. */
+const quoteBody = (form) => {
+  const { revising, expensePercent, commissionPercent, profitPercent, ...rest } = form;
+  const body = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== "" && v !== null && !(Array.isArray(v) && !v.length)));
+  if (body.rateSource === "TABLE") delete body.ratePerMille;
+  const assumptions = Object.fromEntries(Object.entries({ expensePercent, commissionPercent, profitPercent }).filter(([, v]) => v !== "" && v != null));
+  if (Object.keys(assumptions).length) body.assumptions = assumptions;
+  if (body.categories) body.categories = body.categories.map((c) => ({ ...c, salaryMultiple: c.benefitBasis === "SALARY_MULTIPLE" ? c.salaryMultiple : undefined, fixedCover: c.benefitBasis === "FIXED" ? c.fixedCover : undefined }));
+  return body;
+};
 
 function Quotes({ session, notify, profile, resource, onChange }) {
   const [form, setFormState] = useState(null);
@@ -139,10 +167,21 @@ function Quotes({ session, notify, profile, resource, onChange }) {
   };
   const me = session?.username;
   const manage = can(profile, "MANAGE_SCHEME");
+  const sponsors = useResource(session, "/group-life/sponsors", []);
+  const [viewing, setViewing] = useState(null); // the quote version whose terms are open
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   const toggle = (b) => setForm({ ...form, benefits: form.benefits.includes(b) ? form.benefits.filter((x) => x !== b) : [...form.benefits, b] });
+  const setCategory = (i, key, value) => setForm({ ...form, categories: form.categories.map((c, j) => (j === i ? { ...c, [key]: value } : c)) });
+  const readCensus = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setForm({ ...form, census: String(reader.result || "") });
+    reader.readAsText(file);
+  };
   const save = async () => {
-    const { revising, ...body } = form;
+    const { revising } = form;
+    const body = quoteBody(form);
     const done = await action.run(
       () => request(session, revising ? "/group-life/quotes/" + revising + "/revision" : "/group-life/quotes", { method: "POST", body }),
       revising ? "New version saved" : "Quotation created",
@@ -184,6 +223,7 @@ function Quotes({ session, notify, profile, resource, onChange }) {
           rows={resource.data}
           loading={resource.loading}
           rowKey={(r) => r.ref + "-" + r.version}
+          onRowClick={setViewing}
           empty="No quotations"
           searchPlaceholder="Search quotations, sponsors…"
           columns={[
@@ -191,7 +231,17 @@ function Quotes({ session, notify, profile, resource, onChange }) {
             { key: "sponsorName", label: "Sponsor" },
             { key: "lives", label: "Lives", align: "right" },
             { key: "benefits", label: "Benefits", render: (r) => r.benefits.map((b) => BENEFIT[b] || b).join(", ") },
-            { key: "ratePerMille", label: "Rate ‰", align: "right", render: (r) => Number(r.ratePerMille) },
+            { key: "ratePerMille", label: "Rate", align: "right", render: (r) => <span title={r.rateUnit}>{Number(r.ratePerMille)}</span> },
+            {
+              key: "pricingStatus",
+              label: "Pricing",
+              render: (r) =>
+                r.pricingStatus === "INDICATIVE" ? (
+                  <Badge tone="amber">Indicative</Badge>
+                ) : (
+                  <span className="ws-hint">{r.rateSource === "NEGOTIATED" ? "Negotiated" : r.rateTables || "Rated"}{r.census ? " · census v" + r.census.version : ""}</span>
+                ),
+            },
             { key: "annualPremium", label: "Annual premium", align: "right", sortValue: (r) => Number(r.annualPremium), render: (r) => pula(r.annualPremium) },
             { key: "freeCoverLimit", label: "Free cover", align: "right", render: (r) => (r.freeCoverLimit == null ? "Not set" : pula(r.freeCoverLimit)) },
             { key: "status", label: "Status", render: (r) => badge(Q_STATUS, r.status) },
@@ -225,17 +275,24 @@ function Quotes({ session, notify, profile, resource, onChange }) {
                         variant="secondary"
                         onClick={() =>
                           setForm({
+                            ...blankQuote(),
                             revising: r.ref,
+                            sponsorRef: r.sponsorRef || "",
                             sponsorName: r.sponsorName,
                             sector: r.sector,
                             lives: r.lives,
                             salaryRoll: r.salaryRoll,
                             benefits: r.benefits,
                             ratingBasis: r.ratingBasis,
+                            rateSource: r.rateSource || "TABLE",
                             salaryMultiple: r.salaryMultiple,
-                            ratePerMille: r.ratePerMille,
+                            ratePerMille: r.rateSource === "NEGOTIATED" ? r.ratePerMille : "",
+                            adjustmentPercent: r.adjustmentPercent ?? "",
+                            expensePercent: r.assumptions?.expensePercent ?? "",
+                            commissionPercent: r.assumptions?.commissionPercent ?? "",
+                            profitPercent: r.assumptions?.profitPercent ?? "",
+                            validityDays: r.validityDays ?? "",
                             freeCoverLimit: r.freeCoverLimit ?? "",
-                            notes: "",
                           })
                         }
                       >
@@ -251,46 +308,78 @@ function Quotes({ session, notify, profile, resource, onChange }) {
       </Panel>
       {form && (
         <Drawer
+          size="lg"
           title={form.revising ? "Revise " + form.revising : "New scheme quotation"}
-          description="The premium is the sum assured (salary roll × multiple) at the rate per 1,000."
+          description="Rated on a validated census: by the stated basis with the approved rate tables plus loadings, or on a negotiated rate. Without a valid census the price is indicative and cannot be submitted."
           onClose={() => setForm(null)}
         >
           <FormGrid submitLabel={form.revising ? "Save new version" : "Create quotation"} busy={action.busy} error={action.error} onSubmit={save}>
+            <Field label="Prospect sponsor" hint="A registered sponsor, or type a new prospect's name below.">
+              <select
+                value={form.sponsorRef}
+                onChange={(e) => {
+                  const sp = (sponsors.data || []).find((x) => x.ref === e.target.value);
+                  setForm({ ...form, sponsorRef: e.target.value, sponsorName: sp ? sp.legalName : form.sponsorName, sector: sp ? sp.sector : form.sector });
+                }}
+              >
+                <option value="">New prospect</option>
+                {(sponsors.data || []).map((sp) => (
+                  <option key={sp.ref} value={sp.ref}>
+                    {sp.ref} · {sp.legalName}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Sponsor (employer)">
-              <input value={form.sponsorName} onChange={set("sponsorName")} required />
+              <input value={form.sponsorName} onChange={set("sponsorName")} required disabled={Boolean(form.sponsorRef)} />
             </Field>
             <Field label="Sector">
               <input value={form.sector} onChange={set("sector")} required />
             </Field>
-            <Field label="Lives in the census">
-              <input type="number" min="1" value={form.lives} onChange={set("lives")} required />
-            </Field>
-            <Field label="Annual salary roll (BWP)">
-              <input type="number" min="1" step="0.01" value={form.salaryRoll} onChange={set("salaryRoll")} required />
-            </Field>
-            <Field label="Rating basis">
+            <Field label="Rating basis" hint={RATE_UNIT[form.ratingBasis]}>
               <select value={form.ratingBasis} onChange={set("ratingBasis")}>
-                <option value="SALARY">Salary</option>
                 <option value="SUM_ASSURED">Sum assured</option>
+                <option value="SALARY">Salary</option>
                 <option value="PER_MEMBER">Per member</option>
                 <option value="LOAN_BALANCE">Loan balance</option>
               </select>
             </Field>
-            <Field label="Salary multiple">
-              <input type="number" min="0.01" step="0.01" value={form.salaryMultiple} onChange={set("salaryMultiple")} required />
+            <Field label="Rates from" hint={form.rateSource === "TABLE" ? "The approved rate table version for each benefit (demo tables until the insurer's are approved)." : "A rate agreed in negotiation, recorded as such."}>
+              <select value={form.rateSource} onChange={set("rateSource")}>
+                <option value="TABLE">Approved rate tables</option>
+                <option value="NEGOTIATED">Negotiated rate</option>
+              </select>
             </Field>
-            <Field
-              label="Rate per 1,000"
-              hint={
-                form.salaryRoll && form.ratePerMille
-                  ? "Annual premium " + pula((Number(form.salaryRoll) * Number(form.salaryMultiple || 1) * Number(form.ratePerMille)) / 1000)
-                  : undefined
-              }
-            >
-              <input type="number" min="0.0001" step="0.0001" value={form.ratePerMille} onChange={set("ratePerMille")} required />
+            {form.rateSource === "NEGOTIATED" ? (
+              <Field label={"Negotiated rate " + RATE_UNIT[form.ratingBasis]}>
+                <input type="number" min="0.0001" step="0.0001" value={form.ratePerMille} onChange={set("ratePerMille")} required />
+              </Field>
+            ) : (
+              <Field label="Adjustment (%)" hint="Negotiated loading (+) or discount (−) on the table premium.">
+                <input type="number" min="-50" max="100" step="0.01" value={form.adjustmentPercent} onChange={set("adjustmentPercent")} />
+              </Field>
+            )}
+            <Field label="Salary multiple" hint="Sum assured per member when no category design is given.">
+              <input type="number" min="0.01" step="0.01" value={form.salaryMultiple} onChange={set("salaryMultiple")} required />
             </Field>
             <Field label="Free-cover limit (BWP)" hint="Needed before activation">
               <input type="number" min="0" step="0.01" value={form.freeCoverLimit} onChange={set("freeCoverLimit")} />
+            </Field>
+            {form.rateSource === "TABLE" && (
+              <>
+                <Field label="Expense loading (%)" hint="Blank: the demo default (10%).">
+                  <input type="number" min="0" max="50" step="0.01" value={form.expensePercent} onChange={set("expensePercent")} />
+                </Field>
+                <Field label="Commission (%)" hint="Blank: the demo default (5%).">
+                  <input type="number" min="0" max="50" step="0.01" value={form.commissionPercent} onChange={set("commissionPercent")} />
+                </Field>
+                <Field label="Profit margin (%)" hint="Blank: the demo default (5%).">
+                  <input type="number" min="0" max="50" step="0.01" value={form.profitPercent} onChange={set("profitPercent")} />
+                </Field>
+              </>
+            )}
+            <Field label="Valid for (days)" hint="Blank: 30 days (demo default).">
+              <input type="number" min="1" max="180" value={form.validityDays} onChange={set("validityDays")} />
             </Field>
             <div className="form-label full" role="group" aria-label="Benefits">
               <span>Benefits</span>
@@ -303,11 +392,71 @@ function Quotes({ session, notify, profile, resource, onChange }) {
                 ))}
               </div>
             </div>
+            <div className="form-label full" role="group" aria-label="Benefit design by category">
+              <span>Benefit design by category {form.revising && !form.categories.length ? "(kept from the previous version)" : "(optional)"}</span>
+              {form.categories.map((c, i) => (
+                <div key={i} className="field-grid gl-category-row">
+                  <Field label="Code"><input value={c.code} onChange={(e) => setCategory(i, "code", e.target.value.toUpperCase())} maxLength={20} required /></Field>
+                  <Field label="Name"><input value={c.name} onChange={(e) => setCategory(i, "name", e.target.value)} maxLength={100} required /></Field>
+                  <Field label="Cover">
+                    <select value={c.benefitBasis} onChange={(e) => setCategory(i, "benefitBasis", e.target.value)}>
+                      <option value="SALARY_MULTIPLE">Salary multiple</option>
+                      <option value="FIXED">Fixed amount</option>
+                    </select>
+                  </Field>
+                  {c.benefitBasis === "FIXED" ? (
+                    <Field label="Fixed cover (BWP)"><input type="number" min="1" step="0.01" value={c.fixedCover} onChange={(e) => setCategory(i, "fixedCover", e.target.value)} required /></Field>
+                  ) : (
+                    <Field label="Multiple"><input type="number" min="0.01" step="0.01" value={c.salaryMultiple} onChange={(e) => setCategory(i, "salaryMultiple", e.target.value)} required /></Field>
+                  )}
+                  <Button variant="secondary" onClick={() => setForm({ ...form, categories: form.categories.filter((_, j) => j !== i) })}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <div>
+                <Button variant="secondary" icon={Plus} onClick={() => setForm({ ...form, categories: [...form.categories, { code: "", name: "", benefitBasis: "SALARY_MULTIPLE", salaryMultiple: form.salaryMultiple, fixedCover: "" }] })}>
+                  Add a category
+                </Button>
+              </div>
+            </div>
+            <Field label="Census (CSV)" full hint={"Header row: " + CENSUS_TEMPLATE + " (category where the design has categories, loanBalance for the loan-balance basis). Rated only once every row is valid." + (form.revising ? " Blank keeps the previous version's census." : "")}>
+              <textarea className="ws-textarea" value={form.census} onChange={set("census")} rows={5} placeholder={CENSUS_TEMPLATE + "\nE001,1985-04-12,STAFF,240000,"} />
+            </Field>
+            <label className="ga-file">
+              <Button variant="secondary" icon={Upload} type="button">
+                Load census file
+              </Button>
+              <input type="file" accept=".csv,text/csv,text/plain" onChange={readCensus} aria-label="Load census file" />
+            </label>
+            {!form.census && !form.revising && (
+              <>
+                <Field label="Lives (indicative only)">
+                  <input type="number" min="0" value={form.lives} onChange={set("lives")} />
+                </Field>
+                <Field label="Annual salary roll (indicative only)">
+                  <input type="number" min="0" step="0.01" value={form.salaryRoll} onChange={set("salaryRoll")} />
+                </Field>
+              </>
+            )}
             <Field label="Notes" full>
               <textarea value={form.notes} onChange={set("notes")} rows={2} />
             </Field>
           </FormGrid>
         </Drawer>
+      )}
+      {viewing && (
+        <QuoteTermsDrawer
+          session={session}
+          notify={notify}
+          quote={viewing}
+          manage={manage && viewing.status === "DRAFT" && latest[viewing.ref] === viewing.version}
+          onClose={() => setViewing(null)}
+          onChange={() => {
+            setViewing(null);
+            onChange();
+          }}
+        />
       )}
       {step?.kind === "decide" && (
         <Drawer title={"Decide " + step.quote.ref + " v" + step.quote.version} description={step.quote.sponsorName + " · " + pula(step.quote.annualPremium) + " a year"} onClose={() => setStep(null)}>
@@ -335,6 +484,305 @@ function Quotes({ session, notify, profile, resource, onChange }) {
             onChange();
           }}
         />
+      )}
+    </>
+  );
+}
+
+/** One quotation version's terms: census validation summary, pricing breakdown, assumptions and approval history. */
+function QuoteTermsDrawer({ session, notify, quote, manage, onClose, onChange }) {
+  const census = useResource(session, quote.census ? "/group-life/quotes/" + quote.ref + "/census/" + quote.census.version : null, null);
+  const history = useResource(session, "/group-life/quotes/" + quote.ref + "/history", []);
+  const [csv, setCsv] = useState("");
+  const [errorsOnly, setErrorsOnly] = useState(true);
+  const action = useAction(inlineErrors(notify));
+  const upload = async () => {
+    const done = await action.run(() => request(session, "/group-life/quotes/" + quote.ref + "/census", { method: "POST", body: { csv } }), "Census checked and the quotation priced again");
+    if (done) onChange();
+  };
+  const c = quote.census;
+  const rows = (census.data?.rows || []).filter((r) => !errorsOnly || r.status !== "VALID");
+  return (
+    <Drawer size="lg" title={quote.ref + " v" + quote.version + " · " + quote.sponsorName} description={(Q_STATUS[quote.status]?.[0] || quote.status) + " · valid until " + quote.validUntil} onClose={onClose}>
+      <div className="ga-drawer-section">
+        <h3>Pricing</h3>
+        <div className="ws-kv">
+          <div><small>Annual premium</small><strong>{pula(quote.annualPremium)}</strong></div>
+          <div><small>Status</small><strong>{quote.pricingStatus === "INDICATIVE" ? "Indicative (not submittable)" : "Rated on the census"}</strong></div>
+          <div><small>Rates from</small><strong>{quote.rateSource === "NEGOTIATED" ? "Negotiated rate " + Number(quote.ratePerMille) + " " + quote.rateUnit : quote.rateTables || "—"}</strong></div>
+          <div><small>Office rate</small><strong>{Number(quote.ratePerMille)} {quote.rateUnit}</strong></div>
+          {quote.rateSource !== "NEGOTIATED" && <div><small>Risk premium (tables)</small><strong>{pula(quote.technicalPremium)}</strong></div>}
+          {quote.rateSource !== "NEGOTIATED" && (
+            <div>
+              <small>Loadings</small>
+              <strong>
+                expense {Number(quote.assumptions?.expensePercent || 0)}% · commission {Number(quote.assumptions?.commissionPercent || 0)}% · profit {Number(quote.assumptions?.profitPercent || 0)}%
+              </strong>
+            </div>
+          )}
+          <div><small>Adjustment</small><strong>{Number(quote.adjustmentPercent || 0)}%</strong></div>
+          <div><small>Sponsor record</small><strong>{quote.sponsorRef || "New prospect (created on activation)"}</strong></div>
+        </div>
+        {quote.pricing?.indicativeReason && <p className="ga-status-note">{quote.pricing.indicativeReason}</p>}
+        {(quote.pricing?.benefits || []).length > 0 && (
+          <DataTable
+            rows={quote.pricing.benefits}
+            rowKey={(b) => b.benefit || "negotiated"}
+            searchFrom={50}
+            columns={[
+              { key: "benefit", label: "Benefit", render: (b) => (b.benefit ? BENEFIT[b.benefit] || b.benefit : (b.benefits || []).map((x) => BENEFIT[x] || x).join(", ")) },
+              { key: "basis", label: "Basis", render: (b) => RATE_UNIT[b.basis] || b.basis },
+              { key: "source", label: "Rate source" },
+              { key: "premium", label: "Risk premium", align: "right", render: (b) => pula(b.premium) },
+            ]}
+          />
+        )}
+        {(quote.pricing?.categories || []).length > 0 && (
+          <DataTable
+            rows={quote.pricing.categories}
+            rowKey={(x) => x.category}
+            searchFrom={50}
+            columns={[
+              { key: "category", label: "Category" },
+              { key: "lives", label: "Lives", align: "right" },
+              { key: "sumAssured", label: "Sum assured", align: "right", render: (x) => pula(x.sumAssured) },
+              { key: "annualPremium", label: "Premium a year", align: "right", render: (x) => pula(x.annualPremium) },
+              { key: "monthlyRatePerMille", label: "Monthly rate ‰", align: "right", render: (x) => (x.monthlyRatePerMille != null ? Number(x.monthlyRatePerMille) : "—") },
+            ]}
+          />
+        )}
+      </div>
+      <div className="ga-drawer-section">
+        <h3>Census validation summary</h3>
+        {c ? (
+          <>
+            <div className="ws-kv">
+              <div><small>Census</small><strong>v{c.version} · {c.status === "VALID" ? "valid" : "has errors"}</strong></div>
+              <div><small>Rows</small><strong>{c.totalRows} · {c.validRows} valid · {c.invalidRows} invalid</strong></div>
+              <div><small>Lives rated</small><strong>{c.lives}</strong></div>
+              <div><small>Salary roll</small><strong>{pula(c.salaryRoll)}</strong></div>
+              <div><small>Average age</small><strong>{c.averageAge ?? "—"}</strong></div>
+              <div><small>Received</small><strong>{c.submittedBy} · {when(c.submittedAt)}</strong></div>
+            </div>
+            {(c.warnings || []).length > 0 && (
+              <ul className="uw-list">
+                {c.warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            )}
+            <label className="ga-check">
+              <input type="checkbox" checked={errorsOnly} onChange={(e) => setErrorsOnly(e.target.checked)} /> Rows with errors only
+            </label>
+            <DataTable
+              rows={rows}
+              loading={census.loading}
+              rowKey={(r) => r.lineNo}
+              searchFrom={30}
+              empty={errorsOnly ? "No row has an error" : "No rows"}
+              columns={[
+                { key: "lineNo", label: "Line", align: "right" },
+                { key: "memberKey", label: "Member" },
+                { key: "dateOfBirth", label: "Born" },
+                { key: "category", label: "Category", render: (r) => r.category || "—" },
+                { key: "salary", label: "Salary", align: "right", render: (r) => r.salary || "—" },
+                { key: "status", label: "Outcome", render: (r) => <Badge tone={r.status === "VALID" ? "green" : "red"}>{r.status === "VALID" ? "Valid" : "Invalid"}</Badge> },
+                { key: "error", label: "Error", render: (r) => (r.error ? <span className="ga-row-error">{r.error}</span> : "—") },
+              ]}
+            />
+          </>
+        ) : (
+          <p className="ws-hint">No census yet: the price is indicative, from the lives and salary roll entered.</p>
+        )}
+        {manage && (
+          <FormGrid submitLabel="Check census and price again" busy={action.busy} error={action.error} onSubmit={upload}>
+            <Field label={"New census (CSV) for v" + quote.version} full hint={"Header row: " + CENSUS_TEMPLATE}>
+              <textarea className="ws-textarea" value={csv} onChange={(e) => setCsv(e.target.value)} rows={4} required />
+            </Field>
+          </FormGrid>
+        )}
+      </div>
+      <div className="ga-drawer-section">
+        <h3>Approval history</h3>
+        <DataTable
+          rows={history.data}
+          loading={history.loading}
+          rowKey={(h) => h.at + h.action}
+          searchFrom={50}
+          empty="No history"
+          columns={[
+            { key: "at", label: "When", render: (h) => when(h.at) },
+            { key: "action", label: "Step" },
+            { key: "detail", label: "Detail", render: (h) => h.detail || "—" },
+            { key: "actor", label: "By" },
+          ]}
+        />
+      </div>
+    </Drawer>
+  );
+}
+
+/**
+ * Versioned group rate tables (section 08 pricing: a draft version is approved by a second person and only new
+ * quotations use it) and the sponsor register (prospects and clients).
+ */
+function RatesAndSponsors({ session, notify, profile }) {
+  const tables = useResource(session, "/group-life/rate-tables", []);
+  const sponsors = useResource(session, "/group-life/sponsors", []);
+  const [form, setForm] = useState(null);
+  const [open, setOpen] = useState(null);
+  const action = useAction(inlineErrors(notify));
+  const me = session?.username;
+  const draft = (t) => {
+    action.setError("");
+    setForm({ kind: "table", tableCode: t?.tableCode || "", label: t?.label || "", benefitType: t?.benefitType || "GLA", ratingBasis: t?.ratingBasis || "SUM_ASSURED", note: "", bands: (t?.bands || [{ ageFrom: 16, ageTo: 70, rate: "" }]).map((b) => ({ ...b })) });
+  };
+  const setBand = (i, key, value) => setForm({ ...form, bands: form.bands.map((b, j) => (j === i ? { ...b, [key]: value } : b)) });
+  const submit = async () => {
+    const { kind, ...body } = form;
+    const done = await action.run(
+      () => request(session, kind === "table" ? "/group-life/rate-tables" : "/group-life/sponsors", { method: "POST", body }),
+      kind === "table" ? "Draft rate table saved for approval" : "Sponsor registered",
+    );
+    if (done) {
+      setForm(null);
+      tables.reload();
+      sponsors.reload();
+    }
+  };
+  const approve = async (t) => {
+    const done = await action.run(() => request(session, "/group-life/rate-tables/" + t.tableCode + "/versions/" + t.version + "/approval", { method: "POST" }), t.tableCode + " v" + t.version + " approved");
+    if (done) tables.reload();
+  };
+  return (
+    <>
+      <Panel
+        title="Group rate tables"
+        subtitle="Risk rates by age band for each benefit and basis. The seeded tables are demo tables, not the insurer's tariff. A new version takes effect for new quotations once a second person approves it."
+        action={
+          can(profile, "CREATE_RATE_TABLE") && (
+            <Button icon={Plus} onClick={() => draft(null)}>
+              New rate table
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={tables.error || (!form ? action.error : "")} />
+        <DataTable
+          rows={tables.data}
+          loading={tables.loading}
+          rowKey={(t) => t.tableCode + "-" + t.version}
+          onRowClick={setOpen}
+          empty="No group rate tables"
+          columns={[
+            { key: "tableCode", label: "Table", render: (t) => t.tableCode + " v" + t.version },
+            { key: "label", label: "Label" },
+            { key: "benefitType", label: "Benefit", render: (t) => BENEFIT[t.benefitType] || t.benefitType },
+            { key: "unit", label: "Rate" },
+            { key: "bands", label: "Bands", align: "right", render: (t) => t.bands.length },
+            { key: "status", label: "Status", render: (t) => <Badge tone={t.status === "APPROVED" ? "green" : t.status === "DRAFT" ? "amber" : undefined}>{t.status.charAt(0) + t.status.slice(1).toLowerCase()}</Badge> },
+            {
+              key: "act",
+              label: "",
+              render: (t) => (
+                <div className="ws-row-actions">
+                  {t.status === "DRAFT" && can(profile, "PUBLISH_RATE_TABLE") && (t.createdBy === me ? <small className="ws-hint">Needs another approver</small> : (
+                    <Button variant="secondary" busy={action.busy} onClick={() => approve(t)}>
+                      Approve
+                    </Button>
+                  ))}
+                  {t.status === "APPROVED" && can(profile, "CREATE_RATE_TABLE") && (
+                    <Button variant="secondary" onClick={() => draft(t)}>
+                      New version
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      <Panel
+        title="Sponsors"
+        subtitle="Employers and other sponsors: prospects while quoted, clients once a master policy is activated for them."
+        action={
+          can(profile, "MANAGE_SCHEME") && (
+            <Button icon={Plus} onClick={() => { action.setError(""); setForm({ kind: "sponsor", legalName: "", registrationNo: "", sector: "", contactName: "", contactEmail: "" }); }}>
+              New prospect
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={sponsors.error} />
+        <DataTable
+          rows={sponsors.data}
+          loading={sponsors.loading}
+          rowKey={(x) => x.ref}
+          empty="No sponsors yet"
+          columns={[
+            { key: "ref", label: "Sponsor" },
+            { key: "legalName", label: "Legal name" },
+            { key: "registrationNo", label: "Registration", render: (x) => x.registrationNo || "—" },
+            { key: "sector", label: "Sector" },
+            { key: "contactName", label: "Contact", render: (x) => [x.contactName, x.contactEmail].filter(Boolean).join(" · ") || "—" },
+            { key: "status", label: "Status", render: (x) => <Badge tone={x.status === "CLIENT" ? "green" : "blue"}>{x.status === "CLIENT" ? "Client" : "Prospect"}</Badge> },
+          ]}
+        />
+      </Panel>
+      {open && (
+        <Drawer title={open.tableCode + " v" + open.version} description={open.label + " · " + open.unit} onClose={() => setOpen(null)}>
+          <p className="ws-hint">{open.note || ""} {open.approvedBy ? "Approved by " + open.approvedBy + "." : ""}</p>
+          <DataTable
+            rows={open.bands}
+            rowKey={(b) => b.ageFrom}
+            searchFrom={50}
+            columns={[
+              { key: "ageFrom", label: "Ages", render: (b) => b.ageFrom + "–" + b.ageTo },
+              { key: "rate", label: "Rate", align: "right", render: (b) => Number(b.rate) },
+            ]}
+          />
+        </Drawer>
+      )}
+      {form?.kind === "table" && (
+        <Drawer size="lg" title={form.tableCode ? "New version of " + form.tableCode : "New rate table"} description="Saved as a draft; a second person approves it before new quotations use it." onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Save draft" busy={action.busy} error={action.error} onSubmit={submit}>
+            <Field label="Table code"><input value={form.tableCode} onChange={(e) => setForm({ ...form, tableCode: e.target.value.toUpperCase() })} maxLength={30} required /></Field>
+            <Field label="Label"><input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} maxLength={150} required /></Field>
+            <Field label="Benefit">
+              <select value={form.benefitType} onChange={(e) => setForm({ ...form, benefitType: e.target.value })}>
+                {Object.entries(BENEFIT).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </Field>
+            <Field label="Basis">
+              <select value={form.ratingBasis} onChange={(e) => setForm({ ...form, ratingBasis: e.target.value })}>
+                {Object.entries(RATE_UNIT).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </Field>
+            {form.bands.map((b, i) => (
+              <div key={i} className="field-grid gl-category-row">
+                <Field label="From age"><input type="number" min="0" max="120" value={b.ageFrom} onChange={(e) => setBand(i, "ageFrom", e.target.value)} required /></Field>
+                <Field label="To age"><input type="number" min="0" max="120" value={b.ageTo} onChange={(e) => setBand(i, "ageTo", e.target.value)} required /></Field>
+                <Field label="Rate"><input type="number" min="0.0001" step="0.0001" value={b.rate} onChange={(e) => setBand(i, "rate", e.target.value)} required /></Field>
+                {form.bands.length > 1 && <Button variant="secondary" onClick={() => setForm({ ...form, bands: form.bands.filter((_, j) => j !== i) })}>Remove</Button>}
+              </div>
+            ))}
+            <div className="form-label full">
+              <Button variant="secondary" icon={Plus} onClick={() => setForm({ ...form, bands: [...form.bands, { ageFrom: "", ageTo: "", rate: "" }] })}>Add a band</Button>
+            </div>
+            <Field label="Note" full><textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} rows={2} /></Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {form?.kind === "sponsor" && (
+        <Drawer title="New prospect sponsor" onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Register sponsor" busy={action.busy} error={action.error} onSubmit={submit}>
+            <Field label="Legal name"><input value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} maxLength={150} required /></Field>
+            <Field label="Registration number"><input value={form.registrationNo} onChange={(e) => setForm({ ...form, registrationNo: e.target.value })} maxLength={40} /></Field>
+            <Field label="Sector"><input value={form.sector} onChange={(e) => setForm({ ...form, sector: e.target.value })} maxLength={80} required /></Field>
+            <Field label="Contact name"><input value={form.contactName} onChange={(e) => setForm({ ...form, contactName: e.target.value })} maxLength={100} /></Field>
+            <Field label="Contact e-mail"><input type="email" value={form.contactEmail} onChange={(e) => setForm({ ...form, contactEmail: e.target.value })} maxLength={150} /></Field>
+          </FormGrid>
+        </Drawer>
       )}
     </>
   );
