@@ -44,6 +44,7 @@ import {
 } from "./GroupBilling";
 import RenewalTab from "./GroupRenewal";
 import GroupCreditTab from "./GroupCredit";
+import { ActivationWizard, openPdf } from "./GroupLife";
 
 // Group administration (GL01-GL05): schemes and benefit categories, members as cover episodes with underwriting of
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
@@ -59,6 +60,7 @@ const MEMBER_TONES = {
   DECLINED: "red",
   CEASED: "gray",
   SUSPENDED: "amber",
+  COVER_DEFERRED: "amber",
 };
 const ROW_TONES = { VALID: "green", APPLIED: "green", INVALID: "red", REJECTED: "red", HELD: "amber" };
 const INVOICE_TONES = { ISSUED: "blue", PARTIALLY_PAID: "amber", PAID: "green" };
@@ -182,7 +184,7 @@ export default function GroupAdmin({ session, notify, profile }) {
       >
         {can(profile, "MANAGE_SCHEME") && (
           <Button icon={Plus} onClick={() => setCreating(true)}>
-            New scheme
+            New scheme (set-up)
           </Button>
         )}
       </Heading>
@@ -228,7 +230,7 @@ export default function GroupAdmin({ session, notify, profile }) {
                     {s.ref} · {s.sector}
                   </p>
                 </div>
-                <Badge>{label(s.status)}</Badge>
+                <Badge tone={s.status === "SETUP" ? "amber" : undefined}>{s.status === "SETUP" ? "In set-up" : label(s.status)}</Badge>
               </div>
               <div className="scheme-meta">
                 <div>
@@ -258,7 +260,8 @@ export default function GroupAdmin({ session, notify, profile }) {
 
       <Panel
         title="Member underwriting queue"
-        subtitle="Cover pending underwriting across all schemes, oldest first: requested against the free-cover limit, the actively-at-work declaration and why it was referred."
+        subtitle="Cover pending underwriting across all schemes, oldest first: requested against the free-cover limit, the actively-at-work declaration, why it was referred, evidence outstanding and decisions waiting for authority or the member."
+        action={can(profile, "UNDERWRITE_MEMBER") ? <ExpiryRun session={session} notify={notify} onDone={queue.reload} /> : null}
       >
         <ErrorNote error={queue.error} />
         <DataTable
@@ -280,6 +283,8 @@ export default function GroupAdmin({ session, notify, profile }) {
             { key: "pendingCover", label: "Pending", align: "right", render: (m) => <strong className="ga-pending">{pula(m.pendingCover)}</strong> },
             { key: "activelyAtWork", label: "At work", render: (m) => (m.activelyAtWork == null ? "Not declared" : m.activelyAtWork ? "Yes" : "No") },
             { key: "referredBecause", label: "Referred because", render: (m) => m.referredBecause || "—" },
+            { key: "evidenceOutstanding", label: "Evidence", render: (m) => (m.evidenceOutstanding > 0 ? <Badge tone="amber">{m.evidenceOutstanding} outstanding</Badge> : <span className="ga-muted">Complete</span>) },
+            { key: "decisionStatus", label: "Decision", render: (m) => (m.decisionStatus ? <Badge tone="blue">{m.decisionStatus === "OFFERED" ? "Offer with member" : "Awaiting authority"}</Badge> : "—") },
             { key: "schemeCoverPending", label: "Scheme pending / in force", align: "right", render: (m) => `${pula(m.schemeCoverPending)} / ${pula(m.schemeCoverInForce)}` },
             { key: "waitingSince", label: "Waiting since", render: (m) => when(m.waitingSince) },
             ...(can(profile, "UNDERWRITE_MEMBER")
@@ -342,6 +347,23 @@ export default function GroupAdmin({ session, notify, profile }) {
   );
 }
 
+/** Lapses underwriting offers past their expiry now (the daily run, on demand): MemberDecisionExpired. */
+function ExpiryRun({ session, notify, onDone }) {
+  const action = useAction(notify);
+  const run = async () => {
+    const r = await action.run(() => request(session, "/group/underwriting/expiry-run", { method: "POST" }));
+    if (r) {
+      notify?.(r.data.expired ? `${r.data.expired} expired offer(s) lapsed` : "No offer has expired", "success");
+      onDone();
+    }
+  };
+  return (
+    <Button variant="secondary" busy={action.busy} onClick={run}>
+      Lapse expired offers
+    </Button>
+  );
+}
+
 function NewSchemeForm({ session, notify, onCancel, onCreated }) {
   const [form, setForm] = useState({
     name: "",
@@ -369,7 +391,7 @@ function NewSchemeForm({ session, notify, onCancel, onCreated }) {
   return (
     <Drawer
       title="New scheme"
-      description="The sponsor's scheme year and billing arrangement. Add benefit categories next."
+      description="Creates the master record in set-up: categories can be prepared, but there is no cover, census or billing until it is activated from an accepted quotation on the approved wording."
       onClose={onCancel}
     >
       <FormGrid onSubmit={submit} busy={action.busy} error={action.error} submitLabel="Create scheme">
@@ -399,6 +421,7 @@ function NewSchemeForm({ session, notify, onCancel, onCreated }) {
 
 function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
   const [tab, setTab] = useState("categories");
+  const [activating, setActivating] = useState(false);
   const detail = useResource(session, `/group/schemes/${encodeURIComponent(schemeRef)}`);
   const d = detail.data;
   const scheme = d?.scheme;
@@ -416,7 +439,12 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
             : undefined
         }
       >
-        {scheme && <Badge tone={scheme.status === "ACTIVE" ? "green" : scheme.status === "SUSPENDED" ? "amber" : undefined}>{label(scheme.status)}</Badge>}
+        {scheme && <Badge tone={scheme.status === "ACTIVE" ? "green" : ["SUSPENDED", "SETUP"].includes(scheme.status) ? "amber" : undefined}>{scheme.status === "SETUP" ? "In set-up" : label(scheme.status)}</Badge>}
+        {scheme?.status === "SETUP" && can(profile, "MANAGE_SCHEME") && (
+          <Button icon={ShieldCheck} onClick={() => setActivating(true)}>
+            Activate master policy
+          </Button>
+        )}
         {d && can(profile, "MANAGE_SCHEME") && !d.members.length && !d.censusBatches.length && !d.invoices.length && (
           <DeleteScheme session={session} notify={notify} scheme={scheme} onDeleted={onBack} />
         )}
@@ -459,9 +487,23 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
               ["timeline", "Timeline & rules"],
             ]}
           />
+          {activating && (
+            <ActivationWizard
+              session={session}
+              notify={notify}
+              scheme={d}
+              onClose={() => setActivating(false)}
+              onDone={() => {
+                setActivating(false);
+                detail.reload();
+              }}
+            />
+          )}
           {scheme.status !== "ACTIVE" && (
             <p className="ga-status-note" role="status">
-              {scheme.status === "SUSPENDED"
+              {scheme.status === "SETUP"
+                ? "This scheme is in set-up: prepare its categories, then activate it from an accepted quotation on the approved wording. Until then it takes no census, underwriting or billing."
+                : scheme.status === "SUSPENDED"
                 ? "This scheme is suspended: cover is suspended for its members, and census changes and underwriting decisions wait until it is reactivated."
                 : "This scheme is closed: members' cover has ended and is kept as history. Invoices, receipts and claims for earlier cover can still be recorded."}
             </p>
@@ -520,17 +562,31 @@ const EMPTY_CATEGORY = {
   minEntryAge: "18",
   maxEntryAge: "64",
   lateEntryDays: "",
+  employmentClass: "",
+  occupationClass: "",
+  salaryBasis: "",
+  exitAge: "",
+  waitingDays: "",
+  maxCover: "",
+  eligibilityRule: "",
+  effectiveFrom: "",
+  reason: "",
 };
+const optional = (v) => (v === "" || v === undefined ? null : v);
 
 function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
   const manage = can(profile, "MANAGE_SCHEME");
   const [editing, setEditing] = useState(null); // null: closed, "": new, code: edit
   const [form, setForm] = useState(EMPTY_CATEGORY);
+  const [impact, setImpact] = useState(null);
+  const [versionsOf, setVersionsOf] = useState(null);
+  const versions = useResource(session, versionsOf ? `/group/schemes/${detail.scheme.ref}/categories/${encodeURIComponent(versionsOf)}/versions` : null, []);
   const action = useAction(inlineErrors(notify));
   const scheme = detail.scheme;
 
   const open = (category) => {
     action.setError("");
+    setImpact(null);
     if (!category) {
       setForm(EMPTY_CATEGORY);
       setEditing("");
@@ -547,18 +603,34 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
       minEntryAge: String(category.minEntryAge),
       maxEntryAge: String(category.maxEntryAge),
       lateEntryDays: category.lateEntryDays != null ? String(category.lateEntryDays) : "",
+      employmentClass: category.employmentClass || "",
+      occupationClass: category.occupationClass || "",
+      salaryBasis: category.salaryBasis || "",
+      exitAge: category.exitAge != null ? String(category.exitAge) : "",
+      waitingDays: category.waitingDays != null ? String(category.waitingDays) : "",
+      maxCover: category.maxCover != null ? String(Number(category.maxCover)) : "",
+      eligibilityRule: category.eligibilityRule || "",
+      effectiveFrom: "",
+      reason: "",
     });
     setEditing(category.code);
   };
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
+  const categoryBody = () => ({
+    ...Object.fromEntries(Object.entries(form).map(([k, v]) => [k, optional(v)])),
+    code: form.code,
+    name: form.name,
+    salaryMultiple: form.benefitBasis === "SALARY_MULTIPLE" ? form.salaryMultiple : null,
+    fixedCover: form.benefitBasis === "FIXED" ? form.fixedCover : null,
+  });
+  // NS-GL02-006: what the amendment does to members, premium, evidence and certificates, before it is saved.
+  const preview = async () => {
+    const r = await action.run(() => request(session, `/group/schemes/${scheme.ref}/categories/${encodeURIComponent(editing)}/impact`, { method: "POST", body: categoryBody() }));
+    if (r) setImpact(r.data);
+  };
   const submit = async () => {
-    const body = {
-      ...form,
-      salaryMultiple: form.benefitBasis === "SALARY_MULTIPLE" ? form.salaryMultiple : null,
-      fixedCover: form.benefitBasis === "FIXED" ? form.fixedCover : null,
-      lateEntryDays: form.lateEntryDays === "" ? null : form.lateEntryDays,
-    };
+    const body = categoryBody();
     const path = `/group/schemes/${scheme.ref}/categories` + (editing ? `/${encodeURIComponent(editing)}` : "");
     const r = await action.run(
       () => request(session, path, { method: editing ? "PUT" : "POST", body }),
@@ -578,7 +650,15 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
     { key: "ratePerMille", label: "Rate ‰ / month", align: "right", render: (c) => number(c.ratePerMille, 2) },
     { key: "ages", label: "Entry ages", render: (c) => `${c.minEntryAge}–${c.maxEntryAge}`, sortValue: (c) => c.minEntryAge },
     { key: "lateEntryDays", label: "Late entry", render: (c) => (c.lateEntryDays != null ? `${c.lateEntryDays} days` : "—") },
+    { key: "factors", label: "Defined by", render: (c) => [c.employmentClass, c.occupationClass && label(c.occupationClass), c.salaryBasis && label(c.salaryBasis) + " salary"].filter(Boolean).join(" · ") || "—" },
+    { key: "exitAge", label: "Cover to", render: (c) => (c.exitAge != null ? `age ${c.exitAge}` : "—") },
+    { key: "maxCover", label: "Cap", align: "right", render: (c) => (c.maxCover != null ? pula(c.maxCover) : "—") },
     { key: "activeMembers", label: "Members", align: "right" },
+    { key: "version", label: "Version", render: (c) => (
+      <button type="button" className="ga-link" onClick={() => setVersionsOf(c.code)}>
+        v{c.version ?? 1}
+      </button>
+    ) },
   ];
   if (manage) {
     columns.push({
@@ -676,7 +756,91 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
             <Field label="Late-entry window (days)" hint="Optional. A joiner more than this many days after their eligibleDate gets no free cover; blank: no late-entry rule.">
               <input className="input" type="number" min="0" max="3650" value={form.lateEntryDays} onChange={set("lateEntryDays")} />
             </Field>
+            <Field label="Employment class" hint="The approved factor the category is defined by.">
+              <input className="input" value={form.employmentClass} onChange={set("employmentClass")} maxLength={60} placeholder="e.g. Permanent staff" />
+            </Field>
+            <Field label="Occupation class">
+              <select className="select" value={form.occupationClass} onChange={set("occupationClass")}>
+                <option value="">Not set</option>
+                <option value="CLASS_1">Class 1 (office)</option>
+                <option value="CLASS_2">Class 2 (light manual)</option>
+                <option value="CLASS_3">Class 3 (manual)</option>
+                <option value="CLASS_4">Class 4 (heavy manual)</option>
+              </select>
+            </Field>
+            <Field label="Salary basis">
+              <select className="select" value={form.salaryBasis} onChange={set("salaryBasis")}>
+                <option value="">Not set</option>
+                <option value="BASIC">Basic salary</option>
+                <option value="PENSIONABLE">Pensionable salary</option>
+                <option value="TOTAL_EARNINGS">Total earnings</option>
+              </select>
+            </Field>
+            <Field label="Cover ceases at age" hint="Benefit cessation, separate from the scheme's renewal. Blank: the GLA product cessation age.">
+              <input className="input" type="number" min="1" max="80" value={form.exitAge} onChange={set("exitAge")} />
+            </Field>
+            <Field label="Waiting period (days)" hint="Claims (other than accidents) within this period of entry are not admitted.">
+              <input className="input" type="number" min="0" max="730" value={form.waitingDays} onChange={set("waitingDays")} />
+            </Field>
+            <Field label="Maximum cover (BWP)" hint="Caps the formula's cover. Blank: no cap.">
+              <input className="input" type="number" min="1" step="0.01" value={form.maxCover} onChange={set("maxCover")} />
+            </Field>
+            <Field label="Eligibility rule" full>
+              <input className="input" value={form.eligibilityRule} onChange={set("eligibilityRule")} maxLength={300} placeholder="e.g. Permanent employees after three months' service" />
+            </Field>
+            {editing && (
+              <>
+                <Field label="Effective from" hint="Blank: today. Joins and salary changes dated earlier keep the terms then in force. An earlier date needs underwriting authority and a reason.">
+                  <input className="input" type="date" max={today()} value={form.effectiveFrom} onChange={set("effectiveFrom")} />
+                </Field>
+                <Field label="Reason" hint="Required for a backdated amendment.">
+                  <input className="input" value={form.reason} onChange={set("reason")} maxLength={500} />
+                </Field>
+                <div className="form-label full">
+                  <Button variant="secondary" busy={action.busy} onClick={preview}>
+                    Preview the impact
+                  </Button>
+                  {impact && (
+                    <div className="ga-drawer-section">
+                      <div className="ws-kv">
+                        <div><small>Members on cover</small><strong>{impact.membersOnCover}</strong></div>
+                        <div><small>Cover in force / on new formula</small><strong>{pula(impact.coverInForce)} / {pula(impact.coverOnNewFormula)}</strong></div>
+                        <div><small>Monthly premium now / proposed</small><strong>{pula(impact.monthlyPremiumNow)} / {pula(impact.monthlyPremiumProposed)}</strong></div>
+                        <div><small>Would need evidence</small><strong>{impact.membersNeedingEvidence}</strong></div>
+                        <div><small>Certificates to reissue</small><strong>{impact.certificatesToReissue}</strong></div>
+                      </div>
+                      <ul className="uw-list">
+                        {impact.notes.map((n, i) => (
+                          <li key={i}>{n}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </FormGrid>
+        </Drawer>
+      )}
+      {versionsOf && (
+        <Drawer title={`Category ${versionsOf} versions`} description="Each version applies to joins and salary changes dated from its effective date." onClose={() => setVersionsOf(null)}>
+          <ErrorNote error={versions.error} />
+          <DataTable
+            rows={versions.data}
+            loading={versions.loading}
+            rowKey={(v) => v.version}
+            searchFrom={50}
+            empty="No versions recorded"
+            columns={[
+              { key: "version", label: "Version", render: (v) => `v${v.version}` },
+              { key: "effectiveFrom", label: "From", render: (v) => day(v.effectiveFrom) },
+              { key: "cover", label: "Cover", render: (v) => (v.benefitBasis === "SALARY_MULTIPLE" ? `${number(v.salaryMultiple)} × salary` : pula(v.fixedCover)) + (v.maxCover != null ? `, cap ${pula(v.maxCover)}` : "") },
+              { key: "freeCoverLimit", label: "Free cover", align: "right", render: (v) => pula(v.freeCoverLimit) },
+              { key: "ratePerMille", label: "Rate ‰", align: "right", render: (v) => number(v.ratePerMille, 2) },
+              { key: "reason", label: "Reason / impact", render: (v) => [v.reason, v.impact].filter(Boolean).join(" — ") || "—" },
+              { key: "changedBy", label: "By", render: (v) => `${v.changedBy} · ${when(v.changedAt)}` },
+            ]}
+          />
         </Drawer>
       )}
     </>
@@ -685,12 +849,60 @@ function CategoriesTab({ session, notify, profile, detail, loading, reload }) {
 
 // ── members and underwriting ────────────────────────────────────────────────────────────────────
 
+/** Members due for benefit cessation (category exit age or the GLA cessation age), ceased on their own dates. */
+function CessationPanel({ session, notify, profile, scheme, reload }) {
+  const due = useResource(session, `/group/schemes/${encodeURIComponent(scheme.ref)}/cessations`, []);
+  const action = useAction(inlineErrors(notify));
+  const confirm = useConfirm();
+  if (!due.loading && !(due.data || []).length) return null;
+  const run = async () => {
+    const ok = await confirm({
+      title: `Cease cover for ${due.data.length} member(s)?`,
+      message: "Each member's cover ends the day before the birthday on which they reach the cessation age. Their cover history is kept.",
+      confirmLabel: "Cease cover",
+      tone: "danger",
+    });
+    if (!ok) return;
+    const r = await action.run(() => request(session, `/group/schemes/${encodeURIComponent(scheme.ref)}/cessations`, { method: "POST", body: {} }), "Cover ceased at the cessation age");
+    if (r) {
+      due.reload();
+      reload();
+    }
+  };
+  return (
+    <Panel
+      title="Due for benefit cessation"
+      subtitle="Members who have reached their category's exit age (or the GLA cessation age). Cessation is separate from the scheme's renewal."
+      action={can(profile, "MANAGE_SCHEME") && scheme.status === "ACTIVE" ? <Button variant="secondary" busy={action.busy} onClick={run}>Cease cover</Button> : null}
+    >
+      <ErrorNote error={due.error || action.error} />
+      <DataTable
+        rows={due.data}
+        loading={due.loading}
+        rowKey={(m) => m.memberId}
+        searchFrom={30}
+        columns={[
+          { key: "memberKey", label: "Member", render: (m) => `${m.name} · ${m.memberKey}` },
+          { key: "category", label: "Category" },
+          { key: "dateOfBirth", label: "Born", render: (m) => day(m.dateOfBirth) },
+          { key: "cessationAge", label: "Age", align: "right" },
+          { key: "ceasesOn", label: "Cover ends", render: (m) => day(m.ceasesOn) },
+          { key: "rule", label: "Rule" },
+          { key: "acceptedCover", label: "Cover", align: "right", render: (m) => pula(m.acceptedCover) },
+        ]}
+      />
+    </Panel>
+  );
+}
+
 function MembersTab({ session, notify, profile, detail, loading, reload }) {
   const underwrite = can(profile, "UNDERWRITE_MEMBER");
+  const manage = can(profile, "MANAGE_SCHEME") && detail.scheme.status === "ACTIVE";
   const [status, setStatus] = useState("ON_COVER");
   const [search, setSearch] = useState("");
   const [deciding, setDeciding] = useState(null);
   const [history, setHistory] = useState(null);
+  const [acting, setActing] = useState(null); // {member, kind: "work" | "transfer"}
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -739,22 +951,35 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
       </Button>
     ),
   });
-  if (underwrite) {
+  if (underwrite || manage) {
     columns.push({
       key: "actions",
       label: "",
-      render: (m) =>
-        m.status === "UNDERWRITING_PENDING" ? (
-          <div className="ws-row-actions">
+      render: (m) => (
+        <div className="ws-row-actions">
+          {underwrite && m.status === "UNDERWRITING_PENDING" && (
             <Button icon={ShieldCheck} onClick={() => setDeciding(m)}>
               Decide
             </Button>
-          </div>
-        ) : m.underwritingDecision ? (
-          <span className="ga-muted" title={m.underwritingReason || ""}>
-            {m.underwritingDecision === "ACCEPT" ? "Accepted" : "Declined"} by {m.underwrittenBy}
-          </span>
-        ) : null,
+          )}
+          {underwrite && m.status !== "UNDERWRITING_PENDING" && m.underwritingDecision && (
+            <button type="button" className="ga-link" title={m.underwritingReason || ""} onClick={() => setDeciding(m)}>
+              {m.underwritingDecision === "ACCEPT" ? "Accepted" : "Declined"} by {m.underwrittenBy}
+              {m.loadingPercent ? ` · +${Number(m.loadingPercent)}%` : ""}
+            </button>
+          )}
+          {manage && m.status === "COVER_DEFERRED" && (
+            <Button variant="secondary" onClick={() => setActing({ member: m, kind: "work" })}>
+              Back at work
+            </Button>
+          )}
+          {manage && ["ACTIVE", "PARTIALLY_ACCEPTED"].includes(m.status) && detail.categories.length > 1 && (
+            <Button variant="secondary" onClick={() => setActing({ member: m, kind: "transfer" })}>
+              Move category
+            </Button>
+          )}
+        </div>
+      ),
     });
   }
 
@@ -766,13 +991,31 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
           session={session}
           notify={notify}
           member={deciding}
-          onClose={() => setDeciding(null)}
+          onClose={() => {
+            setDeciding(null);
+            reload();
+          }}
           onDone={() => {
             setDeciding(null);
             reload();
           }}
         />
       )}
+      {acting && (
+        <MemberActionDrawer
+          session={session}
+          notify={notify}
+          member={acting.member}
+          kind={acting.kind}
+          categories={detail.categories}
+          onClose={() => setActing(null)}
+          onDone={() => {
+            setActing(null);
+            reload();
+          }}
+        />
+      )}
+      <CessationPanel session={session} notify={notify} profile={profile} scheme={detail.scheme} reload={reload} />
       <Panel
         title="Members"
         subtitle="Each row is a cover episode. Pending cover is never billed or certified until it is accepted."
@@ -791,6 +1034,7 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
               <option value="PARTIALLY_ACCEPTED">Partially accepted</option>
               <option value="ACTIVE">Active</option>
               <option value="SUSPENDED">Suspended</option>
+              <option value="COVER_DEFERRED">Cover deferred (not at work)</option>
               <option value="CEASED">Ceased</option>
               <option value="DECLINED">Declined</option>
               <option value="ALL">All</option>
@@ -816,109 +1060,328 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
   );
 }
 
+const EVIDENCE_LABEL = {
+  MEDICAL_QUESTIONNAIRE: "Medical questionnaire",
+  MEDICAL_EXAMINATION: "Medical examination",
+  BLOOD_PROFILE: "Blood profile",
+  FINANCIAL_EVIDENCE: "Financial evidence",
+  AAW_CONFIRMATION: "Employer's actively-at-work confirmation",
+  HEALTH_DECLARATION: "Health declaration",
+};
+
+/**
+ * The member's underwriting file and decision (GL03): evidence requirements (received, waived or added for a risk
+ * exception), the decision per benefit with loading, exclusions and effective date, a second underwriter's authority,
+ * the member's answer to an offer on modified terms, decision history, episodes and aggregate exposure.
+ */
 function UnderwritingPanel({ session, notify, member, onClose, onDone }) {
+  const file = useResource(session, `/group/members/${member.id}/underwriting-file`, null);
   const [decision, setDecision] = useState("ACCEPT");
   const [amount, setAmount] = useState(String(Number(member.requestedCover)));
   const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState("");
+  const [exclusions, setExclusions] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const [benefitDecisions, setBenefitDecisions] = useState({});
+  const [note, setNote] = useState("");
+  const [addRequirement, setAddRequirement] = useState("");
   const action = useAction(inlineErrors(notify));
   const confirm = useConfirm();
+  const f = file.data;
+  const m = f?.member || member;
+  const open = (f?.decisions || []).filter((d) => ["AWAITING_AUTHORITY", "OFFERED"].includes(d.status));
+  const awaiting = open.find((d) => d.status === "AWAITING_AUTHORITY");
+  const offered = open.find((d) => d.status === "OFFERED");
+  const me = session?.username;
+  const reload = () => file.reload();
 
+  const evidence = async (e, status) => {
+    const r = await action.run(
+      () => request(session, `/group/member-evidence/${e.id}`, { method: "POST", body: { status, note: note || undefined } }),
+      `${EVIDENCE_LABEL[e.requirement] || e.requirement} ${status === "RECEIVED" ? "received" : "waived"}`,
+    );
+    if (r) {
+      setNote("");
+      reload();
+    }
+  };
+  const add = async () => {
+    const r = await action.run(() => request(session, `/group/members/${member.id}/evidence`, { method: "POST", body: { requirement: addRequirement, note: note || undefined } }), "Requirement added");
+    if (r) {
+      setAddRequirement("");
+      setNote("");
+      reload();
+    }
+  };
   const submit = async () => {
     const accept = decision === "ACCEPT";
     const ok = await confirm({
-      title: accept ? `Accept cover for ${member.name}?` : `Decline pending cover for ${member.name}?`,
+      title: accept ? `Accept cover for ${m.name}?` : `Decline pending cover for ${m.name}?`,
       message: accept ? (
         <>
-          <strong>{member.name}</strong> ({member.memberKey}) goes on cover for <strong>{pula(amount)}</strong> of the{" "}
-          {pula(member.requestedCover)} requested. Accepted cover is billed and certified from now on, and the decision is
-          recorded against your name.
+          <strong>{m.name}</strong> ({m.memberKey}): <strong>{pula(amount)}</strong> of the {pula(m.requestedCover)} requested
+          {loading ? `, with a ${loading}% loading` : ""}
+          {exclusions ? ` and exclusions (${exclusions})` : ""}. Above the authority limit a second underwriter confirms; modified terms
+          are offered to the member before they apply.
         </>
       ) : (
         <>
-          The pending <strong>{pula(member.pendingCover)}</strong> for <strong>{member.name}</strong> ({member.memberKey})
-          is declined; only the free cover of {pula(member.acceptedCover)} stays in force. The decision is recorded against
-          your name.
+          The pending <strong>{pula(m.pendingCover)}</strong> is declined; only the free cover of {pula(m.acceptedCover)} stays in force.
         </>
       ),
-      confirmLabel: accept ? "Accept cover" : "Decline pending cover",
+      confirmLabel: accept ? "Record decision" : "Decline pending cover",
       tone: accept ? undefined : "danger",
     });
     if (!ok) return;
     const body = { decision, reason: reason || null };
-    if (decision === "ACCEPT") body.acceptedAmount = amount;
-    const r = await action.run(
-      () => request(session, `/group/members/${member.id}/underwriting`, { method: "POST", body }),
-      decision === "ACCEPT" ? `Cover accepted for ${member.name}` : `Pending cover declined for ${member.name}`,
-    );
+    if (accept) {
+      body.acceptedAmount = amount;
+      if (loading) body.loadingPercent = loading;
+      if (exclusions) body.exclusions = exclusions;
+    }
+    if (effectiveDate) body.effectiveDate = effectiveDate;
+    const benefits = Object.entries(benefitDecisions)
+      .filter(([, v]) => v.decision)
+      .map(([benefitType, v]) => ({ benefitType, ...v, loadingPercent: v.loadingPercent || undefined, exclusions: v.exclusions || undefined }));
+    if (benefits.length) body.benefits = benefits;
+    const r = await action.run(() => request(session, `/group/members/${member.id}/underwriting`, { method: "POST", body }), "Decision recorded");
+    if (r) {
+      if (r.data.status === "UNDERWRITING_PENDING") reload();
+      else onDone();
+    }
+  };
+  const authority = async (approve) => {
+    const r = await action.run(() => request(session, `/group/members/${member.id}/underwriting/authority`, { method: "POST", body: { approve, note } }), approve ? "Decision authorised" : "Decision rejected");
+    if (r) {
+      setNote("");
+      reload();
+      if (r.data.member.status !== "UNDERWRITING_PENDING") onDone();
+    }
+  };
+  const respond = async (accepted) => {
+    const r = await action.run(() => request(session, `/group/members/${member.id}/underwriting/offer-response`, { method: "POST", body: { accepted, note: note || undefined } }), accepted ? "Member accepted the offer" : "Member declined the offer");
     if (r) onDone();
   };
+  const otherBenefits = (f?.benefits || []).filter((b) => b !== "GLA");
 
   return (
-    <Drawer
-      title={`Underwriting decision · ${member.name}`}
-      description={`${member.memberKey} · ${member.category}`}
-      onClose={onClose}
-    >
+    <Drawer size="lg" title={`Underwriting · ${m.name}`} description={`${m.memberKey} · category ${m.category} · ${label(m.status)}`} onClose={onClose}>
+      <ErrorNote error={file.error} />
       <div className="ws-kv">
-        <div>
-          <small>Requested cover</small>
-          <strong>{pula(member.requestedCover)}</strong>
-        </div>
-        <div>
-          <small>Free cover in force</small>
-          <strong>{pula(member.acceptedCover)}</strong>
-        </div>
-        <div>
-          <small>Pending underwriting</small>
-          <strong className="ga-pending">{pula(member.pendingCover)}</strong>
-        </div>
-        <div>
-          <small>Salary</small>
-          <strong>{member.salary != null ? pula(member.salary) : "—"}</strong>
+        <div><small>Requested cover</small><strong>{pula(m.requestedCover)}</strong></div>
+        <div><small>In force (free cover or accepted)</small><strong>{pula(m.acceptedCover)}</strong></div>
+        <div><small>Pending underwriting</small><strong className="ga-pending">{pula(m.pendingCover)}</strong></div>
+        <div><small>Free-cover limit</small><strong>{f ? pula(f.freeCoverLimit) : "—"}</strong></div>
+        <div><small>Actively at work</small><strong>{m.activelyAtWork == null ? "Not declared" : m.activelyAtWork ? "Yes" : "No"}</strong></div>
+        <div><small>Aggregate exposure</small><strong>{f ? pula(f.aggregateExposure) : "—"}{f?.otherGroupCover?.length ? ` (incl. ${f.otherGroupCover.map((o) => o.schemeRef).join(", ")})` : ""}</strong></div>
+        <div><small>Authority limit</small><strong>{f ? pula(f.authorityLimit) : "—"}</strong></div>
+        <div><small>Scheme rules</small><strong>{f ? `${f.partialCoverAllowed ? "Partial cover allowed" : "No partial cover"} · not at work: ${f.aawRule === "DEFER" ? "defer" : "refer"}` : "—"}</strong></div>
+      </div>
+
+      <div className="ga-drawer-section">
+        <h3>Evidence</h3>
+        <p className="subtitle">Medical evidence is restricted to underwriters; the employer sees only that cover is pending. Received evidence stays valid for 12 months (demo rule) and can be reused.</p>
+        <DataTable
+          rows={f?.evidence || []}
+          loading={file.loading}
+          rowKey={(e) => e.id}
+          searchFrom={50}
+          empty="No evidence required"
+          columns={[
+            { key: "requirement", label: "Requirement", render: (e) => EVIDENCE_LABEL[e.requirement] || e.requirement },
+            { key: "reason", label: "Why", render: (e) => label(e.reason) },
+            { key: "restricted", label: "Access", render: (e) => (e.restricted ? "Underwriters only" : "Administrators") },
+            { key: "status", label: "Status", render: (e) => <Badge tone={e.status === "REQUESTED" ? "amber" : "green"}>{label(e.status)}</Badge> },
+            { key: "validUntil", label: "Valid until", render: (e) => (e.validUntil ? day(e.validUntil) : "—") },
+            { key: "note", label: "Note", render: (e) => e.note || "—" },
+            {
+              key: "act",
+              label: "",
+              render: (e) =>
+                e.status === "REQUESTED" && (
+                  <div className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => evidence(e, "RECEIVED")}>Received</Button>
+                    <Button variant="secondary" busy={action.busy} onClick={() => evidence(e, "WAIVED")} disabled={!note}>Waive</Button>
+                  </div>
+                ),
+            },
+          ]}
+        />
+        <div className="field-grid">
+          <Field label="Note for the evidence action" hint="Required to waive a requirement. No medical detail.">
+            <input className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
+          </Field>
+          <Field label="Add a requirement (risk exception)">
+            <span className="gl-ages">
+              <select className="select" value={addRequirement} onChange={(e) => setAddRequirement(e.target.value)}>
+                <option value="">Choose</option>
+                {Object.entries(EVIDENCE_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+              <Button variant="secondary" disabled={!addRequirement} busy={action.busy} onClick={add}>Add</Button>
+            </span>
+          </Field>
         </div>
       </div>
-      <FormGrid
-        onSubmit={submit}
-        busy={action.busy}
-        error={action.error}
-        submitLabel={decision === "ACCEPT" ? "Accept cover" : "Decline pending cover"}
-      >
-        <Field label="Decision">
-          <select className="select" value={decision} onChange={(e) => setDecision(e.target.value)}>
-            <option value="ACCEPT">Accept (in full or in part)</option>
-            <option value="DECLINE">Decline the pending amount</option>
-          </select>
-        </Field>
-        {decision === "ACCEPT" ? (
-          <Field
-            label="Accepted cover (BWP)"
-            hint={`Between ${pula(member.acceptedCover)} and ${pula(member.requestedCover)}.`}
-          >
-            <input
-              className="input"
-              type="number"
-              step="0.01"
-              min={Number(member.acceptedCover)}
-              max={Number(member.requestedCover)}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-            />
+
+      {awaiting && (
+        <div className="ga-drawer-section">
+          <h3>Waiting for a second underwriter</h3>
+          <p className="subtitle">
+            {pula(awaiting.acceptedAmount)} accepted by {awaiting.decidedBy}
+            {awaiting.loadingPercent ? ` with a ${Number(awaiting.loadingPercent)}% loading` : ""}: above the authority limit.
+          </p>
+          {awaiting.decidedBy === me ? (
+            <p className="ws-hint">You made this decision, so another underwriter confirms it.</p>
+          ) : (
+            <div className="ws-form-actions">
+              <Button variant="secondary" busy={action.busy} disabled={!note} onClick={() => authority(false)}>Reject</Button>
+              <Button busy={action.busy} disabled={!note} onClick={() => authority(true)}>Authorise</Button>
+            </div>
+          )}
+          {awaiting.decidedBy !== me && !note && <small className="ws-hint">Enter a note above to authorise or reject.</small>}
+        </div>
+      )}
+      {offered && (
+        <div className="ga-drawer-section">
+          <h3>Offer on modified terms</h3>
+          <p className="subtitle">
+            {pula(offered.acceptedAmount)}
+            {offered.loadingPercent ? ` with a ${Number(offered.loadingPercent)}% loading` : ""}
+            {offered.exclusions ? `, excluding ${offered.exclusions}` : ""}: open until {day(offered.offerExpiresOn)}. Record the member's signed answer.
+          </p>
+          <div className="ws-form-actions">
+            <Button variant="secondary" busy={action.busy} onClick={() => respond(false)}>Member declined</Button>
+            <Button busy={action.busy} onClick={() => respond(true)}>Member accepted</Button>
+          </div>
+        </div>
+      )}
+      {m.status === "UNDERWRITING_PENDING" && !open.length && (
+        <FormGrid onSubmit={submit} busy={action.busy} error={action.error} submitLabel={decision === "ACCEPT" ? "Record decision" : "Decline pending cover"}>
+          {(f?.outstanding || []).length > 0 && decision === "ACCEPT" && (
+            <p className="ga-status-note full">Evidence outstanding: {f.outstanding.join(", ")}. Cover is accepted only once it is received or waived.</p>
+          )}
+          <Field label="Decision (life cover)">
+            <select className="select" value={decision} onChange={(e) => setDecision(e.target.value)}>
+              <option value="ACCEPT">Accept (in full or in part)</option>
+              <option value="DECLINE">Decline the pending amount</option>
+            </select>
           </Field>
-        ) : (
-          <Field label="Cover kept" hint="The free-cover portion stays in force.">
-            <input className="input" value={pula(member.acceptedCover)} disabled />
+          {decision === "ACCEPT" ? (
+            <Field label="Accepted cover (BWP)" hint={`Between ${pula(m.acceptedCover)} and ${pula(m.requestedCover)}.`}>
+              <input className="input" type="number" step="0.01" min={Number(m.acceptedCover)} max={Number(m.requestedCover)} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            </Field>
+          ) : (
+            <Field label="Cover kept" hint="The free-cover portion stays in force.">
+              <input className="input" value={pula(m.acceptedCover)} disabled />
+            </Field>
+          )}
+          {decision === "ACCEPT" && (
+            <>
+              <Field label="Loading (%)" hint="Added to the member's premium rate. A loading or exclusion makes this an offer the member must accept.">
+                <input className="input" type="number" min="0" max="300" step="0.01" value={loading} onChange={(e) => setLoading(e.target.value)} />
+              </Field>
+              <Field label="Exclusions">
+                <input className="input" value={exclusions} onChange={(e) => setExclusions(e.target.value)} maxLength={500} />
+              </Field>
+            </>
+          )}
+          <Field label="Effective date" hint="Blank: today. Not before the member's entry.">
+            <input className="input" type="date" max={today()} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+          </Field>
+          {otherBenefits.map((b) => (
+            <Field key={b} label={`${label(b)} decision`} hint="Optional per-benefit decision.">
+              <span className="gl-ages">
+                <select className="select" value={benefitDecisions[b]?.decision || ""} onChange={(e) => setBenefitDecisions({ ...benefitDecisions, [b]: { ...benefitDecisions[b], decision: e.target.value } })}>
+                  <option value="">No separate decision</option>
+                  <option value="ACCEPT">Accept</option>
+                  <option value="DECLINE">Decline</option>
+                </select>
+                {benefitDecisions[b]?.decision === "ACCEPT" && (
+                  <input className="input" placeholder="Exclusions" value={benefitDecisions[b]?.exclusions || ""} onChange={(e) => setBenefitDecisions({ ...benefitDecisions, [b]: { ...benefitDecisions[b], exclusions: e.target.value } })} />
+                )}
+              </span>
+            </Field>
+          ))}
+          <Field label={decision === "DECLINE" ? "Reason (required)" : "Reason or evidence note"} full>
+            <textarea className="textarea" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} required={decision === "DECLINE"} />
+          </Field>
+        </FormGrid>
+      )}
+      {open.length > 0 && <ErrorNote error={action.error} />}
+
+      <div className="ga-drawer-section">
+        <h3>Decision history</h3>
+        <DataTable
+          rows={f?.decisions || []}
+          rowKey={(d) => d.id}
+          searchFrom={50}
+          empty="No decisions yet"
+          columns={[
+            { key: "decidedAt", label: "When", render: (d) => when(d.decidedAt) },
+            { key: "benefitType", label: "Benefit", render: (d) => label(d.benefitType) },
+            { key: "decision", label: "Decision", render: (d) => label(d.decision) },
+            { key: "acceptedAmount", label: "Accepted", align: "right", render: (d) => pula(d.acceptedAmount) },
+            { key: "terms", label: "Terms", render: (d) => [d.loadingPercent ? `${Number(d.loadingPercent)}% loading` : null, d.exclusions].filter(Boolean).join(" · ") || "Standard" },
+            { key: "effectiveDate", label: "Effective", render: (d) => day(d.effectiveDate) },
+            { key: "status", label: "Status", render: (d) => label(d.status) + (d.memberResponse ? ` · member ${d.memberResponse.toLowerCase()}` : "") },
+            { key: "decidedBy", label: "By", render: (d) => d.decidedBy + (d.authorisedBy ? ` · authorised ${d.authorisedBy}` : "") },
+          ]}
+        />
+      </div>
+      {(f?.episodes || []).length > 1 && (
+        <div className="ga-drawer-section">
+          <h3>Cover episodes and category history</h3>
+          <DataTable
+            rows={f.episodes}
+            rowKey={(e) => e.memberId}
+            searchFrom={50}
+            columns={[
+              { key: "category", label: "Category" },
+              { key: "from", label: "From", render: (e) => day(e.from) },
+              { key: "to", label: "To", render: (e) => (e.to ? day(e.to) : "—") },
+              { key: "status", label: "Status", render: (e) => label(e.status) },
+              { key: "acceptedCover", label: "Cover", align: "right", render: (e) => pula(e.acceptedCover) },
+            ]}
+          />
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
+/** Return to work for deferred cover (AT-GL03-02) and moving a member to another category (NS-GL03-005). */
+function MemberActionDrawer({ session, notify, member, categories, kind, onClose, onDone }) {
+  const [form, setForm] = useState({ effectiveDate: today(), note: "", categoryCode: categories.find((c) => c.code !== member.category)?.code || "", reason: "" });
+  const action = useAction(inlineErrors(notify));
+  const submit = async () => {
+    const path = kind === "work" ? `/group/members/${member.id}/actively-at-work` : `/group/members/${member.id}/category-transfer`;
+    const body = kind === "work" ? { effectiveDate: form.effectiveDate, note: form.note || undefined } : { categoryCode: form.categoryCode, effectiveDate: form.effectiveDate, reason: form.reason || undefined };
+    const r = await action.run(() => request(session, path, { method: "POST", body }), kind === "work" ? `${member.name} is on cover` : `${member.name} moved to ${form.categoryCode}`);
+    if (r) onDone();
+  };
+  return (
+    <Drawer
+      title={kind === "work" ? `Back at work · ${member.name}` : `Move category · ${member.name}`}
+      description={kind === "work" ? "The employer confirms the member is actively at work: cover starts with the free-cover treatment; anything above it is referred." : "The current episode ends the day before; a new one starts in the new category. Cover already accepted continues; anything above it is referred."}
+      onClose={onClose}
+    >
+      <FormGrid onSubmit={submit} busy={action.busy} error={action.error} submitLabel={kind === "work" ? "Confirm back at work" : "Move member"}>
+        {kind === "transfer" && (
+          <Field label="New category">
+            <select className="select" value={form.categoryCode} onChange={(e) => setForm({ ...form, categoryCode: e.target.value })} required>
+              {categories.filter((c) => c.code !== member.category).map((c) => (
+                <option key={c.code} value={c.code}>{c.code} · {c.name}</option>
+              ))}
+            </select>
           </Field>
         )}
-        <Field label={decision === "DECLINE" ? "Reason (required)" : "Reason or evidence note"} full>
-          <textarea
-            className="textarea"
-            rows={2}
-            maxLength={500}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            required={decision === "DECLINE"}
-          />
+        <Field label="Effective date">
+          <input className="input" type="date" max={today()} value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} required />
+        </Field>
+        <Field label={kind === "work" ? "Note" : "Reason"} full>
+          <input className="input" value={kind === "work" ? form.note : form.reason} onChange={(e) => setForm({ ...form, [kind === "work" ? "note" : "reason"]: e.target.value })} maxLength={500} />
         </Field>
       </FormGrid>
     </Drawer>
@@ -1645,6 +2108,7 @@ function ClaimsTab({ session, notify, profile, detail }) {
     }
     if (c.status === "APPROVED") return can(profile, "SETTLE_CLAIM") ? [["PAY", "Record payment"]] : [];
     if (c.status === "IN_PAYMENT") return can(profile, "ASSESS_CLAIM") ? [["REVIEW", "Review"], ["CEASE", "Cease"]] : [];
+    if (c.status === "PAID" && Number(c.acceleratedAmount) > 0 && !c.reinstatedOn) return can(profile, "ASSESS_CLAIM") ? [["REINSTATE", "Reinstate cover"]] : [];
     return [];
   };
 
@@ -1683,6 +2147,17 @@ function ClaimsTab({ session, notify, profile, detail }) {
             { key: "approvedAmount", label: "Approved", align: "right", render: (c) => (c.approvedAmount != null ? pula(c.approvedAmount) : "—") },
             { key: "status", label: "Status", render: (c) => <Badge tone={CLAIM_TONES[c.status]}>{label(c.status)}</Badge> },
             { key: "nextReviewDate", label: "Next review", render: (c) => (c.nextReviewDate ? day(c.nextReviewDate) : "—") },
+            { key: "detail", label: "Terms applied", render: (c) => [
+              c.lifeInsured && label(c.lifeInsured) + (c.lifeName ? ` (${c.lifeName})` : ""),
+              c.conditionGroup && `condition ${label(c.conditionGroup)}`,
+              c.partial && "partial",
+              c.accident && "accident",
+              c.benefitLimit != null && `limit ${pula(c.benefitLimit)}`,
+              c.firstPaymentDate && `pays from ${day(c.firstPaymentDate)}`,
+              c.cessationDate && `ceases ${day(c.cessationDate)}`,
+              c.acceleratedAmount != null && `life cover reduced ${pula(c.acceleratedAmount)}`,
+              c.reinstatedOn && `reinstated ${day(c.reinstatedOn)}`,
+            ].filter(Boolean).join(" · ") || "—" },
             {
               key: "actions",
               label: "",
@@ -1729,7 +2204,47 @@ function ClaimsTab({ session, notify, profile, detail }) {
             <Field label="Event date">
               <input className="input" type="date" max={today()} value={form.eventDate} onChange={(e) => setForm({ ...form, eventDate: e.target.value })} required />
             </Field>
-            <Field label={form.benefitType === "INCOME_PROTECTION" ? "Monthly benefit (BWP)" : "Amount claimed (BWP)"} hint={form.benefitType === "INCOME_PROTECTION" ? undefined : "Up to the cover in force on the event date"}>
+            {form.benefitType === "FAMILY" && (
+              <>
+                <Field label="Life">
+                  <select className="select" value={form.life || "MEMBER"} onChange={(e) => setForm({ ...form, life: e.target.value })}>
+                    <option value="MEMBER">Member</option>
+                    <option value="SPOUSE">Spouse</option>
+                    <option value="CHILD">Child</option>
+                    <option value="STILLBIRTH">Stillbirth</option>
+                  </select>
+                </Field>
+                {form.life === "SPOUSE" && (
+                  <Field label="Spouse's name"><input className="input" value={form.lifeName || ""} onChange={(e) => setForm({ ...form, lifeName: e.target.value })} required /></Field>
+                )}
+                {form.life === "CHILD" && (
+                  <Field label="Child's age"><input className="input" type="number" min="0" max="40" value={form.childAge || ""} onChange={(e) => setForm({ ...form, childAge: e.target.value })} required /></Field>
+                )}
+                {form.life === "STILLBIRTH" && (
+                  <Field label="Weeks of pregnancy"><input className="input" type="number" min="1" max="45" value={form.gestationWeeks || ""} onChange={(e) => setForm({ ...form, gestationWeeks: e.target.value })} required /></Field>
+                )}
+              </>
+            )}
+            {form.benefitType === "CRITICAL_ILLNESS" && (
+              <Field label="Condition group" hint="Related conditions share one payment.">
+                <input className="input" value={form.conditionGroup || ""} onChange={(e) => setForm({ ...form, conditionGroup: e.target.value })} maxLength={60} required placeholder="e.g. CANCER, HEART, STROKE" />
+              </Field>
+            )}
+            {form.benefitType === "LUMP_SUM_DISABILITY" && (
+              <Field label="Partial disability" hint="Limited duties: the partial percentage of the benefit, reducing what remains.">
+                <select className="select" value={form.partial ? "yes" : "no"} onChange={(e) => setForm({ ...form, partial: e.target.value === "yes" })}>
+                  <option value="no">Full disability</option>
+                  <option value="yes">Partial (limited duties)</option>
+                </select>
+              </Field>
+            )}
+            <Field label="Accident" hint="Only an accident is covered inside the category's waiting period.">
+              <select className="select" value={form.accident ? "yes" : "no"} onChange={(e) => setForm({ ...form, accident: e.target.value === "yes" })}>
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </Field>
+            <Field label={form.benefitType === "INCOME_PROTECTION" ? "Monthly benefit (BWP)" : "Amount claimed (BWP)"} hint={form.benefitType === "INCOME_PROTECTION" ? "Up to the income percentage of salary; paid after the deferred period" : "Up to the benefit's limit under the terms in force on the event date"}>
               <input className="input" type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
             </Field>
             <Field label="Note" full hint="No medical detail here: evidence stays with the claims assessor.">
@@ -1745,6 +2260,11 @@ function ClaimsTab({ session, notify, profile, detail }) {
           onClose={() => setDeciding(null)}
         >
           <FormGrid onSubmit={decide} busy={action.busy} error={action.error} submitLabel={label(deciding.action)}>
+            {deciding.action === "APPROVE" && deciding.claim.benefitType === "CRITICAL_ILLNESS" && (
+              <Field label="Survival confirmed on" hint="The survival period after diagnosis must have passed (30 days).">
+                <input className="input" type="date" max={today()} value={deciding.survivalConfirmedOn || ""} onChange={(e) => setDeciding({ ...deciding, survivalConfirmedOn: e.target.value })} required />
+              </Field>
+            )}
             {deciding.action === "APPROVE" && (
               <Field label="Approved amount (BWP)" hint={`Leave blank to approve the ${pula(deciding.claim.claimedAmount)} claimed`}>
                 <input className="input" type="number" min="0.01" step="0.01" value={deciding.amount} onChange={(e) => setDeciding({ ...deciding, amount: e.target.value })} />
@@ -1767,7 +2287,7 @@ function ClaimsTab({ session, notify, profile, detail }) {
                 maxLength={500}
                 value={deciding.note}
                 onChange={(e) => setDeciding({ ...deciding, note: e.target.value })}
-                required={["DECLINE", "REVIEW", "CEASE"].includes(deciding.action)}
+                required={["DECLINE", "REVIEW", "CEASE", "REINSTATE"].includes(deciding.action)}
               />
             </Field>
           </FormGrid>
@@ -1780,13 +2300,44 @@ function ClaimsTab({ session, notify, profile, detail }) {
 // ── master-policy timeline and resolved rules ───────────────────────────────────────────────────
 
 /** The master policy in date order (GL01) and the rule set its categories and benefits resolve to (GL02). */
-function TimelineTab({ session, detail }) {
+function TimelineTab({ session, notify, detail }) {
   const ref = encodeURIComponent(detail.scheme.ref);
   const timeline = useResource(session, `/group-life/schemes/${ref}/timeline`, []);
   const rules = useResource(session, `/group-life/schemes/${ref}/resolved-rules`, null);
+  const resolved = useResource(session, `/group-life/schemes/${ref}/resolved-benefits`, null);
+  const [benefit, setBenefit] = useState("");
   const r = rules.data;
+  const resolvedRows = resolved.data?.rows || [];
+  const benefitTypes = [...new Set(resolvedRows.map((x) => x.benefitType))];
+  const shown = benefit || benefitTypes[0] || "";
+  const forBenefit = resolvedRows.filter((x) => x.benefitType === shown);
+  const setup = detail.scheme.setup || {};
   return (
     <>
+      <Panel
+        title="Contract"
+        subtitle="The master policy's set-up terms and what it was activated on."
+        action={
+          detail.scheme.status !== "SETUP" && (
+            <Button variant="secondary" icon={Download} onClick={() => openPdf(session, `/group-life/schemes/${ref}/schedule`, notify)}>
+              Scheme schedule (PDF)
+            </Button>
+          )
+        }
+      >
+        <div className="ws-kv">
+          <div><small>Accepted terms</small><strong>{detail.scheme.quoteRef || "—"}</strong></div>
+          <div><small>Wording</small><strong>{setup.wordingRef ? `${setup.wordingRef} v${setup.wordingVersion}` : "—"}</strong></div>
+          <div><small>Legal sponsor</small><strong>{setup.sponsorRef || "—"}</strong></div>
+          <div><small>Payer</small><strong>{setup.payerName || "—"}</strong></div>
+          <div><small>Broker</small><strong>{setup.brokerRef || "Direct"}</strong></div>
+          <div><small>Billing</small><strong>{setup.billingMethod ? `${label(detail.scheme.billingFrequency)} · ${label(setup.billingMethod)} · due day ${setup.billingDueDay}` : label(detail.scheme.billingFrequency)}</strong></div>
+          <div><small>Not actively at work</small><strong>{setup.aawRule === "DEFER" ? "Cover deferred until back at work" : "Referred to underwriting"}</strong></div>
+          <div><small>Partial cover</small><strong>{setup.partialCoverAllowed === false ? "Not allowed: all cover waits" : "Allowed: free cover in force"}</strong></div>
+          <div><small>Inception conditions</small><strong>{setup.inceptionConditions ? setup.inceptionConditions.split(", ").map(label).join(", ") : "—"}</strong></div>
+          <div><small>Activated</small><strong>{setup.activatedAt ? `${when(setup.activatedAt)} by ${setup.activatedBy}` : detail.scheme.status === "SETUP" ? "Not yet" : "Before set-up was recorded"}</strong></div>
+        </div>
+      </Panel>
       <Panel title="Master-policy timeline" subtitle="Quote versions and decisions, activation, plan approvals, renewals, suspensions, transfers and closure.">
         <ErrorNote error={timeline.error} />
         <DataTable
@@ -1835,6 +2386,56 @@ function TimelineTab({ session, detail }) {
             { key: "productMaximum", label: "Product maximum", align: "right", render: (b) => (b.productMaximum != null ? pula(b.productMaximum) : "—") },
             { key: "source", label: "Source" },
             { key: "approvalStatus", label: "Approval", render: (b) => <Badge tone={b.approvalStatus === "PENDING" ? "amber" : "green"}>{label(b.approvalStatus)}</Badge> },
+          ]}
+        />
+      </Panel>
+      <Panel
+        title="Resolved benefit rules by category"
+        subtitle={resolved.data?.precedence || "Category terms override scheme terms, which override the product default."}
+        action={
+          benefitTypes.length > 0 && (
+            <select className="select" aria-label="Benefit" value={shown} onChange={(e) => setBenefit(e.target.value)}>
+              {benefitTypes.map((b) => (
+                <option key={b} value={b}>
+                  {label(b)}
+                </option>
+              ))}
+            </select>
+          )
+        }
+      >
+        <ErrorNote error={resolved.error} />
+        {(resolved.data?.pending || []).length > 0 && (
+          <p className="ga-status-note">{resolved.data.pending.length} benefit terms change(s) wait for approval and are not applied yet.</p>
+        )}
+        <DataTable
+          rows={(forBenefit[0]?.parameters || []).map((p) => ({ ...p, byCategory: forBenefit.map((c) => ({ category: c.category, included: c.included, ...c.parameters.find((x) => x.parameter === p.parameter) })) }))}
+          loading={resolved.loading}
+          rowKey={(p) => p.parameter}
+          searchFrom={50}
+          empty="No benefit rules"
+          columns={[
+            { key: "label", label: "Rule", render: (p) => (
+              <div className="ga-person">
+                <strong>{p.label}</strong>
+                <span className="ga-muted">{p.overridable ? `Default ${p.productDefault ?? "—"}${p.maximum ? ` · max ${p.maximum}` : ""}` : `Fixed by the product (${p.productDefault})`}</span>
+              </div>
+            ) },
+            { key: "schemeValue", label: "Scheme", render: (p) => p.schemeValue ?? "—" },
+            ...forBenefit.map((c) => ({
+              key: "cat-" + c.category,
+              label: c.category + (c.included ? "" : " (left out)"),
+              render: (p) => {
+                const v = p.byCategory.find((x) => x.category === c.category);
+                if (!c.included) return <span className="ga-muted">Not covered</span>;
+                return (
+                  <span title={v?.source}>
+                    {v?.resolved ?? "—"}
+                    {v?.categoryValue != null && <span className="ga-muted"> · category</span>}
+                  </span>
+                );
+              },
+            })),
           ]}
         />
       </Panel>
