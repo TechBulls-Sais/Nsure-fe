@@ -5348,3 +5348,4 @@ p {
 .party-checklist li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); }
 .party-checklist li > span { width: 20px; text-align: center; font-weight: 700; color: var(--muted); }
 .party-checklist li.is-done > span { color: var(--green); }
+.party-upload { display: grid; gap: 6px; margin-top: 10px; font-size: 13px; max-width: 420px; }

@@ -128,7 +128,7 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { closeSession, fetchFile, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
+import { closeSession, fetchFile, openSession, request, setUnauthorizedHandler, uploadFile, verifySignInCode } from "./api";
 import AccessAdmin from "./AccessAdmin";
 import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
@@ -4405,7 +4405,13 @@ function Detail({
           notify={notify}
         />
       ) : tab === "Documents" && entity === "customer" ? (
-        <CustomerDocuments session={session} customer={r} policies={linkedPolicies} notify={notify} />
+        <CustomerDocuments
+          session={session}
+          customer={r}
+          policies={linkedPolicies}
+          notify={notify}
+          canUpload={can(profile, "UPDATE_CUSTOMER")}
+        />
       ) : historyType ? (
         <WorkflowTimeline session={session} type={historyType} refId={r.id} version={JSON.stringify(r)} />
       ) : (
@@ -4431,7 +4437,8 @@ function Detail({
 }
 // Customer 360 documents (NS-SH01-006): the identity evidence the customer sent for KYC, and the documents filed on
 // this customer's own policies, found by reference.
-function CustomerDocuments({ session, customer, policies, notify }) {
+function CustomerDocuments({ session, customer, policies, notify, canUpload = false }) {
+  const [uploadType, setUploadType] = useState("Omang");
   const rows = policies.flatMap((p) =>
     (p.documents || []).map((d) => ({ ...d, policyRef: p.id, product: p.product })),
   );
@@ -4471,13 +4478,50 @@ function CustomerDocuments({ session, customer, policies, notify }) {
                 {d.fileName} · sent {String(d.uploadedAt || "").slice(0, 10)} by {d.uploadedBy}
               </small>
             </div>
-            <Button variant="secondary" icon="Eye" onClick={() => open(d)}>
-              Open
-            </Button>
+            {d.id ? (
+              <Button variant="secondary" icon="Eye" onClick={() => open(d)}>
+                Open
+              </Button>
+            ) : (
+              <Badge>{d.state === "QUARANTINED" ? "Being checked" : "Not accepted"}</Badge>
+            )}
           </div>
         ))
       ) : (
-        <p className="muted small">The customer has not sent identity evidence through the portal.</p>
+        <p className="muted small">The customer has not sent identity evidence yet.</p>
+      )}
+      {identity.some((d) => !d.id) && (
+        <p className="muted small">
+          Uploads wait in quarantine (Operations &gt; Documents) until someone other than the uploader releases them.
+        </p>
+      )}
+      {canUpload && (
+        <label className="party-upload">
+          <span>Upload identity evidence the customer handed in</span>
+          <select value={uploadType} onChange={(e) => setUploadType(e.target.value)} aria-label="Document type">
+            <option>Omang</option>
+            <option>Passport</option>
+            <option>Proof of address</option>
+          </select>
+          <input
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              try {
+                const r = await uploadFile(session, "/portfolio/customers/" + customer.id + "/identity-documents", file, {
+                  type: uploadType,
+                });
+                setIdentity(r.data || []);
+                notify?.("Received. It waits in quarantine until someone else releases it.");
+              } catch (error) {
+                notify?.(error.message, "error");
+              }
+            }}
+          />
+        </label>
       )}
       <h3 className="section-title">Policy documents</h3>
       <p className="subtitle">
