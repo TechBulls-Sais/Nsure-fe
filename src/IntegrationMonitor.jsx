@@ -118,6 +118,7 @@ export default function IntegrationMonitor({ session, notify, profile }) {
           ["interfaces", "Interfaces"],
           ["batches", "Batches"],
           ["reconciliation", "Reconciliation"],
+          ["compensations", "Compensations"],
           ["inbound", "Inbound payments"],
           ["screening", "KYC/AML screening"],
           ["log", "Operator log"],
@@ -134,6 +135,7 @@ export default function IntegrationMonitor({ session, notify, profile }) {
       )}
       {tab === "batches" && <Batches session={session} />}
       {tab === "reconciliation" && <Reconciliation key={refresh} session={session} />}
+      {tab === "compensations" && <Compensations key={refresh} session={session} />}
       {tab === "inbound" && (
         <Inbound session={session} notify={notify} profile={profile} onChange={dashboard.reload} />
       )}
@@ -690,6 +692,65 @@ function Screening({ session, notify, profile }) {
               <textarea rows={3} value={deciding.note} onChange={(e) => setDeciding({ ...deciding, note: e.target.value })} required minLength={10} />
             </Field>
           </FormGrid>
+        </Drawer>
+      )}
+    </Panel>
+  );
+}
+
+const LEG_TONE = { DONE: "green", NOTHING_TO_CORRECT: "green", IN_PROGRESS: "amber", NOT_AUTOMATED: "amber", FAILED: "red" };
+const COMP_LABEL = { COMPLETE: "Complete", IN_PROGRESS: "In progress", EXCEPTION: "Exception: a leg failed", MANUAL_FOLLOW_UP: "Manual follow-up" };
+
+/** NS-TXN-004: each compensating event with the legs it must correct and whether they did. */
+function Compensations({ session }) {
+  const rows = useResource(session, "/integration/compensations", []);
+  const [open, setOpen] = useState(null);
+  return (
+    <Panel
+      title="Compensations"
+      subtitle="Returned premiums, cancellations and refunds, each with the original event it reverses and every leg it must correct: journal, commission, reinsurance and customer communication. Anything not complete stays here as an exception case for the leg's owner."
+    >
+      <ErrorNote error={rows.error} />
+      <DataTable
+        rowKey={(r) => r.eventId}
+        rows={rows.data}
+        loading={rows.loading}
+        empty="No compensating events yet"
+        emptyDetail="Reverse a receipt in Collections to see its corrections tracked here."
+        onRowClick={(r) => setOpen(r)}
+        searchPlaceholder="Search event, reference, status…"
+        columns={[
+          { key: "occurredAt", label: "When", render: (r) => when(r.occurredAt) },
+          { key: "eventType", label: "Compensation" },
+          { key: "aggregateRef", label: "Reference" },
+          { key: "amount", label: "Amount", align: "right", render: (r) => (r.amount == null ? "—" : pula(r.amount)) },
+          { key: "original", label: "Reverses", render: (r) => (r.original ? r.original.eventType + " · " + r.original.receiptRef : "—") },
+          {
+            key: "legs",
+            label: "Legs",
+            sortValue: (r) => r.legs.filter((l) => l.state === "DONE" || l.state === "NOTHING_TO_CORRECT").length,
+            render: (r) => r.legs.filter((l) => l.state === "DONE" || l.state === "NOTHING_TO_CORRECT").length + " of " + r.legs.length + " done",
+          },
+          {
+            key: "status",
+            label: "Status",
+            render: (r) => <Badge tone={r.status === "COMPLETE" ? "green" : r.status === "EXCEPTION" ? "red" : "amber"}>{COMP_LABEL[r.status]}</Badge>,
+          },
+        ]}
+      />
+      {open && (
+        <Drawer title={open.eventType + " · " + open.aggregateRef} description={"Event " + open.eventId + (open.original ? " reverses " + open.original.eventType + " " + open.original.eventId : "")} size="lg" onClose={() => setOpen(null)}>
+          <DataTable
+            rowKey={(l) => l.leg}
+            rows={open.legs}
+            searchFrom={99}
+            columns={[
+              { key: "leg", label: "Leg" },
+              { key: "state", label: "State", render: (l) => <Badge tone={LEG_TONE[l.state]}>{l.state.replaceAll("_", " ").toLowerCase()}</Badge> },
+              { key: "owner", label: "Owner" },
+              { key: "detail", label: "Detail" },
+            ]}
+          />
         </Drawer>
       )}
     </Panel>
