@@ -48,6 +48,7 @@ const MEMBER_TONES = {
   DECLINED: "red",
   CEASED: "gray",
   SUSPENDED: "amber",
+  COVER_DEFERRED: "amber",
 };
 const ROW_TONES = { VALID: "green", APPLIED: "green", INVALID: "red", REJECTED: "red" };
 const INVOICE_TONES = { ISSUED: "blue", PARTIALLY_PAID: "amber", PAID: "green" };
@@ -247,7 +248,8 @@ export default function GroupAdmin({ session, notify, profile }) {
 
       <Panel
         title="Member underwriting queue"
-        subtitle="Cover pending underwriting across all schemes, oldest first: requested against the free-cover limit, the actively-at-work declaration and why it was referred."
+        subtitle="Cover pending underwriting across all schemes, oldest first: requested against the free-cover limit, the actively-at-work declaration, why it was referred, evidence outstanding and decisions waiting for authority or the member."
+        action={can(profile, "UNDERWRITE_MEMBER") ? <ExpiryRun session={session} notify={notify} onDone={queue.reload} /> : null}
       >
         <ErrorNote error={queue.error} />
         <DataTable
@@ -269,6 +271,8 @@ export default function GroupAdmin({ session, notify, profile }) {
             { key: "pendingCover", label: "Pending", align: "right", render: (m) => <strong className="ga-pending">{pula(m.pendingCover)}</strong> },
             { key: "activelyAtWork", label: "At work", render: (m) => (m.activelyAtWork == null ? "Not declared" : m.activelyAtWork ? "Yes" : "No") },
             { key: "referredBecause", label: "Referred because", render: (m) => m.referredBecause || "—" },
+            { key: "evidenceOutstanding", label: "Evidence", render: (m) => (m.evidenceOutstanding > 0 ? <Badge tone="amber">{m.evidenceOutstanding} outstanding</Badge> : <span className="ga-muted">Complete</span>) },
+            { key: "decisionStatus", label: "Decision", render: (m) => (m.decisionStatus ? <Badge tone="blue">{m.decisionStatus === "OFFERED" ? "Offer with member" : "Awaiting authority"}</Badge> : "—") },
             { key: "schemeCoverPending", label: "Scheme pending / in force", align: "right", render: (m) => `${pula(m.schemeCoverPending)} / ${pula(m.schemeCoverInForce)}` },
             { key: "waitingSince", label: "Waiting since", render: (m) => when(m.waitingSince) },
             ...(can(profile, "UNDERWRITE_MEMBER")
@@ -323,6 +327,23 @@ export default function GroupAdmin({ session, notify, profile }) {
         />
       </Panel>
     </div>
+  );
+}
+
+/** Lapses underwriting offers past their expiry now (the daily run, on demand): MemberDecisionExpired. */
+function ExpiryRun({ session, notify, onDone }) {
+  const action = useAction(notify);
+  const run = async () => {
+    const r = await action.run(() => request(session, "/group/underwriting/expiry-run", { method: "POST" }));
+    if (r) {
+      notify?.(r.data.expired ? `${r.data.expired} expired offer(s) lapsed` : "No offer has expired", "success");
+      onDone();
+    }
+  };
+  return (
+    <Button variant="secondary" busy={action.busy} onClick={run}>
+      Lapse expired offers
+    </Button>
   );
 }
 
@@ -855,9 +876,11 @@ function CessationPanel({ session, notify, profile, scheme, reload }) {
 
 function MembersTab({ session, notify, profile, detail, loading, reload }) {
   const underwrite = can(profile, "UNDERWRITE_MEMBER");
+  const manage = can(profile, "MANAGE_SCHEME") && detail.scheme.status === "ACTIVE";
   const [status, setStatus] = useState("ON_COVER");
   const [search, setSearch] = useState("");
   const [deciding, setDeciding] = useState(null);
+  const [acting, setActing] = useState(null); // {member, kind: "work" | "transfer"}
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -891,22 +914,35 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
       Number(m.pendingCover) > 0 ? <strong className="ga-pending">{pula(m.pendingCover)}</strong> : "—" },
     { key: "monthlyPremium", label: "Premium / month", align: "right", render: (m) => pula(m.monthlyPremium) },
   ];
-  if (underwrite) {
+  if (underwrite || manage) {
     columns.push({
       key: "actions",
       label: "",
-      render: (m) =>
-        m.status === "UNDERWRITING_PENDING" ? (
-          <div className="ws-row-actions">
+      render: (m) => (
+        <div className="ws-row-actions">
+          {underwrite && m.status === "UNDERWRITING_PENDING" && (
             <Button icon={ShieldCheck} onClick={() => setDeciding(m)}>
               Decide
             </Button>
-          </div>
-        ) : m.underwritingDecision ? (
-          <span className="ga-muted" title={m.underwritingReason || ""}>
-            {m.underwritingDecision === "ACCEPT" ? "Accepted" : "Declined"} by {m.underwrittenBy}
-          </span>
-        ) : null,
+          )}
+          {underwrite && m.status !== "UNDERWRITING_PENDING" && m.underwritingDecision && (
+            <button type="button" className="ga-link" title={m.underwritingReason || ""} onClick={() => setDeciding(m)}>
+              {m.underwritingDecision === "ACCEPT" ? "Accepted" : "Declined"} by {m.underwrittenBy}
+              {m.loadingPercent ? ` · +${Number(m.loadingPercent)}%` : ""}
+            </button>
+          )}
+          {manage && m.status === "COVER_DEFERRED" && (
+            <Button variant="secondary" onClick={() => setActing({ member: m, kind: "work" })}>
+              Back at work
+            </Button>
+          )}
+          {manage && ["ACTIVE", "PARTIALLY_ACCEPTED"].includes(m.status) && detail.categories.length > 1 && (
+            <Button variant="secondary" onClick={() => setActing({ member: m, kind: "transfer" })}>
+              Move category
+            </Button>
+          )}
+        </div>
+      ),
     });
   }
 
@@ -917,9 +953,26 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
           session={session}
           notify={notify}
           member={deciding}
-          onClose={() => setDeciding(null)}
+          onClose={() => {
+            setDeciding(null);
+            reload();
+          }}
           onDone={() => {
             setDeciding(null);
+            reload();
+          }}
+        />
+      )}
+      {acting && (
+        <MemberActionDrawer
+          session={session}
+          notify={notify}
+          member={acting.member}
+          kind={acting.kind}
+          categories={detail.categories}
+          onClose={() => setActing(null)}
+          onDone={() => {
+            setActing(null);
             reload();
           }}
         />
@@ -943,6 +996,7 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
               <option value="PARTIALLY_ACCEPTED">Partially accepted</option>
               <option value="ACTIVE">Active</option>
               <option value="SUSPENDED">Suspended</option>
+              <option value="COVER_DEFERRED">Cover deferred (not at work)</option>
               <option value="CEASED">Ceased</option>
               <option value="DECLINED">Declined</option>
               <option value="ALL">All</option>
@@ -968,109 +1022,328 @@ function MembersTab({ session, notify, profile, detail, loading, reload }) {
   );
 }
 
+const EVIDENCE_LABEL = {
+  MEDICAL_QUESTIONNAIRE: "Medical questionnaire",
+  MEDICAL_EXAMINATION: "Medical examination",
+  BLOOD_PROFILE: "Blood profile",
+  FINANCIAL_EVIDENCE: "Financial evidence",
+  AAW_CONFIRMATION: "Employer's actively-at-work confirmation",
+  HEALTH_DECLARATION: "Health declaration",
+};
+
+/**
+ * The member's underwriting file and decision (GL03): evidence requirements (received, waived or added for a risk
+ * exception), the decision per benefit with loading, exclusions and effective date, a second underwriter's authority,
+ * the member's answer to an offer on modified terms, decision history, episodes and aggregate exposure.
+ */
 function UnderwritingPanel({ session, notify, member, onClose, onDone }) {
+  const file = useResource(session, `/group/members/${member.id}/underwriting-file`, null);
   const [decision, setDecision] = useState("ACCEPT");
   const [amount, setAmount] = useState(String(Number(member.requestedCover)));
   const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState("");
+  const [exclusions, setExclusions] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const [benefitDecisions, setBenefitDecisions] = useState({});
+  const [note, setNote] = useState("");
+  const [addRequirement, setAddRequirement] = useState("");
   const action = useAction(inlineErrors(notify));
   const confirm = useConfirm();
+  const f = file.data;
+  const m = f?.member || member;
+  const open = (f?.decisions || []).filter((d) => ["AWAITING_AUTHORITY", "OFFERED"].includes(d.status));
+  const awaiting = open.find((d) => d.status === "AWAITING_AUTHORITY");
+  const offered = open.find((d) => d.status === "OFFERED");
+  const me = session?.username;
+  const reload = () => file.reload();
 
+  const evidence = async (e, status) => {
+    const r = await action.run(
+      () => request(session, `/group/member-evidence/${e.id}`, { method: "POST", body: { status, note: note || undefined } }),
+      `${EVIDENCE_LABEL[e.requirement] || e.requirement} ${status === "RECEIVED" ? "received" : "waived"}`,
+    );
+    if (r) {
+      setNote("");
+      reload();
+    }
+  };
+  const add = async () => {
+    const r = await action.run(() => request(session, `/group/members/${member.id}/evidence`, { method: "POST", body: { requirement: addRequirement, note: note || undefined } }), "Requirement added");
+    if (r) {
+      setAddRequirement("");
+      setNote("");
+      reload();
+    }
+  };
   const submit = async () => {
     const accept = decision === "ACCEPT";
     const ok = await confirm({
-      title: accept ? `Accept cover for ${member.name}?` : `Decline pending cover for ${member.name}?`,
+      title: accept ? `Accept cover for ${m.name}?` : `Decline pending cover for ${m.name}?`,
       message: accept ? (
         <>
-          <strong>{member.name}</strong> ({member.memberKey}) goes on cover for <strong>{pula(amount)}</strong> of the{" "}
-          {pula(member.requestedCover)} requested. Accepted cover is billed and certified from now on, and the decision is
-          recorded against your name.
+          <strong>{m.name}</strong> ({m.memberKey}): <strong>{pula(amount)}</strong> of the {pula(m.requestedCover)} requested
+          {loading ? `, with a ${loading}% loading` : ""}
+          {exclusions ? ` and exclusions (${exclusions})` : ""}. Above the authority limit a second underwriter confirms; modified terms
+          are offered to the member before they apply.
         </>
       ) : (
         <>
-          The pending <strong>{pula(member.pendingCover)}</strong> for <strong>{member.name}</strong> ({member.memberKey})
-          is declined; only the free cover of {pula(member.acceptedCover)} stays in force. The decision is recorded against
-          your name.
+          The pending <strong>{pula(m.pendingCover)}</strong> is declined; only the free cover of {pula(m.acceptedCover)} stays in force.
         </>
       ),
-      confirmLabel: accept ? "Accept cover" : "Decline pending cover",
+      confirmLabel: accept ? "Record decision" : "Decline pending cover",
       tone: accept ? undefined : "danger",
     });
     if (!ok) return;
     const body = { decision, reason: reason || null };
-    if (decision === "ACCEPT") body.acceptedAmount = amount;
-    const r = await action.run(
-      () => request(session, `/group/members/${member.id}/underwriting`, { method: "POST", body }),
-      decision === "ACCEPT" ? `Cover accepted for ${member.name}` : `Pending cover declined for ${member.name}`,
-    );
+    if (accept) {
+      body.acceptedAmount = amount;
+      if (loading) body.loadingPercent = loading;
+      if (exclusions) body.exclusions = exclusions;
+    }
+    if (effectiveDate) body.effectiveDate = effectiveDate;
+    const benefits = Object.entries(benefitDecisions)
+      .filter(([, v]) => v.decision)
+      .map(([benefitType, v]) => ({ benefitType, ...v, loadingPercent: v.loadingPercent || undefined, exclusions: v.exclusions || undefined }));
+    if (benefits.length) body.benefits = benefits;
+    const r = await action.run(() => request(session, `/group/members/${member.id}/underwriting`, { method: "POST", body }), "Decision recorded");
+    if (r) {
+      if (r.data.status === "UNDERWRITING_PENDING") reload();
+      else onDone();
+    }
+  };
+  const authority = async (approve) => {
+    const r = await action.run(() => request(session, `/group/members/${member.id}/underwriting/authority`, { method: "POST", body: { approve, note } }), approve ? "Decision authorised" : "Decision rejected");
+    if (r) {
+      setNote("");
+      reload();
+      if (r.data.member.status !== "UNDERWRITING_PENDING") onDone();
+    }
+  };
+  const respond = async (accepted) => {
+    const r = await action.run(() => request(session, `/group/members/${member.id}/underwriting/offer-response`, { method: "POST", body: { accepted, note: note || undefined } }), accepted ? "Member accepted the offer" : "Member declined the offer");
     if (r) onDone();
   };
+  const otherBenefits = (f?.benefits || []).filter((b) => b !== "GLA");
 
   return (
-    <Drawer
-      title={`Underwriting decision · ${member.name}`}
-      description={`${member.memberKey} · ${member.category}`}
-      onClose={onClose}
-    >
+    <Drawer size="lg" title={`Underwriting · ${m.name}`} description={`${m.memberKey} · category ${m.category} · ${label(m.status)}`} onClose={onClose}>
+      <ErrorNote error={file.error} />
       <div className="ws-kv">
-        <div>
-          <small>Requested cover</small>
-          <strong>{pula(member.requestedCover)}</strong>
-        </div>
-        <div>
-          <small>Free cover in force</small>
-          <strong>{pula(member.acceptedCover)}</strong>
-        </div>
-        <div>
-          <small>Pending underwriting</small>
-          <strong className="ga-pending">{pula(member.pendingCover)}</strong>
-        </div>
-        <div>
-          <small>Salary</small>
-          <strong>{member.salary != null ? pula(member.salary) : "—"}</strong>
+        <div><small>Requested cover</small><strong>{pula(m.requestedCover)}</strong></div>
+        <div><small>In force (free cover or accepted)</small><strong>{pula(m.acceptedCover)}</strong></div>
+        <div><small>Pending underwriting</small><strong className="ga-pending">{pula(m.pendingCover)}</strong></div>
+        <div><small>Free-cover limit</small><strong>{f ? pula(f.freeCoverLimit) : "—"}</strong></div>
+        <div><small>Actively at work</small><strong>{m.activelyAtWork == null ? "Not declared" : m.activelyAtWork ? "Yes" : "No"}</strong></div>
+        <div><small>Aggregate exposure</small><strong>{f ? pula(f.aggregateExposure) : "—"}{f?.otherGroupCover?.length ? ` (incl. ${f.otherGroupCover.map((o) => o.schemeRef).join(", ")})` : ""}</strong></div>
+        <div><small>Authority limit</small><strong>{f ? pula(f.authorityLimit) : "—"}</strong></div>
+        <div><small>Scheme rules</small><strong>{f ? `${f.partialCoverAllowed ? "Partial cover allowed" : "No partial cover"} · not at work: ${f.aawRule === "DEFER" ? "defer" : "refer"}` : "—"}</strong></div>
+      </div>
+
+      <div className="ga-drawer-section">
+        <h3>Evidence</h3>
+        <p className="subtitle">Medical evidence is restricted to underwriters; the employer sees only that cover is pending. Received evidence stays valid for 12 months (demo rule) and can be reused.</p>
+        <DataTable
+          rows={f?.evidence || []}
+          loading={file.loading}
+          rowKey={(e) => e.id}
+          searchFrom={50}
+          empty="No evidence required"
+          columns={[
+            { key: "requirement", label: "Requirement", render: (e) => EVIDENCE_LABEL[e.requirement] || e.requirement },
+            { key: "reason", label: "Why", render: (e) => label(e.reason) },
+            { key: "restricted", label: "Access", render: (e) => (e.restricted ? "Underwriters only" : "Administrators") },
+            { key: "status", label: "Status", render: (e) => <Badge tone={e.status === "REQUESTED" ? "amber" : "green"}>{label(e.status)}</Badge> },
+            { key: "validUntil", label: "Valid until", render: (e) => (e.validUntil ? day(e.validUntil) : "—") },
+            { key: "note", label: "Note", render: (e) => e.note || "—" },
+            {
+              key: "act",
+              label: "",
+              render: (e) =>
+                e.status === "REQUESTED" && (
+                  <div className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => evidence(e, "RECEIVED")}>Received</Button>
+                    <Button variant="secondary" busy={action.busy} onClick={() => evidence(e, "WAIVED")} disabled={!note}>Waive</Button>
+                  </div>
+                ),
+            },
+          ]}
+        />
+        <div className="field-grid">
+          <Field label="Note for the evidence action" hint="Required to waive a requirement. No medical detail.">
+            <input className="input" value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} />
+          </Field>
+          <Field label="Add a requirement (risk exception)">
+            <span className="gl-ages">
+              <select className="select" value={addRequirement} onChange={(e) => setAddRequirement(e.target.value)}>
+                <option value="">Choose</option>
+                {Object.entries(EVIDENCE_LABEL).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+              <Button variant="secondary" disabled={!addRequirement} busy={action.busy} onClick={add}>Add</Button>
+            </span>
+          </Field>
         </div>
       </div>
-      <FormGrid
-        onSubmit={submit}
-        busy={action.busy}
-        error={action.error}
-        submitLabel={decision === "ACCEPT" ? "Accept cover" : "Decline pending cover"}
-      >
-        <Field label="Decision">
-          <select className="select" value={decision} onChange={(e) => setDecision(e.target.value)}>
-            <option value="ACCEPT">Accept (in full or in part)</option>
-            <option value="DECLINE">Decline the pending amount</option>
-          </select>
-        </Field>
-        {decision === "ACCEPT" ? (
-          <Field
-            label="Accepted cover (BWP)"
-            hint={`Between ${pula(member.acceptedCover)} and ${pula(member.requestedCover)}.`}
-          >
-            <input
-              className="input"
-              type="number"
-              step="0.01"
-              min={Number(member.acceptedCover)}
-              max={Number(member.requestedCover)}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-            />
+
+      {awaiting && (
+        <div className="ga-drawer-section">
+          <h3>Waiting for a second underwriter</h3>
+          <p className="subtitle">
+            {pula(awaiting.acceptedAmount)} accepted by {awaiting.decidedBy}
+            {awaiting.loadingPercent ? ` with a ${Number(awaiting.loadingPercent)}% loading` : ""}: above the authority limit.
+          </p>
+          {awaiting.decidedBy === me ? (
+            <p className="ws-hint">You made this decision, so another underwriter confirms it.</p>
+          ) : (
+            <div className="ws-form-actions">
+              <Button variant="secondary" busy={action.busy} disabled={!note} onClick={() => authority(false)}>Reject</Button>
+              <Button busy={action.busy} disabled={!note} onClick={() => authority(true)}>Authorise</Button>
+            </div>
+          )}
+          {awaiting.decidedBy !== me && !note && <small className="ws-hint">Enter a note above to authorise or reject.</small>}
+        </div>
+      )}
+      {offered && (
+        <div className="ga-drawer-section">
+          <h3>Offer on modified terms</h3>
+          <p className="subtitle">
+            {pula(offered.acceptedAmount)}
+            {offered.loadingPercent ? ` with a ${Number(offered.loadingPercent)}% loading` : ""}
+            {offered.exclusions ? `, excluding ${offered.exclusions}` : ""}: open until {day(offered.offerExpiresOn)}. Record the member's signed answer.
+          </p>
+          <div className="ws-form-actions">
+            <Button variant="secondary" busy={action.busy} onClick={() => respond(false)}>Member declined</Button>
+            <Button busy={action.busy} onClick={() => respond(true)}>Member accepted</Button>
+          </div>
+        </div>
+      )}
+      {m.status === "UNDERWRITING_PENDING" && !open.length && (
+        <FormGrid onSubmit={submit} busy={action.busy} error={action.error} submitLabel={decision === "ACCEPT" ? "Record decision" : "Decline pending cover"}>
+          {(f?.outstanding || []).length > 0 && decision === "ACCEPT" && (
+            <p className="ga-status-note full">Evidence outstanding: {f.outstanding.join(", ")}. Cover is accepted only once it is received or waived.</p>
+          )}
+          <Field label="Decision (life cover)">
+            <select className="select" value={decision} onChange={(e) => setDecision(e.target.value)}>
+              <option value="ACCEPT">Accept (in full or in part)</option>
+              <option value="DECLINE">Decline the pending amount</option>
+            </select>
           </Field>
-        ) : (
-          <Field label="Cover kept" hint="The free-cover portion stays in force.">
-            <input className="input" value={pula(member.acceptedCover)} disabled />
+          {decision === "ACCEPT" ? (
+            <Field label="Accepted cover (BWP)" hint={`Between ${pula(m.acceptedCover)} and ${pula(m.requestedCover)}.`}>
+              <input className="input" type="number" step="0.01" min={Number(m.acceptedCover)} max={Number(m.requestedCover)} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+            </Field>
+          ) : (
+            <Field label="Cover kept" hint="The free-cover portion stays in force.">
+              <input className="input" value={pula(m.acceptedCover)} disabled />
+            </Field>
+          )}
+          {decision === "ACCEPT" && (
+            <>
+              <Field label="Loading (%)" hint="Added to the member's premium rate. A loading or exclusion makes this an offer the member must accept.">
+                <input className="input" type="number" min="0" max="300" step="0.01" value={loading} onChange={(e) => setLoading(e.target.value)} />
+              </Field>
+              <Field label="Exclusions">
+                <input className="input" value={exclusions} onChange={(e) => setExclusions(e.target.value)} maxLength={500} />
+              </Field>
+            </>
+          )}
+          <Field label="Effective date" hint="Blank: today. Not before the member's entry.">
+            <input className="input" type="date" max={today()} value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+          </Field>
+          {otherBenefits.map((b) => (
+            <Field key={b} label={`${label(b)} decision`} hint="Optional per-benefit decision.">
+              <span className="gl-ages">
+                <select className="select" value={benefitDecisions[b]?.decision || ""} onChange={(e) => setBenefitDecisions({ ...benefitDecisions, [b]: { ...benefitDecisions[b], decision: e.target.value } })}>
+                  <option value="">No separate decision</option>
+                  <option value="ACCEPT">Accept</option>
+                  <option value="DECLINE">Decline</option>
+                </select>
+                {benefitDecisions[b]?.decision === "ACCEPT" && (
+                  <input className="input" placeholder="Exclusions" value={benefitDecisions[b]?.exclusions || ""} onChange={(e) => setBenefitDecisions({ ...benefitDecisions, [b]: { ...benefitDecisions[b], exclusions: e.target.value } })} />
+                )}
+              </span>
+            </Field>
+          ))}
+          <Field label={decision === "DECLINE" ? "Reason (required)" : "Reason or evidence note"} full>
+            <textarea className="textarea" rows={2} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} required={decision === "DECLINE"} />
+          </Field>
+        </FormGrid>
+      )}
+      {open.length > 0 && <ErrorNote error={action.error} />}
+
+      <div className="ga-drawer-section">
+        <h3>Decision history</h3>
+        <DataTable
+          rows={f?.decisions || []}
+          rowKey={(d) => d.id}
+          searchFrom={50}
+          empty="No decisions yet"
+          columns={[
+            { key: "decidedAt", label: "When", render: (d) => when(d.decidedAt) },
+            { key: "benefitType", label: "Benefit", render: (d) => label(d.benefitType) },
+            { key: "decision", label: "Decision", render: (d) => label(d.decision) },
+            { key: "acceptedAmount", label: "Accepted", align: "right", render: (d) => pula(d.acceptedAmount) },
+            { key: "terms", label: "Terms", render: (d) => [d.loadingPercent ? `${Number(d.loadingPercent)}% loading` : null, d.exclusions].filter(Boolean).join(" · ") || "Standard" },
+            { key: "effectiveDate", label: "Effective", render: (d) => day(d.effectiveDate) },
+            { key: "status", label: "Status", render: (d) => label(d.status) + (d.memberResponse ? ` · member ${d.memberResponse.toLowerCase()}` : "") },
+            { key: "decidedBy", label: "By", render: (d) => d.decidedBy + (d.authorisedBy ? ` · authorised ${d.authorisedBy}` : "") },
+          ]}
+        />
+      </div>
+      {(f?.episodes || []).length > 1 && (
+        <div className="ga-drawer-section">
+          <h3>Cover episodes and category history</h3>
+          <DataTable
+            rows={f.episodes}
+            rowKey={(e) => e.memberId}
+            searchFrom={50}
+            columns={[
+              { key: "category", label: "Category" },
+              { key: "from", label: "From", render: (e) => day(e.from) },
+              { key: "to", label: "To", render: (e) => (e.to ? day(e.to) : "—") },
+              { key: "status", label: "Status", render: (e) => label(e.status) },
+              { key: "acceptedCover", label: "Cover", align: "right", render: (e) => pula(e.acceptedCover) },
+            ]}
+          />
+        </div>
+      )}
+    </Drawer>
+  );
+}
+
+/** Return to work for deferred cover (AT-GL03-02) and moving a member to another category (NS-GL03-005). */
+function MemberActionDrawer({ session, notify, member, categories, kind, onClose, onDone }) {
+  const [form, setForm] = useState({ effectiveDate: today(), note: "", categoryCode: categories.find((c) => c.code !== member.category)?.code || "", reason: "" });
+  const action = useAction(inlineErrors(notify));
+  const submit = async () => {
+    const path = kind === "work" ? `/group/members/${member.id}/actively-at-work` : `/group/members/${member.id}/category-transfer`;
+    const body = kind === "work" ? { effectiveDate: form.effectiveDate, note: form.note || undefined } : { categoryCode: form.categoryCode, effectiveDate: form.effectiveDate, reason: form.reason || undefined };
+    const r = await action.run(() => request(session, path, { method: "POST", body }), kind === "work" ? `${member.name} is on cover` : `${member.name} moved to ${form.categoryCode}`);
+    if (r) onDone();
+  };
+  return (
+    <Drawer
+      title={kind === "work" ? `Back at work · ${member.name}` : `Move category · ${member.name}`}
+      description={kind === "work" ? "The employer confirms the member is actively at work: cover starts with the free-cover treatment; anything above it is referred." : "The current episode ends the day before; a new one starts in the new category. Cover already accepted continues; anything above it is referred."}
+      onClose={onClose}
+    >
+      <FormGrid onSubmit={submit} busy={action.busy} error={action.error} submitLabel={kind === "work" ? "Confirm back at work" : "Move member"}>
+        {kind === "transfer" && (
+          <Field label="New category">
+            <select className="select" value={form.categoryCode} onChange={(e) => setForm({ ...form, categoryCode: e.target.value })} required>
+              {categories.filter((c) => c.code !== member.category).map((c) => (
+                <option key={c.code} value={c.code}>{c.code} · {c.name}</option>
+              ))}
+            </select>
           </Field>
         )}
-        <Field label={decision === "DECLINE" ? "Reason (required)" : "Reason or evidence note"} full>
-          <textarea
-            className="textarea"
-            rows={2}
-            maxLength={500}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            required={decision === "DECLINE"}
-          />
+        <Field label="Effective date">
+          <input className="input" type="date" max={today()} value={form.effectiveDate} onChange={(e) => setForm({ ...form, effectiveDate: e.target.value })} required />
+        </Field>
+        <Field label={kind === "work" ? "Note" : "Reason"} full>
+          <input className="input" value={kind === "work" ? form.note : form.reason} onChange={(e) => setForm({ ...form, [kind === "work" ? "note" : "reason"]: e.target.value })} maxLength={500} />
         </Field>
       </FormGrid>
     </Drawer>
