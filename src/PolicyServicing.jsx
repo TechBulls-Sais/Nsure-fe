@@ -174,6 +174,12 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
   const p = v?.policy;
   // IL04 roster: each life's limit, use, claims, underwriting outcome and warnings, keyed by life id.
   const standing = Object.fromEntries((v?.roster?.lives || []).map((s) => [s.lifeId, s]));
+  // NS-IL04-006: each life's latest consent decision (the list is newest first).
+  const consentOf = {};
+  (v?.consents || []).forEach((c) => {
+    if (!consentOf[c.lifeId]) consentOf[c.lifeId] = c;
+  });
+  const isAdult = (life) => life.ageNow != null && life.ageNow >= 18;
   // Relationship history: a person who was covered more than once (removed and added again, or replaced).
   const episodes = Object.values(
     (v?.lives || []).reduce((byPerson, life) => {
@@ -232,6 +238,15 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
       done = await action.run(
         () => request(session, base + "/surrender", { method: "POST", body: { reason: form.reason } }),
         "Surrender raised for approval",
+      );
+    } else if (form.kind === "consent") {
+      done = await action.run(
+        () =>
+          request(session, base + "/lives/" + form.lifeId + "/consent", {
+            method: "POST",
+            body: { status: form.status, evidence: form.reason },
+          }),
+        "Consent recorded",
       );
     } else if (form.kind === "paidup") {
       done = await action.run(
@@ -413,7 +428,41 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 {
                   key: "waitingPeriodStart",
                   label: "Waiting period from",
-                  render: (r) => r.waitingPeriodStart || p.coverStartDate || "—",
+                  render: (r) =>
+                    (r.waitingPeriodStart || p.coverStartDate || "—") +
+                    (r.continuityOf ? " · continues cover from #" + r.continuityOf : ""),
+                },
+                {
+                  key: "consent",
+                  label: "Medical evidence to policyholder",
+                  render: (r) =>
+                    r.mainInsured ? (
+                      "Own life"
+                    ) : !isAdult(r) ? (
+                      "Minor: shared"
+                    ) : (
+                      <span className="ws-row-actions">
+                        <Badge tone={consentOf[r.id]?.status === "GRANTED" ? "green" : "amber"}>
+                          {consentOf[r.id]?.status === "GRANTED" ? "Consented" : "Withheld (no consent)"}
+                        </Badge>
+                        {manage && (
+                          <Button
+                            variant="secondary"
+                            onClick={() =>
+                              setForm({
+                                kind: "consent",
+                                lifeId: r.id,
+                                lifeName: r.fullName,
+                                status: consentOf[r.id]?.status === "GRANTED" ? "WITHDRAWN" : "GRANTED",
+                                reason: "",
+                              })
+                            }
+                          >
+                            {consentOf[r.id]?.status === "GRANTED" ? "Withdraw" : "Record consent"}
+                          </Button>
+                        )}
+                      </span>
+                    ),
                 },
                 {
                   key: "act",
@@ -623,7 +672,9 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 ? "Surrender " + policyRef
                 : form.kind === "paidup"
                   ? "Make " + policyRef + " paid-up"
-                  : "Terminate " + policyRef
+                  : form.kind === "consent"
+                    ? "Consent of " + form.lifeName
+                    : "Terminate " + policyRef
           }
           description={
             form.kind === "endorsement" ? "Preview the effect, then confirm. Nothing changes until you confirm." : undefined
@@ -750,6 +801,9 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                     <Field label="Date of birth">
                       <input type="date" value={form.dateOfBirth || ""} onChange={set("dateOfBirth")} required />
                     </Field>
+                    <Field label="Date of birth evidence" hint="e.g. Birth certificate number or Omang">
+                      <input value={form.dobEvidence || ""} maxLength={150} onChange={set("dobEvidence")} />
+                    </Field>
                   </>
                 )}
                 <Field label="Effective date">
@@ -819,8 +873,23 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 )}
               </Field>
             )}
+            {form.kind === "consent" && (
+              <Field label="Decision" full>
+                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  <option value="GRANTED">{form.lifeName} agrees the policyholder may see their medical evidence</option>
+                  <option value="WITHDRAWN">{form.lifeName} does not agree (or withdraws consent)</option>
+                </select>
+                <small className="ws-hint">
+                  An adult insured life's medical evidence on a claim is theirs: the policyholder can open it in the portal
+                  only with this consent. Record the life's own decision, not the policyholder's.
+                </small>
+              </Field>
+            )}
             {form.kind !== "endorsement" && (
-              <Field label={form.kind === "terminate" ? "Note" : "Reason"} full>
+              <Field
+                label={form.kind === "terminate" ? "Note" : form.kind === "consent" ? "How it was given" : "Reason"}
+                full
+              >
                 <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} rows={3} required />
               </Field>
             )}
@@ -1296,7 +1365,7 @@ function Rules({ session, notify, profile }) {
       </Panel>
       <Panel
         title="Servicing rules"
-        subtitle="Whether a late premium restores cover by itself, how far an endorsement may be backdated, and the ages at which insured lives are reviewed."
+        subtitle="Each product's servicing rules: whether a late premium restores cover by itself, backdating, review and cessation ages, how a re-added life's waiting period is treated, when removing a life needs approval, the period without cover before lapse and the cooling-off period. Seeded values are demo defaults pending the insurer's approved rules."
       >
         <ErrorNote error={servicing.error} />
         <DataTable
@@ -1314,6 +1383,19 @@ function Rules({ session, notify, profile }) {
             { key: "maxBackdateDays", label: "Backdating", render: (r) => "up to " + r.maxBackdateDays + " days" },
             { key: "childReviewAge", label: "Child review age", align: "right" },
             { key: "maxCoverAge", label: "Cover ceases at", align: "right" },
+            { key: "reviewLeadDays", label: "Reviews raised", render: (r) => r.reviewLeadDays + " days ahead" },
+            {
+              key: "lifeContinuity",
+              label: "Re-added life",
+              render: (r) => (r.lifeContinuity === "RESTART" ? "Waiting restarts" : "Keeps first waiting start"),
+            },
+            {
+              key: "removalApproval",
+              label: "Removing a life",
+              render: (r) => (r.removalApproval === "ALWAYS" ? "Always approved" : "Approved if backdated"),
+            },
+            { key: "noCoverMonths", label: "Lapses after", render: (r) => r.noCoverMonths + " months without cover" },
+            { key: "coolingOffDays", label: "Cooling-off", render: (r) => r.coolingOffDays + " days" },
             {
               key: "act",
               label: "",
@@ -1404,6 +1486,27 @@ function Rules({ session, notify, profile }) {
                 </Field>
                 <Field label="Cover ceases at age">
                   <input type="number" min="1" max="120" value={form.maxCoverAge} onChange={set("maxCoverAge")} required />
+                </Field>
+                <Field label="Raise age reviews (days ahead)">
+                  <input type="number" min="0" max="365" value={form.reviewLeadDays} onChange={set("reviewLeadDays")} required />
+                </Field>
+                <Field label="A life removed and added again">
+                  <select value={form.lifeContinuity} onChange={set("lifeContinuity")}>
+                    <option value="KEEP_EARLIEST">Keeps its first waiting-period start</option>
+                    <option value="RESTART">Starts a new waiting period</option>
+                  </select>
+                </Field>
+                <Field label="Removing a life needs a second person">
+                  <select value={form.removalApproval} onChange={set("removalApproval")}>
+                    <option value="BACKDATED">Only when backdated</option>
+                    <option value="ALWAYS">Always</option>
+                  </select>
+                </Field>
+                <Field label="Lapses after (months without cover)">
+                  <input type="number" min="0" max="24" value={form.noCoverMonths} onChange={set("noCoverMonths")} required />
+                </Field>
+                <Field label="Cooling-off (days)">
+                  <input type="number" min="0" max="90" value={form.coolingOffDays} onChange={set("coolingOffDays")} required />
                 </Field>
               </>
             )}
