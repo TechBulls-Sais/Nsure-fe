@@ -1028,3 +1028,170 @@ export function CustomerCases({ session, notify, policies = [], claims = [] }) {
     </section>
   );
 }
+
+/**
+ * Customer portal: "Your choices and contact details" (spec 04 customer workspace). The customer chooses channels and
+ * marketing (recorded with the portal as consent evidence), asks to change their email or mobile (a code goes to the
+ * new contact, then the insurer approves), and sees the policies they may view for someone else while a delegation
+ * lasts (AT-SH01-03).
+ */
+export function CustomerChoices({ session, notify }) {
+  const [prefs, setPrefs] = useState(null);
+  const [delegated, setDelegated] = useState([]);
+  const [error, setError] = useState("");
+  const [change, setChange] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try {
+      const [p, d] = await Promise.all([
+        request(session, "/portfolio/shop/preferences"),
+        request(session, "/portfolio/shop/delegated"),
+      ]);
+      setPrefs(p.data);
+      setDelegated(d.data || []);
+      setError("");
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+  const run = async (fn, done) => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fn();
+      if (done) notify?.(done);
+      return r;
+    } catch (e) {
+      setError(e.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setChannel = async (channel, status) => {
+    const r = await run(() => request(session, "/portfolio/shop/preferences", { method: "PUT", body: { channel, status } }), "Saved");
+    if (r) setPrefs(r.data);
+  };
+  const setMarketing = async (status) => {
+    const r = await run(
+      () => request(session, "/portfolio/shop/preferences/purposes", { method: "PUT", body: { purpose: "MARKETING", channel: "ALL", status } }),
+      status === "OPTED_IN" ? "Thank you. You can withdraw this at any time." : "You will not receive marketing.",
+    );
+    if (r) setPrefs(r.data);
+  };
+  const submitChange = async (e) => {
+    e.preventDefault();
+    if (!change.ref) {
+      const r = await run(() => request(session, "/portfolio/shop/contact-changes", { method: "POST", body: { field: change.field, value: change.value } }));
+      if (r) setChange({ ...change, ref: r.data.recordRef, challenge: r.data.challenge, demoCode: r.data.demoCode, code: "" });
+    } else {
+      const r = await run(
+        () => request(session, `/portfolio/shop/contact-changes/${change.ref}/verify`, { method: "POST", body: { challenge: change.challenge, code: change.code } }),
+        "Confirmed. We check the change and update your details.",
+      );
+      if (r) setChange(null);
+    }
+  };
+  const marketing = (prefs?.purposes || []).find((p) => p.purpose === "MARKETING");
+  return (
+    <section className="customer-requests customer-cases" aria-labelledby="customer-choices-heading">
+      <div className="customer-requests-head">
+        <h2 id="customer-choices-heading">Your choices and contact details</h2>
+        <p>How we contact you about your cover. Service messages about your policies and claims always reach you on a channel you allow.</p>
+      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      {prefs && (
+        <ul>
+          {prefs.channels.map((c) => (
+            <li key={c.channel} className={c.deliverable ? "is-done" : "is-pending"}>
+              <span className="customer-request-icon" aria-hidden="true">
+                {c.deliverable ? <Check size={15} /> : <Clock3 size={15} />}
+              </span>
+              <div>
+                <strong>{c.channel === "WHATSAPP" ? "WhatsApp" : c.channel === "SMS" ? "SMS" : "Email"}</strong>
+                <small>{c.contact || "No contact on file"} · {c.deliverable ? "On" : c.note}</small>
+              </div>
+              <button className="btn secondary" type="button" disabled={busy} onClick={() => setChannel(c.channel, c.status === "OPTED_IN" && c.deliverable ? "OPTED_OUT" : "OPTED_IN")}>
+                {c.status === "OPTED_IN" && c.deliverable ? "Turn off" : "Turn on"}
+              </button>
+            </li>
+          ))}
+          <li className={marketing?.status === "OPTED_IN" ? "is-done" : "is-pending"}>
+            <span className="customer-request-icon" aria-hidden="true">
+              {marketing?.status === "OPTED_IN" ? <Check size={15} /> : <Clock3 size={15} />}
+            </span>
+            <div>
+              <strong>News and offers</strong>
+              <small>{marketing?.status === "OPTED_IN" ? "You agreed to receive offers" : "Off: we never send offers without your agreement"}</small>
+            </div>
+            <button className="btn secondary" type="button" disabled={busy} onClick={() => setMarketing(marketing?.status === "OPTED_IN" ? "OPTED_OUT" : "OPTED_IN")}>
+              {marketing?.status === "OPTED_IN" ? "Withdraw" : "I agree"}
+            </button>
+          </li>
+        </ul>
+      )}
+      {!change ? (
+        <button className="btn secondary" type="button" onClick={() => setChange({ field: "EMAIL", value: "" })}>
+          Change my email or mobile
+        </button>
+      ) : (
+        <form className="customer-case-form" onSubmit={submitChange}>
+          {!change.ref ? (
+            <div className="customer-case-grid">
+              <label>
+                <span>What</span>
+                <select value={change.field} onChange={(e) => setChange({ ...change, field: e.target.value })}>
+                  <option value="EMAIL">Email</option>
+                  <option value="PHONE">Mobile number</option>
+                </select>
+              </label>
+              <label>
+                <span>New {change.field === "EMAIL" ? "email" : "mobile number"}</span>
+                <input value={change.value} required onChange={(e) => setChange({ ...change, value: e.target.value })} />
+              </label>
+            </div>
+          ) : (
+            <label>
+              <span>The code we sent to your new {change.field === "EMAIL" ? "email" : "mobile"}{change.demoCode ? ` (demo: ${change.demoCode})` : ""}</span>
+              <input value={change.code} inputMode="numeric" required autoComplete="one-time-code" onChange={(e) => setChange({ ...change, code: e.target.value })} />
+            </label>
+          )}
+          <div className="customer-case-actions">
+            <button className="btn secondary" type="button" onClick={() => setChange(null)} disabled={busy}>
+              Cancel
+            </button>
+            <button className="btn primary" type="submit" disabled={busy}>
+              {change.ref ? "Confirm" : "Send a code"}
+            </button>
+          </div>
+        </form>
+      )}
+      {delegated.length > 0 && (
+        <>
+          <h3>Policies you look after for someone else</h3>
+          <ul>
+            {delegated.map((p) => (
+              <li key={p.recordRef} className="is-done">
+                <span className="customer-request-icon" aria-hidden="true">
+                  <Check size={15} />
+                </span>
+                <div>
+                  <strong>
+                    {p.recordRef} · {p.product}
+                  </strong>
+                  <small>
+                    {p.customerName} · {label(p.status)} · {label(p.authority)} access until {p.validTo}
+                  </small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}

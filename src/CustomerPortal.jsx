@@ -32,7 +32,7 @@ import {
   noCoverLapsesOn,
 } from "./Workflow";
 import { PaymentResult, PolicyPayment, useDeclarationLock, useDeclaredPolicies } from "./Checkout";
-import { CustomerCases } from "./ServiceDesk";
+import { CustomerCases, CustomerChoices } from "./ServiceDesk";
 import { ThemeSwitch } from "./ui/workspace";
 
 // Beneficiaries can be changed while the purchase is pending and while the policy is in force (with or without cover).
@@ -939,6 +939,7 @@ export default function CustomerPortal({
         </section>
 
         <CustomerCases session={session} notify={notify} policies={policies} claims={claims} />
+        <CustomerChoices session={session} notify={notify} />
 
         <section
           className="customer-need"
