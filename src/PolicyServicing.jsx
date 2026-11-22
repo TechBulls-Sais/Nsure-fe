@@ -353,6 +353,31 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               <strong>Underwriting terms:</strong> {p.underwritingTerms}
             </p>
           )}
+          {/* NS-IL03-001: the issue terms frozen when cover started; endorsements never change them. */}
+          {v.inceptionSnapshot && (
+            <Panel
+              title="Inception snapshot"
+              subtitle={"Issue terms frozen on " + when(v.inceptionTakenAt) + " · fingerprint " + (v.inceptionSha256 || "").slice(0, 12)}
+            >
+              <div className="ws-kv">
+                {[
+                  ["Product terms", v.inceptionSnapshot.productVersion + (v.inceptionSnapshot.wordingRef ? " · " + v.inceptionSnapshot.wordingRef : "")],
+                  ["Plan", v.inceptionSnapshot.tier || "—"],
+                  ["Sum assured", pula(v.inceptionSnapshot.sumAssured)],
+                  ["Premium", pula(v.inceptionSnapshot.premium)],
+                  ["Rates", v.inceptionSnapshot.rateTableVersion || "Flat plan premium"],
+                  ["Quote", v.inceptionSnapshot.quoteRef ? v.inceptionSnapshot.quoteRef + " v" + v.inceptionSnapshot.quoteVersion : "—"],
+                  ["Term", v.inceptionSnapshot.termYears ? v.inceptionSnapshot.termYears + " years" : "—"],
+                  ["Underwriting terms", v.inceptionSnapshot.underwritingTerms || "Standard"],
+                ].map(([k, value]) => (
+                  <div key={k}>
+                    <small>{k}</small>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
 
           <Panel
             title="Insured lives"
