@@ -2431,6 +2431,7 @@ export default function App() {
           )}
           {modal.type === "claim" && (
             <ClaimLodgeForm
+              staff
               policies={policies.filter((p) => ["Active", NO_COVER, "Lapsed"].includes(p.status))}
               onCancel={close}
               onSave={async (data) => {
