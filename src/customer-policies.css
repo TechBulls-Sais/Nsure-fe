@@ -358,3 +358,33 @@
 .customer-identity-form input[type="file"] {
   max-width: 100%;
 }
+
+/* IL01: the portal purchase is an application (questions, declaration) and its underwriting offer. */
+.customer-questions {
+  display: grid;
+  gap: 10px;
+}
+.customer-question {
+  display: grid;
+  gap: 4px;
+}
+.customer-question > span {
+  font-size: 0.9rem;
+}
+.customer-declaration {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+.customer-offer {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+.customer-offer p {
+  margin: 0;
+}
+.customer-offer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

@@ -115,6 +115,29 @@ export default function PartnerPortal({ session, notify }) {
               ]}
             />
           </Panel>
+          {/* NS-IL02-002, AT-IL02-03: what underwriting asked for and its status; never the evidence itself. */}
+          <Panel title="Evidence requests" subtitle="Evidence underwriting asked for on your applications. Restricted medical evidence is named only as such.">
+            <DataTable
+              rows={p.evidenceRequests || []}
+              rowKey={(r) => r.id}
+              empty="No evidence requested on your applications"
+              columns={[
+                { key: "applicationRef", label: "Application" },
+                { key: "requirement", label: "Evidence" },
+                {
+                  key: "status",
+                  label: "Status",
+                  render: (r) => (
+                    <Badge tone={r.status === "REQUESTED" ? "amber" : "green"}>
+                      {r.status === "REQUESTED" ? "Outstanding" : r.status === "RECEIVED" ? "Received" : "Waived"}
+                    </Badge>
+                  ),
+                },
+                { key: "dueDate", label: "Due" },
+                { key: "reminderCount", label: "Reminders", align: "right", render: (r) => r.reminderCount || "—" },
+              ]}
+            />
+          </Panel>
           <Panel title="My portfolio">
             <DataTable
               rows={p.policies}

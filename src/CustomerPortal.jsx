@@ -204,6 +204,37 @@ export default function CustomerPortal({
   const [showPolicies, setShowPolicies] = useState(false);
   const firstName = (customer?.name || "there").split(" ")[0];
   const [lives, setLives] = useState([]);
+  // NS-IL01-003/005: the purchase is an application: the product's questions, occupation and the declaration.
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [occupation, setOccupation] = useState("");
+  const [appDeclared, setAppDeclared] = useState(false);
+  const [terms, setTerms] = useState([]);
+  const [termYears, setTermYears] = useState("");
+  const applications = shop?.applications || [];
+  const offers = shop?.offers || {};
+  useEffect(() => {
+    let live = true;
+    setAnswers({});
+    setAppDeclared(false);
+    if (!choice) {
+      setQuestions([]);
+      return undefined;
+    }
+    request(session, "/portfolio/shop/questions?product=" + encodeURIComponent(choice))
+      .then((r) => live && setQuestions(r.data || []))
+      .catch(() => live && setQuestions([]));
+    request(session, "/portfolio/shop/terms?product=" + encodeURIComponent(choice))
+      .then((r) => {
+        if (!live) return;
+        setTerms(r.data || []);
+        setTermYears((r.data || []).length ? String(Math.max(...r.data)) : "");
+      })
+      .catch(() => live && setTerms([]));
+    return () => {
+      live = false;
+    };
+  }, [session, choice]);
   const [acting, setActing] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const claims = shop?.claims || [];
@@ -322,16 +353,26 @@ export default function CustomerPortal({
           product: choice,
           tier: tierChoice || undefined,
           ...(rated ? { lives: livesBody(lives) } : {}),
+          disclosures: answers,
+          occupation: occupation || undefined,
+          ...(terms.length && termYears ? { termYears: Number(termYears) } : {}),
+          declarationAccepted: appDeclared,
         },
       });
       onShop(result.data);
+      // Accepted by the underwriting rules: a policy awaits payment. Otherwise the application is with underwriting.
+      const reserved = (result.data?.requests || []).some(
+        (r) => r.product === choice && (r.tier || "") === (tierChoice || "") && r.status === "Pending Payment",
+      );
       setChoice(null);
       setLives([]);
       setMessage(
-        choice + (tierChoice ? " (" + tierChoice + ")" : "") +
-          " is reserved for you. Pay the first premium below to start your cover.",
+        reserved
+          ? choice + (tierChoice ? " (" + tierChoice + ")" : "") +
+              " is reserved for you. Pay the first premium below to start your cover."
+          : "Thank you. Your application for " + choice + " is with our underwriters; we will let you know the outcome here.",
       );
-      notify("Cover reserved. Pay to activate it.");
+      notify(reserved ? "Cover reserved. Pay to activate it." : "Application received for underwriting.");
       window.setTimeout(() => {
         document
           .getElementById("your-requests")
@@ -772,6 +813,85 @@ export default function CustomerPortal({
           )}
         </section>
 
+        {applications.length > 0 && (
+          <section className="customer-requests" id="your-applications" aria-labelledby="customer-applications-heading">
+            <div className="customer-requests-head">
+              <h2 id="customer-applications-heading">
+                Your applications <span>{applications.length}</span>
+              </h2>
+              <p>
+                Applications our underwriters are reviewing. When we offer cover on changed terms you can accept or
+                decline the offer here; once accepted, we issue your policy and you pay the first premium.
+              </p>
+            </div>
+            <ul>
+              {applications.map((item) => {
+                const offer = offers[item.id];
+                const declined = ["Declined", "Withdrawn", "Postponed"].includes(item.status);
+                return (
+                  <li key={item.id} className={declined ? "is-rejected" : "is-pending"}>
+                    <span className="customer-request-icon" aria-hidden="true">
+                      {declined ? <X size={15} /> : <Clock3 size={15} />}
+                    </span>
+                    <div>
+                      <strong>
+                        {item.product}
+                        {item.tier ? " · " + item.tier : ""}
+                      </strong>
+                      <small>
+                        {item.id} · applied {item.date} ·{" "}
+                        {item.status === "Ready to issue"
+                          ? "accepted: your policy will be issued shortly"
+                          : item.status === "Offered"
+                            ? "an offer is waiting for your answer"
+                            : declined
+                              ? item.status.toLowerCase()
+                              : "with our underwriters"}
+                      </small>
+                      {offer && (
+                        <div className="customer-offer">
+                          <p>
+                            Offer {offer.offerVersion}: {money(offer.premium)} / month
+                            {offer.loadingPercent ? " (premium increased by " + Number(offer.loadingPercent) + "%)" : ""}
+                            {offer.exclusion ? ". Not covered: " + offer.exclusion : ""}
+                            {offer.validUntil ? ". Open until " + offer.validUntil + "." : "."}
+                          </p>
+                          <div className="customer-offer-actions">
+                            <button
+                              type="button"
+                              className="btn primary"
+                              disabled={acting}
+                              onClick={() =>
+                                act(
+                                  "/portfolio/shop/applications/" + item.id + "/offer",
+                                  { accept: true },
+                                  "Offer accepted. We will issue your policy.",
+                                )
+                              }
+                            >
+                              Accept offer
+                            </button>
+                            <button
+                              type="button"
+                              className="btn secondary"
+                              disabled={acting}
+                              onClick={() =>
+                                act("/portfolio/shop/applications/" + item.id + "/offer", { accept: false }, "Offer declined.")
+                              }
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
         {requests.length > 0 && (
           <section className="customer-requests" id="your-requests" aria-labelledby="customer-requests-heading">
             <div className="customer-requests-head">
@@ -1127,6 +1247,71 @@ export default function CustomerPortal({
                           {...priced}
                         />
                       )}
+                      <fieldset className="customer-tiers customer-questions">
+                        <legend>A few questions about you</legend>
+                        {terms.length > 0 && (
+                          <label className="customer-question">
+                            <span>Policy term</span>
+                            <select className="input" value={termYears} onChange={(e) => setTermYears(e.target.value)}>
+                              {terms.map((t) => (
+                                <option key={t} value={String(t)}>
+                                  {t} years (cover ends at age 70 if that comes first)
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
+                        <label className="customer-question">
+                          <span>Your occupation</span>
+                          <input
+                            className="input"
+                            value={occupation}
+                            maxLength={100}
+                            placeholder="e.g. Teacher"
+                            onChange={(e) => setOccupation(e.target.value)}
+                          />
+                        </label>
+                        {questions.map((q) => (
+                          <label className="customer-question" key={q.code}>
+                            <span>
+                              {q.question}
+                              {q.mandatory ? " *" : ""}
+                            </span>
+                            {q.answerType === "YES_NO" ? (
+                              <select
+                                className="input"
+                                required={q.mandatory}
+                                value={answers[q.code] || ""}
+                                onChange={(e) => setAnswers({ ...answers, [q.code]: e.target.value })}
+                              >
+                                <option value="">Choose</option>
+                                <option value="NO">No</option>
+                                <option value="YES">Yes</option>
+                              </select>
+                            ) : (
+                              <input
+                                className="input"
+                                maxLength={500}
+                                required={q.mandatory}
+                                value={answers[q.code] || ""}
+                                onChange={(e) => setAnswers({ ...answers, [q.code]: e.target.value })}
+                              />
+                            )}
+                          </label>
+                        ))}
+                        <label className="customer-question customer-declaration">
+                          <input
+                            type="checkbox"
+                            required
+                            checked={appDeclared}
+                            onChange={(e) => setAppDeclared(e.target.checked)}
+                          />
+                          <span>
+                            My answers are true and complete. I understand this is an application: cover starts only
+                            once it is accepted and the first premium is paid.
+                          </span>
+                        </label>
+                      </fieldset>
                       <div className="customer-buy-bar">
                         <div>
                           <small>Buying</small>

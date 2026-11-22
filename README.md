@@ -32,6 +32,18 @@ npm run preview
 
 Tables support search/status filters and CSV export where shown. Details include overview, sample documents, and an illustrative activity timeline. The navigation is responsive and supports browser history via hash routes.
 
+### Individual Life screens (demo defaults)
+
+- **Applications**: tabs for the workbench, the **Missing evidence** queue and **Compare quotes** (price plans side by
+  side, save a quote, start a draft application). New cover always starts as an application (the former "Add policy"
+  buttons open one); the form takes occupation, proposer/payer, beneficiaries and the policy term.
+- **Underwriting**: screening panel (compliance answers a match), decision validity, authority by total cover /
+  loading / decision type, rule changes approved by a second person, **Run daily review**.
+- **Policy servicing**: rules for continuity, removal approval, lapse, cooling-off and terms; **Plans** maintenance;
+  insured-life consent; cover end and **End cover at term**.
+- **Credit life**: claim payee verification and payment, settlement files, benefit rules.
+- **Customer portal**: questions and declaration at checkout, **Your applications** with offer acceptance.
+
 ## Access and permissions
 
 What a staff user sees follows the permission codes in `GET /me` (`permissions`; a super admin holds every code), never their role names. `src/access.js` is the one access map: each workspace page and the read code its API checks (for example Claims → `READ_CLAIM`, Controls → `READ_CONTROL`, Access → any of `READ_ROLE`, `READ_USER`, `READ_PERMISSION`). The sidebar, the router, the ⌘K palette and the landing page all read it, so a typed address the user cannot open shows "You don't have access to this page" instead of the page, and a user without `READ_DASHBOARD` lands on the first page they can open. Buttons that write (new application, register a claim, add customer or policy, record receipt, rate grid save, product create/edit/activate, claim assess/approve/reject/pay) show only with the code their endpoint needs. A 401 on any call after sign-in signs the user out.

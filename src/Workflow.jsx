@@ -2194,6 +2194,13 @@ export function QuotePanel({ session, quoteRef, profile, notify, onChanged }) {
         <Item label="Premium" value={money(q.premium) + " a month"} />
         <Item label="Cover" value={money(q.sumAssured)} />
         <Item label="Rates" value={q.pricingMethod === "RATE_TABLE" ? q.rateVersion : "Flat tier premium"} />
+        {q.trace?.productVersion && (
+          <Item
+            label="Product terms"
+            value={q.trace.productVersion.label + (q.trace.productVersion.wordingRef ? " · " + q.trace.productVersion.wordingRef : "")}
+          />
+        )}
+        {q.trace?.benefits?.length > 0 && <Item label="Benefits quoted" value={q.trace.benefits.join("; ")} />}
         <Item label="Priced on" value={formatDate(q.pricedOn)} />
         <Item label="Valid until" value={formatDate(q.validUntil) + (q.expired ? " (expired)" : "")} />
         <Item
@@ -2322,8 +2329,20 @@ export function ApplicationChecklist({ session, application: a, profile, notify,
     <div className="wf-panel">
       <h3 className="section-title">Application details</h3>
       <div className="detail-grid">
-        <Item label="Proposer" value={state.proposer} />
-        <Item label="Payer" value={state.payer} />
+        <Item label="Proposer" value={state.proposer + (state.proposerRef ? " · " + state.proposerRef : "")} />
+        <Item label="Payer" value={state.payer + (state.payerRef ? " · " + state.payerRef : "")} />
+        <Item label="Occupation" value={state.occupation || "Not recorded"} />
+        {state.termOptions?.length > 0 && (
+          <Item
+            label="Policy term"
+            value={
+              (state.termYears || Math.max(...state.termOptions)) +
+              " years" +
+              (state.termYears ? "" : " (the longest, none chosen)") +
+              " or to age 70 if earlier"
+            }
+          />
+        )}
         <Item
           label="Payment mandate"
           value={
@@ -2359,6 +2378,23 @@ export function ApplicationChecklist({ session, application: a, profile, notify,
           }
         />
       </div>
+      {state.beneficiaries?.length > 0 && (
+        <>
+          <h3 className="section-title">Nominated beneficiaries</h3>
+          <ul className="wf-evidence">
+            {state.beneficiaries.map((b, i) => (
+              <li key={i} className="received">
+                <BadgeCheck size={15} aria-hidden="true" />
+                {b.fullName}
+                <small>
+                  {b.relationship}
+                  {b.primary ? " · primary" : ""} · added to the policy at issue
+                </small>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {state.submissionProblems.length > 0 && (
         <div className="notice">
           <Clock3 size={18} aria-hidden="true" />

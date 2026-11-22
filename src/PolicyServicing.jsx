@@ -31,6 +31,7 @@ const TYPE_LABEL = {
   ADD_LIFE: "Add an insured life",
   REMOVE_LIFE: "Remove an insured life",
   REPLACE_LIFE: "Replace an insured life",
+  CONTACT: "Change contact details",
 };
 const ROUTE = {
   APPLY: ["Applies immediately", "green"],
@@ -174,6 +175,12 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
   const p = v?.policy;
   // IL04 roster: each life's limit, use, claims, underwriting outcome and warnings, keyed by life id.
   const standing = Object.fromEntries((v?.roster?.lives || []).map((s) => [s.lifeId, s]));
+  // NS-IL04-006: each life's latest consent decision (the list is newest first).
+  const consentOf = {};
+  (v?.consents || []).forEach((c) => {
+    if (!consentOf[c.lifeId]) consentOf[c.lifeId] = c;
+  });
+  const isAdult = (life) => life.ageNow != null && life.ageNow >= 18;
   // Relationship history: a person who was covered more than once (removed and added again, or replaced).
   const episodes = Object.values(
     (v?.lives || []).reduce((byPerson, life) => {
@@ -232,6 +239,15 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
       done = await action.run(
         () => request(session, base + "/surrender", { method: "POST", body: { reason: form.reason } }),
         "Surrender raised for approval",
+      );
+    } else if (form.kind === "consent") {
+      done = await action.run(
+        () =>
+          request(session, base + "/lives/" + form.lifeId + "/consent", {
+            method: "POST",
+            body: { status: form.status, evidence: form.reason },
+          }),
+        "Consent recorded",
       );
     } else if (form.kind === "paidup") {
       done = await action.run(
@@ -297,6 +313,15 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               <small>Cover from</small>
               <strong>{p.coverStartDate || "—"}</strong>
             </div>
+            {(p.termYears || p.coverEndDate) && (
+              <div>
+                <small>Cover ends</small>
+                <strong>
+                  {p.coverEndDate || "When cover starts"}
+                  {p.termYears ? " · " + p.termYears + "-year term or age 70, whichever is earlier" : ""}
+                </strong>
+              </div>
+            )}
             <div>
               <small>Next premium due</small>
               <strong>{p.nextPremiumDue || (p.coverStatus === "Ended" ? "None: the policy has ended" : "—")}</strong>
@@ -328,6 +353,31 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             <p className="ws-hint">
               <strong>Underwriting terms:</strong> {p.underwritingTerms}
             </p>
+          )}
+          {/* NS-IL03-001: the issue terms frozen when cover started; endorsements never change them. */}
+          {v.inceptionSnapshot && (
+            <Panel
+              title="Inception snapshot"
+              subtitle={"Issue terms frozen on " + when(v.inceptionTakenAt) + " · fingerprint " + (v.inceptionSha256 || "").slice(0, 12)}
+            >
+              <div className="ws-kv">
+                {[
+                  ["Product terms", v.inceptionSnapshot.productVersion + (v.inceptionSnapshot.wordingRef ? " · " + v.inceptionSnapshot.wordingRef : "")],
+                  ["Plan", v.inceptionSnapshot.tier || "—"],
+                  ["Sum assured", pula(v.inceptionSnapshot.sumAssured)],
+                  ["Premium", pula(v.inceptionSnapshot.premium)],
+                  ["Rates", v.inceptionSnapshot.rateTableVersion || "Flat plan premium"],
+                  ["Quote", v.inceptionSnapshot.quoteRef ? v.inceptionSnapshot.quoteRef + " v" + v.inceptionSnapshot.quoteVersion : "—"],
+                  ["Term", v.inceptionSnapshot.termYears ? v.inceptionSnapshot.termYears + " years" : "—"],
+                  ["Underwriting terms", v.inceptionSnapshot.underwritingTerms || "Standard"],
+                ].map(([k, value]) => (
+                  <div key={k}>
+                    <small>{k}</small>
+                    <strong>{value}</strong>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           )}
 
           <Panel
@@ -413,7 +463,41 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 {
                   key: "waitingPeriodStart",
                   label: "Waiting period from",
-                  render: (r) => r.waitingPeriodStart || p.coverStartDate || "—",
+                  render: (r) =>
+                    (r.waitingPeriodStart || p.coverStartDate || "—") +
+                    (r.continuityOf ? " · continues cover from #" + r.continuityOf : ""),
+                },
+                {
+                  key: "consent",
+                  label: "Medical evidence to policyholder",
+                  render: (r) =>
+                    r.mainInsured ? (
+                      "Own life"
+                    ) : !isAdult(r) ? (
+                      "Minor: shared"
+                    ) : (
+                      <span className="ws-row-actions">
+                        <Badge tone={consentOf[r.id]?.status === "GRANTED" ? "green" : "amber"}>
+                          {consentOf[r.id]?.status === "GRANTED" ? "Consented" : "Withheld (no consent)"}
+                        </Badge>
+                        {manage && (
+                          <Button
+                            variant="secondary"
+                            onClick={() =>
+                              setForm({
+                                kind: "consent",
+                                lifeId: r.id,
+                                lifeName: r.fullName,
+                                status: consentOf[r.id]?.status === "GRANTED" ? "WITHDRAWN" : "GRANTED",
+                                reason: "",
+                              })
+                            }
+                          >
+                            {consentOf[r.id]?.status === "GRANTED" ? "Withdraw" : "Record consent"}
+                          </Button>
+                        )}
+                      </span>
+                    ),
                 },
                 {
                   key: "act",
@@ -623,7 +707,9 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 ? "Surrender " + policyRef
                 : form.kind === "paidup"
                   ? "Make " + policyRef + " paid-up"
-                  : "Terminate " + policyRef
+                  : form.kind === "consent"
+                    ? "Consent of " + form.lifeName
+                    : "Terminate " + policyRef
           }
           description={
             form.kind === "endorsement" ? "Preview the effect, then confirm. Nothing changes until you confirm." : undefined
@@ -666,6 +752,16 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                       ))}
                   </select>
                 </Field>
+                {form.type === "CONTACT" && (
+                  <>
+                    <Field label="New email address" hint="Blank keeps the current one">
+                      <input type="email" value={form.email || ""} onChange={set("email")} />
+                    </Field>
+                    <Field label="New mobile number" hint="Blank keeps the current one">
+                      <input value={form.phone || ""} onChange={set("phone")} />
+                    </Field>
+                  </>
+                )}
                 {form.type === "PAYER" && (
                   <>
                     <Field label="Payer's name">
@@ -750,6 +846,9 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                     <Field label="Date of birth">
                       <input type="date" value={form.dateOfBirth || ""} onChange={set("dateOfBirth")} required />
                     </Field>
+                    <Field label="Date of birth evidence" hint="e.g. Birth certificate number or Omang">
+                      <input value={form.dobEvidence || ""} maxLength={150} onChange={set("dobEvidence")} />
+                    </Field>
                   </>
                 )}
                 <Field label="Effective date">
@@ -819,8 +918,23 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                 )}
               </Field>
             )}
+            {form.kind === "consent" && (
+              <Field label="Decision" full>
+                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  <option value="GRANTED">{form.lifeName} agrees the policyholder may see their medical evidence</option>
+                  <option value="WITHDRAWN">{form.lifeName} does not agree (or withdraws consent)</option>
+                </select>
+                <small className="ws-hint">
+                  An adult insured life's medical evidence on a claim is theirs: the policyholder can open it in the portal
+                  only with this consent. Record the life's own decision, not the policyholder's.
+                </small>
+              </Field>
+            )}
             {form.kind !== "endorsement" && (
-              <Field label={form.kind === "terminate" ? "Note" : "Reason"} full>
+              <Field
+                label={form.kind === "terminate" ? "Note" : form.kind === "consent" ? "How it was given" : "Reason"}
+                full
+              >
                 <textarea value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} rows={3} required />
               </Field>
             )}
@@ -964,6 +1078,17 @@ function Benefits({ session, notify, profile, onChange }) {
       reload();
     }
   };
+  // Section 06 Term Life: cover ends at the selected term or the cessation age (also run daily).
+  const runTermEnds = async () => {
+    const done = await action.run(() => request(session, "/servicing/term-ends/run", { method: "POST" }));
+    if (done) {
+      notify(
+        done.data.created ? "Cover ended at term on " + done.data.refs.join(", ") : "No policy has reached the end of its cover",
+        "success",
+      );
+      reload();
+    }
+  };
   const decide = async (approve, note) => {
     const path =
       deciding.kind === "benefit"
@@ -1025,9 +1150,14 @@ function Benefits({ session, notify, profile, onChange }) {
         subtitle="Cashback, return of premium, maturity and surrender values raised from each product's rules. The run raises each benefit once when it falls due."
         action={
           can(profile, "MANAGE_SERVICING") && (
-            <Button icon={Play} busy={action.busy} onClick={run}>
-              Run benefit run
-            </Button>
+            <span className="ws-row-actions">
+              <Button icon={Play} busy={action.busy} onClick={run}>
+                Run benefit run
+              </Button>
+              <Button variant="secondary" busy={action.busy} onClick={runTermEnds}>
+                End cover at term
+              </Button>
+            </span>
           )
         }
       >
@@ -1294,9 +1424,10 @@ function Rules({ session, notify, profile }) {
           ]}
         />
       </Panel>
+      <Plans session={session} notify={notify} profile={profile} products={products.data || []} />
       <Panel
         title="Servicing rules"
-        subtitle="Whether a late premium restores cover by itself, how far an endorsement may be backdated, and the ages at which insured lives are reviewed."
+        subtitle="Each product's servicing rules: whether a late premium restores cover by itself, backdating, review and cessation ages, how a re-added life's waiting period is treated, when removing a life needs approval, the period without cover before lapse and the cooling-off period. Seeded values are demo defaults pending the insurer's approved rules."
       >
         <ErrorNote error={servicing.error} />
         <DataTable
@@ -1314,6 +1445,20 @@ function Rules({ session, notify, profile }) {
             { key: "maxBackdateDays", label: "Backdating", render: (r) => "up to " + r.maxBackdateDays + " days" },
             { key: "childReviewAge", label: "Child review age", align: "right" },
             { key: "maxCoverAge", label: "Cover ceases at", align: "right" },
+            { key: "reviewLeadDays", label: "Reviews raised", render: (r) => r.reviewLeadDays + " days ahead" },
+            {
+              key: "lifeContinuity",
+              label: "Re-added life",
+              render: (r) => (r.lifeContinuity === "RESTART" ? "Waiting restarts" : "Keeps first waiting start"),
+            },
+            {
+              key: "removalApproval",
+              label: "Removing a life",
+              render: (r) => (r.removalApproval === "ALWAYS" ? "Always approved" : "Approved if backdated"),
+            },
+            { key: "noCoverMonths", label: "Lapses after", render: (r) => r.noCoverMonths + " months without cover" },
+            { key: "coolingOffDays", label: "Cooling-off", render: (r) => r.coolingOffDays + " days" },
+            { key: "termOptions", label: "Terms sold", render: (r) => (r.termOptions ? r.termOptions + " years" : "—") },
             {
               key: "act",
               label: "",
@@ -1405,8 +1550,138 @@ function Rules({ session, notify, profile }) {
                 <Field label="Cover ceases at age">
                   <input type="number" min="1" max="120" value={form.maxCoverAge} onChange={set("maxCoverAge")} required />
                 </Field>
+                <Field label="Raise age reviews (days ahead)">
+                  <input type="number" min="0" max="365" value={form.reviewLeadDays} onChange={set("reviewLeadDays")} required />
+                </Field>
+                <Field label="A life removed and added again">
+                  <select value={form.lifeContinuity} onChange={set("lifeContinuity")}>
+                    <option value="KEEP_EARLIEST">Keeps its first waiting-period start</option>
+                    <option value="RESTART">Starts a new waiting period</option>
+                  </select>
+                </Field>
+                <Field label="Removing a life needs a second person">
+                  <select value={form.removalApproval} onChange={set("removalApproval")}>
+                    <option value="BACKDATED">Only when backdated</option>
+                    <option value="ALWAYS">Always</option>
+                  </select>
+                </Field>
+                <Field label="Lapses after (months without cover)">
+                  <input type="number" min="0" max="24" value={form.noCoverMonths} onChange={set("noCoverMonths")} required />
+                </Field>
+                <Field label="Cooling-off (days)">
+                  <input type="number" min="0" max="90" value={form.coolingOffDays} onChange={set("coolingOffDays")} required />
+                </Field>
+                <Field label="Policy terms sold (years)" hint="e.g. 10,12,15; blank when the product has no selected term">
+                  <input value={form.termOptions || ""} onChange={set("termOptions")} />
+                </Field>
               </>
             )}
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// ── saleable plans (section 06 product packs) ───────────────────────────────────────────────────
+
+function Plans({ session, notify, profile, products }) {
+  const [product, setProduct] = useState("Care Cash");
+  const plans = useResource(session, can(profile, "READ_PRODUCT") ? "/portfolio/products/" + encodeURIComponent(product) + "/tiers" : null, []);
+  const [form, setForm] = useState(null);
+  const save = useAction(notify);
+  const manage = can(profile, "UPDATE_TIER");
+  if (!can(profile, "READ_PRODUCT")) return null;
+  const submit = async () => {
+    const { name, ...body } = form;
+    const done = await save.run(
+      () =>
+        request(session, "/portfolio/products/" + encodeURIComponent(product) + "/tiers/" + encodeURIComponent(name), {
+          method: "PUT",
+          body,
+        }),
+      "Plan saved",
+    );
+    if (done) {
+      plans.setData(done.data);
+      setForm(null);
+    }
+  };
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  return (
+    <>
+      <Panel
+        title="Plans"
+        subtitle="The saleable plans (tiers) of each product: cover, premium and benefits. Issued policies keep the cover and premium they were sold with; a withdrawn plan is no longer sold. Premiums of the seeded plans are demo values pending the approved tariff."
+        action={
+          <span className="ws-row-actions">
+            <select aria-label="Product" value={product} onChange={(e) => setProduct(e.target.value)}>
+              {(products.length ? products.map((x) => x.name) : ["Care Cash"]).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            {manage && (
+              <Button
+                icon={Plus}
+                onClick={() => setForm({ name: "", cover: "", premium: "", benefits: "", popular: false, active: true, isNew: true })}
+              >
+                Add plan
+              </Button>
+            )}
+          </span>
+        }
+      >
+        <ErrorNote error={plans.error} />
+        <DataTable
+          rows={plans.data || []}
+          loading={plans.loading}
+          rowKey={(r) => r.id}
+          searchFrom={99}
+          empty="No plans"
+          columns={[
+            { key: "name", label: "Plan" },
+            { key: "cover", label: "Cover", align: "right", render: (r) => pula(r.cover) },
+            { key: "premium", label: "Premium", align: "right", render: (r) => pula(r.premium) + " " + (r.frequency || "").toLowerCase() },
+            { key: "benefits", label: "Benefits", render: (r) => r.benefits || "—" },
+            { key: "active", label: "Status", render: (r) => <Badge tone={r.active ? "green" : undefined}>{r.active ? "On sale" : "Withdrawn"}</Badge> },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                manage && (
+                  <Button variant="secondary" icon={Pencil} onClick={() => setForm({ ...r })}>
+                    Change
+                  </Button>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {form && (
+        <Drawer title={form.isNew ? "Add a " + product + " plan" : "Plan " + form.name} onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Save" busy={save.busy} error={save.error} onSubmit={submit}>
+            {form.isNew && (
+              <Field label="Plan name" full>
+                <input value={form.name} onChange={set("name")} maxLength={60} required />
+              </Field>
+            )}
+            <Field label="Cover (BWP)">
+              <input type="number" min="1" value={form.cover} onChange={set("cover")} required />
+            </Field>
+            <Field label="Premium (BWP)">
+              <input type="number" min="1" value={form.premium} onChange={set("premium")} required />
+            </Field>
+            <Field label="Benefits" full>
+              <textarea value={form.benefits || ""} onChange={set("benefits")} rows={2} maxLength={500} />
+            </Field>
+            <Field label="On sale" full>
+              <label className="ri-product">
+                <input type="checkbox" checked={form.active} onChange={set("active")} />
+                <span>Customers and staff can choose this plan</span>
+              </label>
+            </Field>
           </FormGrid>
         </Drawer>
       )}
