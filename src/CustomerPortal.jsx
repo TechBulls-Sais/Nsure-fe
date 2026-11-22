@@ -32,7 +32,7 @@ import {
   noCoverLapsesOn,
 } from "./Workflow";
 import { PaymentResult, PolicyPayment, useDeclarationLock, useDeclaredPolicies } from "./Checkout";
-import { CustomerCases } from "./ServiceDesk";
+import { CustomerCases, CustomerChoices } from "./ServiceDesk";
 import { ThemeSwitch } from "./ui/workspace";
 
 // Beneficiaries can be changed while the purchase is pending and while the policy is in force (with or without cover).
@@ -115,8 +115,8 @@ function IdentityEvidence({ session, customer, notify, onChanged }) {
       {error && <p className="form-error">{error}</p>}
       {documents.length > 0 && (
         <ul>
-          {documents.map((d) => (
-            <li key={d.id} className="is-pending">
+          {documents.map((d, i) => (
+            <li key={d.id ?? "held-" + i} className="is-pending">
               <span className="customer-request-icon" aria-hidden="true">
                 <Clock3 size={15} />
               </span>
@@ -125,8 +125,12 @@ function IdentityEvidence({ session, customer, notify, onChanged }) {
                 <small>
                   {d.fileName} · sent {formatDate(d.uploadedAt)}
                 </small>
+                {/* NS-SH09A-004: an upload is checked before it is used; a refused one says why. */}
+                {d.state && d.state !== "CURRENT" && d.note && <small>{d.note}</small>}
               </div>
-              <span className="customer-request-status">Received</span>
+              <span className="customer-request-status">
+                {d.state === "QUARANTINED" ? "Being checked" : d.state === "REJECTED" ? "Not accepted" : "Received"}
+              </span>
             </li>
           ))}
         </ul>
@@ -1055,6 +1059,7 @@ export default function CustomerPortal({
         </section>
 
         <CustomerCases session={session} notify={notify} policies={policies} claims={claims} />
+        <CustomerChoices session={session} notify={notify} />
 
         <section
           className="customer-need"

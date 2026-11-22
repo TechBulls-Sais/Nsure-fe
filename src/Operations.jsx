@@ -36,12 +36,14 @@ export default function Operations({ session, notify, profile, go }) {
           ["queue", "Queue"],
           ["workflow", "Workflows & calendar"],
           (can(profile, "READ_POLICY") || can(profile, "READ_CLAIM")) && ["documents", "Documents"],
+          can(profile, "READ_PRODUCT") && ["templates", "Document templates"],
           ["partners", "Partner requests"],
         ].filter(Boolean)}
       />
       {tab === "queue" && <Queue session={session} notify={notify} resource={queue} go={go} me={me} profile={profile} />}
       {tab === "workflow" && <Workflow session={session} notify={notify} profile={profile} />}
       {tab === "documents" && <Documents session={session} notify={notify} profile={profile} />}
+      {tab === "templates" && <DocumentTemplates session={session} notify={notify} profile={profile} />}
       {tab === "partners" && <Partners session={session} notify={notify} profile={profile} onChange={queue.reload} />}
     </>
   );
@@ -294,8 +296,37 @@ function Workflow({ session, notify, profile }) {
             { key: "team", label: "Team" },
             { key: "slaHours", label: "SLA (working hours)", align: "right" },
             { key: "priority", label: "Priority", render: (r) => label(r.priority) },
-            { key: "steps", label: "Steps" },
-            { key: "versionNo", label: "Version", align: "right" },
+            {
+              key: "steps",
+              label: "Steps",
+              render: (r) => (
+                <>
+                  {r.steps}
+                  {(r.entryCriteria || r.roles || r.requiredEvidence || r.authorityLimit != null) && (
+                    <small className="ws-hint">
+                      {r.entryCriteria ? " · Entry: " + r.entryCriteria : ""}
+                      {r.roles ? " · Worked by: " + r.roles : ""}
+                      {r.authorityLimit != null ? " · Authority limit: " + r.authorityLimit : ""}
+                      {r.requiredEvidence ? " · Evidence: " + r.requiredEvidence : ""}
+                    </small>
+                  )}
+                </>
+              ),
+            },
+            {
+              key: "versionNo",
+              label: "Version",
+              align: "right",
+              render: (r) => {
+                const earlier = (wf.data?.versions || []).filter((v) => v.code === r.code && v.versionNo !== r.versionNo);
+                return (
+                  <span title={earlier.map((v) => `v${v.versionNo}: ${v.slaHours}h by ${v.changedBy || "system"}`).join("\n")}>
+                    v{r.versionNo}
+                    {earlier.length > 0 && <small className="ws-hint"> ({earlier.length} earlier kept)</small>}
+                  </span>
+                );
+              },
+            },
             {
               key: "act",
               label: "",
@@ -376,6 +407,22 @@ function Workflow({ session, notify, profile }) {
                 <Field label="Steps" hint="Separate steps with >" full>
                   <textarea value={form.steps} onChange={set("steps")} rows={3} required />
                 </Field>
+                <Field label="Entry criteria" full>
+                  <input value={form.entryCriteria || ""} onChange={set("entryCriteria")} maxLength={500} />
+                </Field>
+                <Field label="Worked by (permission codes)" hint="e.g. MANAGE_SERVICE_CASE">
+                  <input value={form.roles || ""} onChange={set("roles")} maxLength={300} />
+                </Field>
+                <Field label="Authority limit (optional)">
+                  <input type="number" min="0" value={form.authorityLimit ?? ""} onChange={set("authorityLimit")} />
+                </Field>
+                <Field label="Required evidence" full>
+                  <input value={form.requiredEvidence || ""} onChange={set("requiredEvidence")} maxLength={500} />
+                </Field>
+                <p className="ws-hint">
+                  Saving keeps this version and starts the next. Service cases already open keep the version and SLA they
+                  were opened under.
+                </p>
               </>
             )}
           </FormGrid>
@@ -411,6 +458,43 @@ function Documents({ session, notify, profile }) {
     }
   };
   const retention = docs.data?.retention || {};
+  // NS-SH09A-006: disposal of a document past retention needs a second person; links are short-lived and single-use.
+  const disposals = useResource(session, "/ops/documents/disposals", []);
+  const manageConfig = can(profile, "MANAGE_CONFIG");
+  const requestDisposal = async (doc) => {
+    const reason = window.prompt("Why should " + doc.fileName + " be disposed of? Another person approves it.");
+    if (!reason) return;
+    const done = await action.run(
+      () => request(session, "/ops/documents/disposals", { method: "POST", body: { docKey: doc.docKey, reason } }),
+      "Disposal requested; another person approves it.",
+    );
+    if (done) disposals.reload();
+  };
+  const decideDisposal = async (d, approve) => {
+    const done = await action.run(
+      () => request(session, `/ops/documents/disposals/${d.id}/${approve ? "approve" : "reject"}`, { method: "POST" }),
+      approve ? "Document disposed of: file deleted and removed from search." : "Disposal rejected.",
+    );
+    if (done) {
+      disposals.reload();
+      docs.reload();
+    }
+  };
+  const openByLink = async (doc) => {
+    const kind = doc.docKey.startsWith("P:") ? "POLICY" : "CLAIM";
+    const made = await action.run(() =>
+      request(session, "/portfolio/document-links", { method: "POST", body: { kind, documentId: Number(doc.docKey.slice(2)) } }),
+    );
+    if (!made) return;
+    try {
+      const url = URL.createObjectURL(await fetchFile(session, made.data.path));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      notify("Opened through a single-use link that expired on use (valid until " + when(made.data.expiresAt) + ").");
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
   return (
     <>
       {can(profile, "READ_CLAIM") && <Quarantine session={session} notify={notify} profile={profile} onChange={docs.reload} />}
@@ -539,9 +623,19 @@ function Documents({ session, notify, profile }) {
               label: "",
               render: (r) => (
                 <span className="ws-row-actions">
+                  {!r.docKey.startsWith("U:") && r.status !== "DISPOSED" && (
+                    <Button variant="secondary" icon={Eye} busy={action.busy} onClick={() => openByLink(r)}>
+                      Open
+                    </Button>
+                  )}
                   {can(profile, "READ_AUDIT") && !r.docKey.startsWith("U:") && (
                     <Button variant="secondary" onClick={() => setAccess(r)}>
                       Access log
+                    </Button>
+                  )}
+                  {manageConfig && r.disposalEligible && r.status !== "DISPOSED" && !r.docKey.startsWith("U:") && (
+                    <Button variant="secondary" onClick={() => requestDisposal(r)}>
+                      Dispose
                     </Button>
                   )}
                   {can(profile, "UPDATE_POLICY") &&
@@ -560,12 +654,212 @@ function Documents({ session, notify, profile }) {
           ]}
         />
       </Panel>
+      {(disposals.data || []).length > 0 && (
+        <Panel title="Disposals" subtitle="Requested by one person, approved by another. An approved disposal deletes the file and its search text; the record stays.">
+          <DataTable
+            rows={disposals.data}
+            rowKey={(d) => d.id}
+            searchFrom={99}
+            columns={[
+              { key: "fileName", label: "Document", render: (d) => d.fileName + " · " + d.docKey },
+              { key: "reason", label: "Reason" },
+              { key: "requestedBy", label: "Asked", render: (d) => d.requestedBy + " · " + when(d.requestedAt) },
+              { key: "status", label: "Status", render: (d) => <Badge tone={d.status === "DISPOSED" ? "red" : d.status === "PENDING" ? "amber" : undefined}>{d.status}</Badge> },
+              {
+                key: "act",
+                label: "",
+                render: (d) =>
+                  d.status === "PENDING" &&
+                  manageConfig &&
+                  d.requestedBy !== profile?.username && (
+                    <span className="ws-row-actions">
+                      <Button busy={action.busy} onClick={() => decideDisposal(d, true)}>
+                        Approve
+                      </Button>
+                      <Button variant="secondary" busy={action.busy} onClick={() => decideDisposal(d, false)}>
+                        Reject
+                      </Button>
+                    </span>
+                  ),
+              },
+            ]}
+          />
+        </Panel>
+      )}
       {access && <AccessLog session={session} doc={access} onClose={() => setAccess(null)} />}
       {hold && (
         <Drawer title={"Legal hold on " + hold.doc.fileName} description="The document cannot be disposed of while the hold stands." onClose={() => setHold(null)}>
           <FormGrid submitLabel="Place hold" busy={action.busy} error={action.error} onSubmit={() => save(hold.doc, true, hold.reason)}>
             <Field label="Reason" full>
               <textarea value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} rows={3} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+/**
+ * NS-SH09A-002 template designer: generation templates per document kind, validated before saving and publication,
+ * a sample preview, publication by a second person (the sample's hash is kept), and generation on a policy.
+ */
+function DocumentTemplates({ session, notify, profile }) {
+  const data = useResource(session, "/portfolio/document-templates", null);
+  const action = useAction(notify);
+  const [draft, setDraft] = useState(null);
+  const [generate, setGenerate] = useState(null);
+  const fields = data.data?.fields || {};
+  const openPdf = (blob) => {
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  const preview = async () => {
+    try {
+      const response = await fetch("/api/portfolio/document-templates/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
+        body: JSON.stringify(draft),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Preview failed");
+      openPdf(await response.blob());
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
+  const save = async () => {
+    const done = await action.run(
+      () => request(session, "/portfolio/document-templates", { method: "POST", body: draft }),
+      "Draft saved. Another person publishes it.",
+    );
+    if (done) {
+      setDraft(null);
+      data.reload();
+    }
+  };
+  const approve = async (t) => {
+    const done = await action.run(
+      () => request(session, `/portfolio/document-templates/${t.code}/versions/${t.versionNo}/approve`, { method: "POST" }),
+      `${t.code} v${t.versionNo} published.`,
+    );
+    if (done) data.reload();
+  };
+  const run = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/portfolio/policies/" + encodeURIComponent(generate.policyRef.trim().toUpperCase()) + "/documents/generate", {
+          method: "POST",
+          body: { templateCode: generate.code },
+        }),
+      "Document issued and filed on the policy with the template version.",
+    );
+    if (done) setGenerate(null);
+  };
+  return (
+    <>
+      <Panel
+        title="Document templates"
+        subtitle="Separate templates for schedules, certificates, invoices, letters and claim letters. Each version is validated (merge fields, required fields, {{#if}} clauses, page limit) and published by someone other than its author."
+        action={
+          can(profile, "UPDATE_PRODUCT") && (
+            <Button icon={Pencil} onClick={() => setDraft({ code: "", kind: "LETTER", title: "", body: "", requiredFields: "", maxPages: 2 })}>
+              New template
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={data.error || action.error} />
+        <DataTable
+          rows={data.data?.templates}
+          loading={data.loading}
+          rowKey={(t) => t.code + t.versionNo}
+          columns={[
+            { key: "code", label: "Template", render: (t) => <span className="ws-mono">{t.code} v{t.versionNo}</span> },
+            { key: "kind", label: "Kind", render: (t) => label(t.kind) },
+            { key: "title", label: "Title" },
+            { key: "status", label: "Status", render: (t) => <Badge tone={t.status === "APPROVED" ? "green" : t.status === "DRAFT" ? "amber" : undefined}>{label(t.status)}</Badge> },
+            {
+              key: "approvedBy",
+              label: "Published",
+              render: (t) => (t.approvedBy ? `${t.approvedBy} · ${when(t.approvedAt)}` : "Drafted by " + t.createdBy),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (t) => (
+                <span className="ws-row-actions">
+                  {t.status === "DRAFT" && can(profile, "ACTIVATE_PRODUCT") && t.createdBy !== profile?.username && (
+                    <Button icon={CheckCheck} busy={action.busy} onClick={() => approve(t)}>
+                      Publish
+                    </Button>
+                  )}
+                  {t.status !== "RETIRED" && can(profile, "UPDATE_PRODUCT") && (
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setDraft({ code: t.code, kind: t.kind, title: t.title, body: String(t.body).replaceAll("\\n", "\n"), requiredFields: t.requiredFields || "", maxPages: t.maxPages, locked: true })
+                      }
+                    >
+                      New version
+                    </Button>
+                  )}
+                  {t.status === "APPROVED" && t.kind !== "CLAIM_LETTER" && (can(profile, "UPDATE_POLICY") || can(profile, "CREATE_POLICY")) && (
+                    <Button variant="secondary" onClick={() => setGenerate({ code: t.code, policyRef: "" })}>
+                      Issue for a policy
+                    </Button>
+                  )}
+                </span>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      {draft && (
+        <Drawer title={draft.locked ? "New version of " + draft.code : "New document template"} size="lg" onClose={() => setDraft(null)}>
+          <FormGrid
+            submitLabel="Save draft"
+            busy={action.busy}
+            error={action.error}
+            onSubmit={save}
+            extra={
+              <Button type="button" variant="secondary" onClick={preview}>
+                Preview sample
+              </Button>
+            }
+          >
+            <Field label="Code">
+              <input value={draft.code} disabled={draft.locked} onChange={(e) => setDraft({ ...draft, code: e.target.value.toUpperCase() })} required />
+            </Field>
+            <Field label="Kind">
+              <select value={draft.kind} disabled={draft.locked} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
+                {Object.keys(fields).map((k) => (
+                  <option key={k} value={k}>
+                    {label(k)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Title" full>
+              <input value={draft.title} maxLength={150} onChange={(e) => setDraft({ ...draft, title: e.target.value })} required />
+            </Field>
+            <Field label="Body" full hint={"Merge fields: " + (fields[draft.kind] || []).map((f) => `{{${f}}}`).join(" ") + " · conditional: {{#if field}} … {{/if}}"}>
+              <textarea rows={10} value={draft.body} maxLength={4000} onChange={(e) => setDraft({ ...draft, body: e.target.value })} required />
+            </Field>
+            <Field label="Required fields" hint="Comma-separated; generation is refused without them">
+              <input value={draft.requiredFields} onChange={(e) => setDraft({ ...draft, requiredFields: e.target.value })} />
+            </Field>
+            <Field label="Page limit">
+              <input type="number" min="1" max="20" value={draft.maxPages} onChange={(e) => setDraft({ ...draft, maxPages: Number(e.target.value) })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {generate && (
+        <Drawer title={"Issue " + generate.code} description="Rendered from the policy's data now and filed on the policy with the template version and checksum." onClose={() => setGenerate(null)}>
+          <FormGrid submitLabel="Issue document" busy={action.busy} error={action.error} onSubmit={run}>
+            <Field label="Policy reference">
+              <input value={generate.policyRef} onChange={(e) => setGenerate({ ...generate, policyRef: e.target.value })} required />
             </Field>
           </FormGrid>
         </Drawer>
@@ -660,8 +954,8 @@ function Quarantine({ session, notify, profile, onChange }) {
           loading={list.loading}
           rowKey={(u) => u.id}
           empty={status === "PENDING" ? "Nothing waiting for release" : "No uploads"}
-          emptyDetail="Files uploaded to a claim by staff or in the customer portal appear here first."
-          searchPlaceholder="Search file, claim, customer…"
+          emptyDetail="Claim, identity (KYC) and service case evidence uploaded by staff or in the customer portal appears here first."
+          searchPlaceholder="Search file, record, customer…"
           columns={[
             {
               key: "fileName",
@@ -673,7 +967,19 @@ function Quarantine({ session, notify, profile, onChange }) {
                 </>
               ),
             },
-            { key: "ownerRef", label: "Claim", render: (u) => u.ownerRef + (u.customerName ? " · " + u.customerName : "") },
+            {
+              key: "ownerRef",
+              label: "Record",
+              render: (u) => (
+                <>
+                  {u.ownerRef + (u.customerName ? " · " + u.customerName : "")}
+                  <small className="ws-hint">
+                    {" "}
+                    · {u.ownerKind === "IDENTITY" ? "Identity evidence (KYC)" : u.ownerKind === "SERVICE_CASE" ? "Service case" : "Claim"}
+                  </small>
+                </>
+              ),
+            },
             {
               key: "uploadedBy",
               label: "From",
@@ -786,12 +1092,43 @@ function Partners({ session, notify, profile, onChange }) {
       onChange();
     }
   };
+  // Spec 04 partner submissions: processed through the owning module with its own permission; the partner sees the result.
+  const processRequest = async (r) => {
+    const customerRef =
+      r.requestType === "NEW_APPLICATION" && !String(r.payload || "").includes('"customerRef"')
+        ? window.prompt("The agent named a new client. Add them as a customer, then enter their customer reference:")
+        : null;
+    const done = await action.run(
+      () =>
+        request(session, "/ops/portal-requests/" + r.recordRef + "/process", {
+          method: "POST",
+          body: customerRef ? { customerRef } : {},
+        }),
+      null,
+    );
+    if (done) {
+      notify(done.data.result, "success");
+      requests.reload();
+      onChange();
+    }
+  };
   const saveAccount = async () => {
-    const done = await action.run(() => request(session, "/ops/portal-accounts", { method: "PUT", body: account }), "Portal access saved");
+    const body = { ...account, validUntil: account.validUntil || undefined };
+    const done = await action.run(() => request(session, "/ops/portal-accounts", { method: "PUT", body }), "Portal access saved");
     if (done) {
       accounts.setData(done.data);
       setAccount(null);
     }
+  };
+  // AT-SH11-02: removing the link closes the portal on the login's next request.
+  const removeAccount = async (r) => {
+    const reason = window.prompt("Why is " + r.username + "'s portal access removed?");
+    if (!reason) return;
+    const done = await action.run(
+      () => request(session, "/ops/portal-accounts/" + encodeURIComponent(r.username), { method: "DELETE", body: { reason } }),
+      "Portal access removed",
+    );
+    if (done) accounts.setData(done.data);
   };
   return (
     <>
@@ -806,7 +1143,16 @@ function Partners({ session, notify, profile, onChange }) {
             { key: "recordRef", label: "Reference" },
             { key: "portalType", label: "From", render: (r) => label(r.portalType) + " · " + (r.scopeRef || "") },
             { key: "requestType", label: "Request", render: (r) => label(r.requestType) },
-            { key: "detail", label: "Detail" },
+            {
+              key: "detail",
+              label: "Detail",
+              render: (r) => (
+                <>
+                  {r.detail}
+                  {r.result && <small className="ws-hint"> · {r.result}</small>}
+                </>
+              ),
+            },
             { key: "createdAt", label: "Received", render: (r) => r.createdBy + " · " + when(r.createdAt) },
             { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "DONE" ? "green" : "amber"}>{r.status === "DONE" ? "Completed" : "Open"}</Badge> },
             {
@@ -814,9 +1160,16 @@ function Partners({ session, notify, profile, onChange }) {
               label: "",
               render: (r) =>
                 r.status === "OPEN" && (
-                  <Button variant="secondary" onClick={() => setClosing({ ...r, note: "" })}>
-                    Answer
-                  </Button>
+                  <div className="ws-row-actions">
+                    {r.payload && ["NEW_APPLICATION", "CENSUS", "JOINER_LEAVER", "NEW_LOAN", "BALANCE_UPDATE"].includes(r.requestType) && (
+                      <Button busy={action.busy} onClick={() => processRequest(r)}>
+                        Process
+                      </Button>
+                    )}
+                    <Button variant="secondary" onClick={() => setClosing({ ...r, note: "" })}>
+                      Answer
+                    </Button>
+                  </div>
                 ),
             },
           ]}
@@ -825,7 +1178,7 @@ function Partners({ session, notify, profile, onChange }) {
       {can(profile, "READ_USER") && (
         <Panel
           title="Portal access"
-          subtitle="Each partner login is tied to one intermediary, scheme or lender, and sees nothing else."
+          subtitle="Each partner login is tied to one intermediary, scheme or lender, and sees nothing else. Access closes at once when the partner is suspended, the link ends or it is removed."
           action={
             can(profile, "UPDATE_USER") && (
               <Button onClick={() => setAccount({ username: "", portalType: "AGENT", scopeRef: "" })}>Link a login</Button>
@@ -841,14 +1194,20 @@ function Partners({ session, notify, profile, onChange }) {
               { key: "username", label: "Login" },
               { key: "portalType", label: "Portal", render: (r) => label(r.portalType) },
               { key: "scopeRef", label: "Sees only", render: (r) => r.scopeRef || "Not linked" },
+              { key: "validUntil", label: "Until", render: (r) => r.validUntil || "No end date" },
               {
                 key: "act",
                 label: "",
                 render: (r) =>
                   can(profile, "UPDATE_USER") && (
-                    <Button variant="secondary" onClick={() => setAccount({ ...r, scopeRef: r.scopeRef || "" })}>
-                      Change
-                    </Button>
+                    <div className="ws-row-actions">
+                      <Button variant="secondary" onClick={() => setAccount({ ...r, scopeRef: r.scopeRef || "", validUntil: r.validUntil || "" })}>
+                        Change
+                      </Button>
+                      <Button variant="secondary" onClick={() => removeAccount(r)}>
+                        Remove
+                      </Button>
+                    </div>
                   ),
               },
             ]}
@@ -879,6 +1238,9 @@ function Partners({ session, notify, profile, onChange }) {
             </Field>
             <Field label="Sees only" hint="Intermediary, scheme or lender reference">
               <input value={account.scopeRef} onChange={(e) => setAccount({ ...account, scopeRef: e.target.value })} required />
+            </Field>
+            <Field label="Access until (optional)">
+              <input type="date" value={account.validUntil || ""} onChange={(e) => setAccount({ ...account, validUntil: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>

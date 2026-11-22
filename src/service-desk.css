@@ -170,3 +170,10 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* SH10 additions: warning notes, case evidence and its upload control. */
+.svc-note.is-warn { border-left: 3px solid #d97706; }
+.svc-evidence { display: grid; gap: 6px; margin-top: 12px; }
+.svc-evidence .svc-note { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.svc-upload { display: inline-flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.svc-upload input { max-width: 100%; }

@@ -128,7 +128,7 @@ const Icons = {
 import { money, initials } from "./data";
 import ProductConfig from "./ProductConfig";
 import RateTables from "./RateTables";
-import { closeSession, fetchFile, openSession, request, setUnauthorizedHandler, verifySignInCode } from "./api";
+import { closeSession, fetchFile, openSession, request, setUnauthorizedHandler, uploadFile, verifySignInCode } from "./api";
 import AccessAdmin from "./AccessAdmin";
 import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
@@ -157,7 +157,8 @@ import { CustomFieldInputs, PolicyAttributesPanel, cleanValues, usePolicyForm } 
 import ConfigReleases from "./ConfigReleases";
 import { PayoutExceptionQueue } from "./PayoutInstructions";
 import { environmentLabel, useInsurer } from "./insurer";
-import { Dialog } from "./ui/overlay";
+import { Dialog, Drawer } from "./ui/overlay";
+import { CustomerView360, DuplicateReview, PartyContacts, PartyKyc, PartyRelationships } from "./PartyMaster";
 import { useToast } from "./ui/toast";
 import CustomerPortal from "./CustomerPortal";
 import {
@@ -643,6 +644,7 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
               New to Nsure? <a href="#/signup">Create an account</a>
             </p>
           )}
+          {customerLogin && !pending && <PasswordRecovery />}
           <div className="notice">
             <Icon name="ShieldCheck" />
             <p>
@@ -655,6 +657,107 @@ function Login({ onLogin, initialAudience = "customer", onAudienceChange }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * NS-SH11-001 customer account recovery: a code goes to the mobile number registered on the account, then a new
+ * password is set. The answer never says whether an account exists; staff ask their administrator.
+ */
+function PasswordRecovery() {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState("");
+  const [sent, setSent] = useState(null);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!open) {
+    return (
+      <p className="signup-link">
+        <button type="button" className="link-button" onClick={() => setOpen(true)}>
+          Forgot your password?
+        </button>
+      </p>
+    );
+  }
+  const run = async (fn) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      await fn();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form
+      className="login-form recovery-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(async () => {
+          if (!sent) {
+            const r = await request(null, "/public/password-reset/otp", { method: "POST", body: { username } });
+            setSent(r.data);
+          } else {
+            await request(null, "/public/password-reset", {
+              method: "POST",
+              body: { challenge: sent.challenge, code, password },
+            });
+            setSent(null);
+            setCode("");
+            setPassword("");
+            setMessage("Your password is changed. Sign in with the new one.");
+          }
+        });
+      }}
+    >
+      <h3>Reset your password</h3>
+      {!sent ? (
+        <Field label="Username">
+          <input className="input" required value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+        </Field>
+      ) : (
+        <>
+          <p className="login-note">If the account exists, a code was sent to {sent.sentTo}.</p>
+          {sent.demoCode && (
+            <div className="login-hint">
+              <Icon name="Info" small />
+              <span>
+                Demo installation: no SMS is sent. Use the code <strong>{sent.demoCode}</strong>.
+              </span>
+            </div>
+          )}
+          <Field label="Code">
+            <input
+              className="input"
+              required
+              inputMode="numeric"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              autoComplete="one-time-code"
+            />
+          </Field>
+          <Field label="New password (at least 8 characters)">
+            <input className="input" type="password" minLength={8} required value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+          </Field>
+        </>
+      )}
+      {message && (
+        <p className="login-note" role="status">
+          {message}
+        </p>
+      )}
+      <Button type="submit" disabled={busy}>
+        {busy ? "Please wait…" : sent ? "Set the new password" : "Send a code"}
+      </Button>
+      <button type="button" className="link-button" onClick={() => setOpen(false)}>
+        Back to sign-in
+      </button>
+    </form>
   );
 }
 
@@ -1451,6 +1554,10 @@ export default function App() {
         customers={customers}
         search={search}
         setSearch={setSearch}
+        session={session}
+        profile={profile}
+        notify={notify}
+        onReload={() => request(session, "/portfolio/customers").then((r) => setCustomers(r.data)).catch(() => {})}
         canReviewKyc={can(profile, "KYC_CUSTOMER")}
         canReviewEdd={can(profile, "EDD_CUSTOMER")}
         onEdd={reviewEdd}
@@ -2516,6 +2623,22 @@ export default function App() {
                   ? (record) => setModal({ type: "application", draft: record })
                   : null
               }
+              onCustomerUpdated={async (updated) => {
+                // A KYC verification returns the customer; an approved contact change is re-read from the list.
+                let record = updated;
+                if (!record && modal.record?.id) {
+                  try {
+                    const all = await request(session, "/portfolio/customers");
+                    setCustomers(all.data);
+                    record = all.data.find((c) => c.id === modal.record.id);
+                  } catch {
+                    record = null;
+                  }
+                } else if (record) {
+                  setCustomers((rows) => rows.map((row) => (row.id === record.id ? record : row)));
+                }
+                if (record) setModal({ type: "detail", entity: "customer", record });
+              }}
               notify={notify}
             />
           )}
@@ -3401,8 +3524,14 @@ function CustomerDirectory({
   onView,
   onKyc,
   onExport,
+  session,
+  profile,
+  notify,
+  onReload,
 }) {
   const [selected, setSelected] = useState(() => new Set());
+  // SH01 duplicate-review queue: possible duplicates and merges waiting for a data steward.
+  const [reviewing, setReviewing] = useState(false);
   const [hidden, setHidden] = useState(() => new Set());
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -3542,6 +3671,11 @@ function CustomerDirectory({
             onChange={(e) => setSearch(e.target.value)}
           />
         </label>
+        {session && (
+          <button type="button" className="cd-action-btn" onClick={() => setReviewing(true)}>
+            <Icon name="Users" small /> Duplicate review
+          </button>
+        )}
         <div className="cd-action" ref={menuRef}>
           <button
             type="button"
@@ -3687,6 +3821,15 @@ function CustomerDirectory({
           )}
         </div>
       </div>
+      {reviewing && (
+        <Drawer
+          title="Duplicate review"
+          description="Possible duplicate customers and merges waiting for a data steward."
+          onClose={() => setReviewing(false)}
+        >
+          <DuplicateReview session={session} profile={profile} notify={notify} onMerged={onReload} />
+        </Drawer>
+      )}
     </div>
   );
 }
@@ -4119,6 +4262,7 @@ function Detail({
   canReviewEdd,
   onEdd,
   onResume,
+  onCustomerUpdated,
 }) {
   const [tab, setTab] = useState("Overview");
   // Policies, claims, applications and customer reviews have a real workflow log; the rest show only their own dates.
@@ -4184,7 +4328,13 @@ function Detail({
       </div>
       <div className="tabs">
         {/* Documents only where the record has real documents; an application's evidence is on its overview. */}
-        {["Overview", ...(["customer", "policy", "claim"].includes(entity) ? ["Documents"] : []), "Activity"].map((t) => (
+        {[
+          "Overview",
+          // SH01 customer workspace: KYC checklist, contacts with independent approval, relationship editor.
+          ...(entity === "customer" ? ["Identity & KYC", "Contacts", "Relationships"] : []),
+          ...(["customer", "policy", "claim"].includes(entity) ? ["Documents"] : []),
+          "Activity",
+        ].map((t) => (
           <button
             key={t}
             className={"filter-tab " + (tab === t ? "active" : "")}
@@ -4265,6 +4415,7 @@ function Detail({
                   ))}
                 </>
               )}
+              <CustomerView360 session={session} customer={r} key={"view-" + r.id + (r.version ?? "")} />
               {linkedClaims.length > 0 && (
                 <>
                   <h3 className="section-title">Their claims</h3>
@@ -4471,6 +4622,12 @@ function Detail({
             </>
           )}
         </>
+      ) : tab === "Identity & KYC" && entity === "customer" ? (
+        <PartyKyc session={session} profile={profile} notify={notify} customer={r} onChanged={onCustomerUpdated} />
+      ) : tab === "Contacts" && entity === "customer" ? (
+        <PartyContacts session={session} profile={profile} notify={notify} customer={r} onChanged={onCustomerUpdated} />
+      ) : tab === "Relationships" && entity === "customer" ? (
+        <PartyRelationships session={session} profile={profile} notify={notify} customer={r} />
       ) : tab === "Documents" && entity === "claim" ? (
         <ClaimDocuments
           session={session}
@@ -4491,7 +4648,13 @@ function Detail({
           notify={notify}
         />
       ) : tab === "Documents" && entity === "customer" ? (
-        <CustomerDocuments session={session} customer={r} policies={linkedPolicies} notify={notify} />
+        <CustomerDocuments
+          session={session}
+          customer={r}
+          policies={linkedPolicies}
+          notify={notify}
+          canUpload={can(profile, "UPDATE_CUSTOMER")}
+        />
       ) : historyType ? (
         <WorkflowTimeline session={session} type={historyType} refId={r.id} version={JSON.stringify(r)} />
       ) : (
@@ -4517,7 +4680,8 @@ function Detail({
 }
 // Customer 360 documents (NS-SH01-006): the identity evidence the customer sent for KYC, and the documents filed on
 // this customer's own policies, found by reference.
-function CustomerDocuments({ session, customer, policies, notify }) {
+function CustomerDocuments({ session, customer, policies, notify, canUpload = false }) {
+  const [uploadType, setUploadType] = useState("Omang");
   const rows = policies.flatMap((p) =>
     (p.documents || []).map((d) => ({ ...d, policyRef: p.id, product: p.product })),
   );
@@ -4557,13 +4721,50 @@ function CustomerDocuments({ session, customer, policies, notify }) {
                 {d.fileName} · sent {String(d.uploadedAt || "").slice(0, 10)} by {d.uploadedBy}
               </small>
             </div>
-            <Button variant="secondary" icon="Eye" onClick={() => open(d)}>
-              Open
-            </Button>
+            {d.id ? (
+              <Button variant="secondary" icon="Eye" onClick={() => open(d)}>
+                Open
+              </Button>
+            ) : (
+              <Badge>{d.state === "QUARANTINED" ? "Being checked" : "Not accepted"}</Badge>
+            )}
           </div>
         ))
       ) : (
-        <p className="muted small">The customer has not sent identity evidence through the portal.</p>
+        <p className="muted small">The customer has not sent identity evidence yet.</p>
+      )}
+      {identity.some((d) => !d.id) && (
+        <p className="muted small">
+          Uploads wait in quarantine (Operations &gt; Documents) until someone other than the uploader releases them.
+        </p>
+      )}
+      {canUpload && (
+        <label className="party-upload">
+          <span>Upload identity evidence the customer handed in</span>
+          <select value={uploadType} onChange={(e) => setUploadType(e.target.value)} aria-label="Document type">
+            <option>Omang</option>
+            <option>Passport</option>
+            <option>Proof of address</option>
+          </select>
+          <input
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              try {
+                const r = await uploadFile(session, "/portfolio/customers/" + customer.id + "/identity-documents", file, {
+                  type: uploadType,
+                });
+                setIdentity(r.data || []);
+                notify?.("Received. It waits in quarantine until someone else releases it.");
+              } catch (error) {
+                notify?.(error.message, "error");
+              }
+            }}
+          />
+        </label>
       )}
       <h3 className="section-title">Policy documents</h3>
       <p className="subtitle">

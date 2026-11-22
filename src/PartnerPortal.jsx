@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Download, Plus } from "lucide-react";
+import { Download, FileUp, Plus, Send } from "lucide-react";
 import { request } from "./api";
 import { Badge, Button, DataTable, Drawer, ErrorNote, Field, FormGrid, Heading, Panel, Stat, pula, useAction, useResource, when } from "./ui/workspace";
 
@@ -36,9 +36,28 @@ const BENEFIT = {
   CREDIT: "Group credit",
 };
 
+// Structured submissions (spec 04): checked against your own records when sent, processed by the insurer's team in
+// the owning module, with the result shown under "My requests".
+const SUBMISSIONS = {
+  AGENT: [["NEW_APPLICATION", "Application for a client"]],
+  EMPLOYER: [
+    ["CENSUS", "Census file (CSV)"],
+    ["JOINER_LEAVER", "Joiner or leaver"],
+    ["RENEWAL_DATA", "Renewal data"],
+  ],
+  LENDER: [
+    ["NEW_LOAN", "New loan to cover"],
+    ["BALANCE_UPDATE", "Balance file"],
+    ["CREDIT_CLAIM", "Credit claim"],
+  ],
+};
+const CENSUS_HEADER = "memberKey,firstName,lastName,dateOfBirth,category,salary,action,effectiveDate";
+
 export default function PartnerPortal({ session, notify }) {
   const portal = useResource(session, "/ops/portal", null);
   const [form, setForm] = useState(null);
+  const [submission, setSubmission] = useState(null);
+  const [quote, setQuote] = useState(null);
   const [certificate, setCertificate] = useState(null);
   const action = useAction(notify);
   const p = portal.data;
@@ -50,6 +69,42 @@ export default function PartnerPortal({ session, notify }) {
       portal.reload();
     }
   };
+  const send = async () => {
+    const { type: kind, ...fields } = submission;
+    let body = { type: kind, ...fields };
+    if (kind === "BALANCE_UPDATE") {
+      // One row per line: loan id, effective date, balance.
+      const rows = String(fields.rowsText || "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => {
+          const [lenderLoanId, effectiveDate, balance] = l.split(",").map((x) => x.trim());
+          return { lenderLoanId, effectiveDate, balance };
+        });
+      body = { type: kind, batchReference: fields.batchReference, rows };
+    }
+    if (kind === "NEW_APPLICATION") {
+      body = {
+        ...body,
+        declarationAccepted: Boolean(fields.declarationAccepted),
+        disclosures: { TOBACCO: fields.tobacco || "NO", TREATMENT: fields.treatment || "NO" },
+      };
+    }
+    const done = await action.run(() => request(session, "/ops/portal/submissions", { method: "POST", body }));
+    if (done) {
+      notify("Received and checked. Your reference is " + done.data.ref + ".", "success");
+      setSubmission(null);
+      portal.reload();
+    }
+  };
+  const priceIt = async () => {
+    const done = await action.run(() =>
+      request(session, "/ops/portal/quote", { method: "POST", body: { customerRef: quote.customerRef, product: quote.product, tier: quote.tier } }),
+    );
+    if (done) setQuote({ ...quote, result: done.data });
+  };
+  const setField = (k) => (e) => setSubmission({ ...submission, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
   if (!p) {
     return (
       <>
@@ -82,6 +137,14 @@ export default function PartnerPortal({ session, notify }) {
         title={TITLE[type]}
         subtitle={(p.partner?.name || p.scopeRef || "") + " · you see only your own records. Every request you send gets a reference."}
       >
+        <Button icon={FileUp} onClick={() => setSubmission({ type: SUBMISSIONS[type][0][0] })}>
+          Send data
+        </Button>
+        {type === "AGENT" && (
+          <Button variant="secondary" onClick={() => setQuote({ customerRef: "", product: "Term Life", tier: "Silver" })}>
+            Quote for a client
+          </Button>
+        )}
         <Button variant="secondary" icon={Download} busy={action.busy} onClick={() => exportPortfolio("MY_BOOK")}>
           Export my portfolio
         </Button>
@@ -90,8 +153,8 @@ export default function PartnerPortal({ session, notify }) {
             Export with the all-policies template
           </Button>
         )}
-        <Button icon={Plus} onClick={() => setForm({ requestType: REQUESTS[type][0][0], detail: "" })}>
-          New request
+        <Button variant="secondary" icon={Plus} onClick={() => setForm({ requestType: REQUESTS[type][0][0], detail: "" })}>
+          Other request
         </Button>
       </Heading>
       {type === "AGENT" && (
@@ -149,6 +212,34 @@ export default function PartnerPortal({ session, notify }) {
                 { key: "product", label: "Product" },
                 { key: "premium", label: "Premium", align: "right", render: (r) => pula(r.premium) },
                 { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "Active" ? "green" : undefined}>{r.status}</Badge> },
+              ]}
+            />
+          </Panel>
+          <Panel title="Arrears and renewal tasks" subtitle="Policies in your book that are not in force: contact the client.">
+            <DataTable
+              rows={p.arrears || []}
+              rowKey={(r) => r.recordRef}
+              empty="No policies need attention"
+              columns={[
+                { key: "recordRef", label: "Policy" },
+                { key: "customerName", label: "Client" },
+                { key: "product", label: "Product" },
+                { key: "premium", label: "Premium", align: "right", render: (r) => pula(r.premium) },
+                { key: "status", label: "Status", render: (r) => <Badge tone="amber">{r.status}</Badge> },
+              ]}
+            />
+          </Panel>
+          <Panel title="Commission statements">
+            <DataTable
+              rows={p.statements || []}
+              rowKey={(r) => r.recordRef}
+              empty="No statements yet"
+              columns={[
+                { key: "recordRef", label: "Statement" },
+                { key: "lineCount", label: "Lines", align: "right" },
+                { key: "netAmount", label: "Net", align: "right", render: (r) => pula(r.netAmount) },
+                { key: "issuedAt", label: "Issued", render: (r) => when(r.issuedAt) },
+                { key: "status", label: "Status", render: (r) => (r.paidAt ? "Paid " + when(r.paidAt) : label(r.status)) },
               ]}
             />
           </Panel>
@@ -287,7 +378,7 @@ export default function PartnerPortal({ session, notify }) {
             { key: "detail", label: "Detail" },
             { key: "createdAt", label: "Sent", render: (r) => when(r.createdAt) },
             { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "DONE" ? "green" : "amber"}>{r.status === "DONE" ? "Completed" : "Received"}</Badge> },
-            { key: "handledNote", label: "Answer", render: (r) => r.handledNote || "—" },
+            { key: "handledNote", label: "Answer", render: (r) => r.result || r.handledNote || "—" },
           ]}
         />
       </Panel>
@@ -326,6 +417,185 @@ export default function PartnerPortal({ session, notify }) {
               Print certificate
             </Button>
           </div>
+        </Drawer>
+      )}
+      {quote && (
+        <Drawer title="Quote for a client" description="Priced with the insurer's rating service. Only clients in your own book." onClose={() => setQuote(null)}>
+          <FormGrid submitLabel="Price it" busy={action.busy} error={action.error} onSubmit={priceIt}>
+            <Field label="Client customer reference">
+              <input value={quote.customerRef} onChange={(e) => setQuote({ ...quote, customerRef: e.target.value.toUpperCase(), result: null })} required />
+            </Field>
+            <Field label="Product">
+              <input value={quote.product} onChange={(e) => setQuote({ ...quote, product: e.target.value, result: null })} required />
+            </Field>
+            <Field label="Tier">
+              <input value={quote.tier} onChange={(e) => setQuote({ ...quote, tier: e.target.value, result: null })} />
+            </Field>
+          </FormGrid>
+          {quote.result && (
+            <div className="ws-kv">
+              {Object.entries(quote.result)
+                .filter(([, v]) => v !== null && typeof v !== "object")
+                .slice(0, 8)
+                .map(([k, v]) => (
+                  <div key={k}>
+                    <small>{label(k.replace(/([A-Z])/g, "_$1"))}</small>
+                    <strong>{String(v)}</strong>
+                  </div>
+                ))}
+            </div>
+          )}
+        </Drawer>
+      )}
+      {submission && (
+        <Drawer
+          title="Send data"
+          description="Checked against your own records now; the insurer's team processes it and the result appears under My requests."
+          onClose={() => setSubmission(null)}
+        >
+          <FormGrid submitLabel="Send" busy={action.busy} error={action.error} onSubmit={send}>
+            <Field label="What" full>
+              <select value={submission.type} onChange={(e) => setSubmission({ type: e.target.value })}>
+                {SUBMISSIONS[type].map(([k, text]) => (
+                  <option key={k} value={k}>
+                    {text}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {submission.type === "NEW_APPLICATION" && (
+              <>
+                <Field label="Client customer reference" hint="Or give a new client's name below">
+                  <input value={submission.customerRef || ""} onChange={setField("customerRef")} />
+                </Field>
+                <Field label="New client's name">
+                  <input value={submission.clientName || ""} onChange={setField("clientName")} />
+                </Field>
+                <Field label="Product">
+                  <input value={submission.product || ""} onChange={setField("product")} placeholder="Term Life" required />
+                </Field>
+                <Field label="Tier">
+                  <input value={submission.tier || ""} onChange={setField("tier")} placeholder="Silver" />
+                </Field>
+                <Field label="Tobacco or nicotine in the last 12 months?">
+                  <select value={submission.tobacco || "NO"} onChange={setField("tobacco")}>
+                    <option value="NO">No</option>
+                    <option value="YES">Yes</option>
+                  </select>
+                </Field>
+                <Field label="Under treatment for a condition?">
+                  <select value={submission.treatment || "NO"} onChange={setField("treatment")}>
+                    <option value="NO">No</option>
+                    <option value="YES">Yes</option>
+                  </select>
+                </Field>
+                <Field label="The client read and accepted the declaration" full>
+                  <input type="checkbox" checked={Boolean(submission.declarationAccepted)} onChange={setField("declarationAccepted")} />
+                </Field>
+              </>
+            )}
+            {submission.type === "CENSUS" && (
+              <Field label="Census rows (CSV)" full hint={"First line: " + CENSUS_HEADER}>
+                <textarea rows={8} value={submission.csv ?? CENSUS_HEADER + "\n"} onChange={setField("csv")} required />
+              </Field>
+            )}
+            {submission.type === "JOINER_LEAVER" && (
+              <>
+                <Field label="Joiner or leaver">
+                  <select value={submission.kind || "JOINER"} onChange={setField("kind")}>
+                    <option value="JOINER">Joiner</option>
+                    <option value="LEAVER">Leaver</option>
+                  </select>
+                </Field>
+                <Field label="Member (staff) number">
+                  <input value={submission.memberKey || ""} onChange={setField("memberKey")} required />
+                </Field>
+                <Field label="Effective date">
+                  <input type="date" value={submission.effectiveDate || ""} onChange={setField("effectiveDate")} required />
+                </Field>
+                {(submission.kind || "JOINER") === "JOINER" && (
+                  <>
+                    <Field label="First name">
+                      <input value={submission.firstName || ""} onChange={setField("firstName")} />
+                    </Field>
+                    <Field label="Last name">
+                      <input value={submission.lastName || ""} onChange={setField("lastName")} />
+                    </Field>
+                    <Field label="Date of birth">
+                      <input type="date" value={submission.dateOfBirth || ""} onChange={setField("dateOfBirth")} />
+                    </Field>
+                    <Field label="Category">
+                      <input value={submission.category || ""} onChange={setField("category")} />
+                    </Field>
+                    <Field label="Annual salary">
+                      <input type="number" min="0" value={submission.salary || ""} onChange={setField("salary")} />
+                    </Field>
+                  </>
+                )}
+              </>
+            )}
+            {submission.type === "RENEWAL_DATA" && (
+              <>
+                <Field label="Members at renewal">
+                  <input type="number" min="1" value={submission.memberCount || ""} onChange={setField("memberCount")} required />
+                </Field>
+                <Field label="Total annual salaries">
+                  <input value={submission.totalSalaries || ""} onChange={setField("totalSalaries")} required />
+                </Field>
+                <Field label="Notes" full>
+                  <textarea rows={3} value={submission.notes || ""} onChange={setField("notes")} />
+                </Field>
+              </>
+            )}
+            {submission.type === "NEW_LOAN" && (
+              <>
+                <Field label="Your loan number">
+                  <input value={submission.lenderLoanId || ""} onChange={setField("lenderLoanId")} required />
+                </Field>
+                <Field label="Borrower customer reference">
+                  <input value={submission.customerRef || ""} onChange={setField("customerRef")} required />
+                </Field>
+                <Field label="Principal">
+                  <input type="number" min="1" value={submission.principal || ""} onChange={setField("principal")} required />
+                </Field>
+                <Field label="Term (months)">
+                  <input type="number" min="1" value={submission.termMonths || ""} onChange={setField("termMonths")} required />
+                </Field>
+                <Field label="Purpose">
+                  <select value={submission.purpose || ""} onChange={setField("purpose")} required>
+                    <option value="">Choose…</option>
+                    <option value="CREDIT_LIFE_COVER">Credit life cover for this loan</option>
+                  </select>
+                </Field>
+                <Field label="The borrower consented to the insurer receiving these loan details" full>
+                  <input type="checkbox" checked={Boolean(submission.borrowerConsent)} onChange={setField("borrowerConsent")} />
+                </Field>
+              </>
+            )}
+            {submission.type === "BALANCE_UPDATE" && (
+              <>
+                <Field label="File reference">
+                  <input value={submission.batchReference || ""} onChange={setField("batchReference")} required />
+                </Field>
+                <Field label="Balances" full hint="One per line: loan number, effective date (YYYY-MM-DD), balance">
+                  <textarea rows={6} value={submission.rowsText || ""} onChange={setField("rowsText")} required />
+                </Field>
+              </>
+            )}
+            {submission.type === "CREDIT_CLAIM" && (
+              <>
+                <Field label="Your loan number">
+                  <input value={submission.lenderLoanId || ""} onChange={setField("lenderLoanId")} required />
+                </Field>
+                <Field label="Date of the event">
+                  <input type="date" value={submission.eventDate || ""} onChange={setField("eventDate")} required />
+                </Field>
+                <Field label="What happened" full>
+                  <input value={submission.cause || ""} onChange={setField("cause")} required />
+                </Field>
+              </>
+            )}
+          </FormGrid>
         </Drawer>
       )}
       {form && (

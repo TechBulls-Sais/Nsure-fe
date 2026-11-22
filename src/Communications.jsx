@@ -35,13 +35,17 @@ const EVENT_FIELDS = {
   ServiceCaseOpened: ["caseRef", "caseType", "customerName", "category"],
   PremiumDueReminder: ["policyRef", "customerName", "product", "amount", "dueDate"],
   OperationalNotice: ["customerName"],
+  // NS-SH09B-001: missing evidence (never the requirement itself), commission statements and lender notices.
+  EvidenceRequested: ["caseRef", "applicationRef", "customerName", "dueDate"],
+  CommissionPaid: ["statementRef", "intermediaryRef", "amount"],
+  LoanDisbursed: ["loanRef", "lenderRef", "lenderLoanId", "policyRef", "customerName", "disbursementDate"],
 };
 const COMMON_FIELDS = ["customerRef", "portalLink"];
 // NS-SH09B-004: accepted by the provider is not delivered; delivery comes only from the provider's report.
 const STATUSES = ["QUEUED", "SUBMITTED", "ACCEPTED", "DELIVERED", "READ", "FAILED", "SUPPRESSED"];
 
 const label = (value) => String(value || "").replaceAll("_", " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
-const channelName = (c) => (c === "WHATSAPP" ? "WhatsApp" : "Email");
+const channelName = (c) => (c === "WHATSAPP" ? "WhatsApp" : c === "SMS" ? "SMS" : c === "ALL" ? "Every channel" : "Email");
 
 export default function Communications({ session, notify, profile }) {
   const [tab, setTab] = useState("messages");
@@ -79,7 +83,7 @@ export default function Communications({ session, notify, profile }) {
       <Heading
         eyebrow="CUSTOMER CORRESPONDENCE"
         title="Communications"
-        subtitle="Email and WhatsApp messages raised by business events, the templates behind them, and each customer's channel choices."
+        subtitle="Email, WhatsApp and SMS messages raised by business events, the templates and delivery rules behind them, and each customer's channel and purpose choices. The provider is simulated."
       >
         {can(profile, "MANAGE_COMMUNICATION") && (
           <>
@@ -125,6 +129,7 @@ export default function Communications({ session, notify, profile }) {
           ["messages", "Messages"],
           ["delivery", "Delivery"],
           ["templates", "Templates"],
+          ["rules", "Rules"],
           ["preferences", "Preferences"],
           ["inbound", "Inbound"],
           ["bulk", "Bulk notices"],
@@ -135,6 +140,7 @@ export default function Communications({ session, notify, profile }) {
       )}
       {tab === "delivery" && <Delivery key={refresh} session={session} />}
       {tab === "templates" && <Templates session={session} notify={notify} profile={profile} />}
+      {tab === "rules" && <Rules session={session} notify={notify} profile={profile} />}
       {tab === "preferences" && <Preferences session={session} notify={notify} profile={profile} onChange={changed} />}
       {tab === "inbound" && <Inbound session={session} notify={notify} profile={profile} />}
       {tab === "bulk" && <BulkNotices session={session} notify={notify} profile={profile} onChange={changed} />}
@@ -258,6 +264,14 @@ function Messages({ session, notify, profile, onChange }) {
               render: (m) => (
                 <>
                   <Badge>{label(m.status)}</Badge>
+                  {m.status === "QUEUED" && m.nextAttemptAt && (
+                    <small className="com-sub">Retry after {when(m.nextAttemptAt)}</small>
+                  )}
+                  {m.status === "FAILED" && m.failureKind && (
+                    <small className="com-sub">{m.failureKind === "PERMANENT" ? "Permanent" : "Retries used up"}</small>
+                  )}
+                  {m.fallbackRef && <small className="com-sub">Fell back to {m.fallbackRef}</small>}
+                  {m.fallbackOf && <small className="com-sub">Fallback for {m.fallbackOf}</small>}
                   {m.owner && <small className="com-sub">Worked by {m.owner}</small>}
                 </>
               ),
@@ -351,13 +365,23 @@ function MessagePreview({ message: m }) {
         </div>
       </div>
       {m.recipientBasis && <p className="com-sub">Why this recipient: {m.recipientBasis}</p>}
+      {(m.failureKind || m.nextAttemptAt || m.fallbackOf || m.fallbackRef) && (
+        <p className="com-sub">
+          {m.failureKind === "PERMANENT" && "The provider refused this for good, so it was not retried. "}
+          {m.failureKind === "TRANSIENT" &&
+            (m.status === "FAILED" ? "Temporary errors on every attempt; the attempts are used up. " : "Temporary error. ")}
+          {m.status === "QUEUED" && m.nextAttemptAt && <>Next attempt not before {when(m.nextAttemptAt)}. </>}
+          {m.fallbackOf && <>Sent as a fallback for {m.fallbackOf}, which could not reach the customer. </>}
+          {m.fallbackRef && <>A fallback ({m.fallbackRef}) was sent on another channel the purpose allows. </>}
+        </p>
+      )}
       {m.lastError && (
         <p className={"com-reason " + (m.status === "SUPPRESSED" ? "is-info" : "is-error")}>
           {m.status === "SUPPRESSED" ? "Not sent: " : "Provider error: "}
           {m.lastError}
         </p>
       )}
-      <div className={"com-message " + (m.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
+      <div className={"com-message " + (m.channel === "EMAIL" ? "is-email" : "is-whatsapp")}>
         {m.subject && <strong>{m.subject}</strong>}
         <p>{m.body}</p>
       </div>
@@ -495,6 +519,7 @@ function ManualMessage({ session, notify, onClose, onSent }) {
           <select value={form.channel} onChange={set("channel")}>
             <option value="EMAIL">Email</option>
             <option value="WHATSAPP">WhatsApp</option>
+            <option value="SMS">SMS</option>
           </select>
         </Field>
         <Field label="Service case (optional)" hint="Joins the case's conversation">
@@ -505,8 +530,8 @@ function ManualMessage({ session, notify, onClose, onSent }) {
             <input value={form.subject} onChange={set("subject")} maxLength={200} required />
           </Field>
         )}
-        <Field label="Message" full hint={`${form.body.length} / 2000`}>
-          <textarea rows={4} value={form.body} onChange={set("body")} maxLength={2000} required />
+        <Field label="Message" full hint={`${form.body.length} / ${form.channel === "SMS" ? 480 : 2000}`}>
+          <textarea rows={4} value={form.body} onChange={set("body")} maxLength={form.channel === "SMS" ? 480 : 2000} required />
         </Field>
       </FormGrid>
     </Drawer>
@@ -586,6 +611,17 @@ function Templates({ session, notify, profile }) {
       templates.reload();
     }
   };
+  // BP-COMMS: a WhatsApp template also needs the WhatsApp provider's approval (simulated: decided on the next dispatch).
+  const toProvider = async (t) => {
+    const r = await action.run(
+      () => request(session, `/communications/templates/${t.id}/provider-submission`, { method: "POST" }),
+      `${t.code} v${t.version} sent to the WhatsApp provider. Its answer arrives with the next dispatch.`,
+    );
+    if (r) {
+      setOpen(r.data);
+      templates.reload();
+    }
+  };
   const newVersion = (t) =>
     setDraft({
       code: t.code,
@@ -628,7 +664,18 @@ function Templates({ session, notify, profile }) {
             { key: "code", label: "Code", render: (t) => <span className="ws-mono">{t.code}</span> },
             { key: "version", label: "Version", render: (t) => "v" + t.version },
             { key: "eventType", label: "Event" },
-            { key: "channel", label: "Channel", render: (t) => channelName(t.channel) },
+            {
+              key: "channel",
+              label: "Channel",
+              render: (t) => (
+                <>
+                  {channelName(t.channel)}
+                  {t.providerStatus && t.providerStatus !== "NOT_REQUIRED" && (
+                    <small className="com-sub">Provider: {label(t.providerStatus)}</small>
+                  )}
+                </>
+              ),
+            },
             { key: "audience", label: "Audience", render: (t) => label(t.audience) },
             {
               key: "status",
@@ -664,6 +711,13 @@ function Templates({ session, notify, profile }) {
                       New version
                     </Button>
                   )}
+                  {["DRAFT", "APPROVED"].includes(t.status) &&
+                    ["NOT_SUBMITTED", "REJECTED"].includes(t.providerStatus) &&
+                    canDraft && (
+                      <Button variant="secondary" icon={Send} busy={action.busy} onClick={() => toProvider(t)}>
+                        Send to WhatsApp provider
+                      </Button>
+                    )}
                   {t.status === "APPROVED" && !t.withdrawalRequestedBy && (canDraft || canApprove) && (
                     <Button variant="secondary" icon={Ban} onClick={() => setWithdrawing({ template: t, reason: "" })}>
                       Withdraw
@@ -708,6 +762,13 @@ function Templates({ session, notify, profile }) {
               {open.status === "DRAFT" && open.createdBy === profile?.username &&
                 " · You drafted this, so another user approves it."}
             </p>
+            {open.providerStatus && open.providerStatus !== "NOT_REQUIRED" && (
+              <p className={"com-reason " + (open.providerStatus === "REJECTED" ? "is-error" : "is-info")}>
+                WhatsApp provider approval: {label(open.providerStatus)}
+                {open.providerNote ? " · " + open.providerNote : ""}. A WhatsApp template is used only once the provider
+                (simulated) has approved it as well.
+              </p>
+            )}
             {open.withdrawalRequestedBy && (
               <p className={"com-reason " + (open.status === "WITHDRAWN" ? "is-error" : "is-info")}>
                 {open.status === "WITHDRAWN"
@@ -716,7 +777,7 @@ function Templates({ session, notify, profile }) {
                 {open.withdrawalReason}
               </p>
             )}
-            <div className={"com-message " + (open.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
+            <div className={"com-message " + (open.channel === "EMAIL" ? "is-email" : "is-whatsapp")}>
               {open.subject && <strong>{open.subject}</strong>}
               <p>{open.body}</p>
             </div>
@@ -827,12 +888,14 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
           <select value={form.channel} onChange={set("channel")} disabled={form.locked}>
             <option value="EMAIL">Email</option>
             <option value="WHATSAPP">WhatsApp</option>
+            <option value="SMS">SMS</option>
           </select>
         </Field>
         <Field label="Audience">
           <select value={form.audience} onChange={set("audience")} disabled={form.locked}>
             <option value="CUSTOMER">Customer</option>
             <option value="INTERMEDIARY">Intermediary</option>
+            <option value="LENDER">Lender</option>
           </select>
         </Field>
         <Field label={form.channel === "EMAIL" ? "Subject" : "Subject (optional)"} full>
@@ -852,7 +915,7 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
               be refused.
             </p>
           )}
-          <div className={"com-message " + (form.channel === "WHATSAPP" ? "is-whatsapp" : "is-email")}>
+          <div className={"com-message " + (form.channel === "EMAIL" ? "is-email" : "is-whatsapp")}>
             {preview.subject && <strong>{preview.subject}</strong>}
             <p>{preview.body}</p>
           </div>
@@ -865,7 +928,8 @@ function TemplateForm({ session, notify, draft, onCancel, onSaved }) {
 function Preferences({ session, notify, profile, onChange }) {
   const [ref, setRef] = useState("");
   const [data, setData] = useState(null);
-  const [form, setForm] = useState({ channel: "WHATSAPP", status: "OPTED_IN", contact: "" });
+  const [form, setForm] = useState({ channel: "WHATSAPP", status: "OPTED_IN", contact: "", consentSource: "PHONE", evidence: "" });
+  const [purpose, setPurpose] = useState(null);
   const lookup = useAction();
   const save = useAction(notify);
   const confirm = useConfirm();
@@ -878,7 +942,13 @@ function Preferences({ session, notify, profile, onChange }) {
     setData(r ? r.data : null);
   };
   const submit = async () => {
-    const body = { channel: form.channel, status: form.status, ...(form.contact.trim() ? { contact: form.contact.trim() } : {}) };
+    const body = {
+      channel: form.channel,
+      status: form.status,
+      consentSource: form.consentSource,
+      ...(form.evidence.trim() ? { evidence: form.evidence.trim() } : {}),
+      ...(form.contact.trim() ? { contact: form.contact.trim() } : {}),
+    };
     const optOut = form.status === "OPTED_OUT";
     const ok = await confirm({
       title: `Opt ${data.customerName || data.customerRef} ${optOut ? "out of" : "in to"} ${channelName(form.channel)}?`,
@@ -911,13 +981,32 @@ function Preferences({ session, notify, profile, onChange }) {
     );
     if (r) {
       setData(r.data);
-      setForm({ ...form, contact: "" });
+      setForm({ ...form, contact: "", evidence: "" });
+      onChange();
+    }
+  };
+  // AT-SH09B-02 / NS-SH01-006: a choice for one purpose, with how and where the customer gave it.
+  const savePurpose = async () => {
+    const r = await save.run(
+      () =>
+        request(session, "/communications/preferences/" + encodeURIComponent(data.customerRef) + "/purposes", {
+          method: "PUT",
+          body: purpose,
+        }),
+      "Choice recorded",
+    );
+    if (r) {
+      setData(r.data);
+      setPurpose(null);
       onChange();
     }
   };
   return (
     <>
-      <Panel title="Channel preferences" subtitle="Email is on by default at the registered address; WhatsApp needs an explicit opt-in.">
+      <Panel
+        title="Channel preferences"
+        subtitle="Email and SMS are on by default at the address and mobile verified at onboarding (demo default); WhatsApp needs an explicit opt-in."
+      >
         <form className="com-lookup" onSubmit={find}>
           <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Customer reference, e.g. CUS-1006" />
           <Button type="submit" variant="secondary" icon={Search} busy={lookup.busy}>
@@ -967,6 +1056,123 @@ function Preferences({ session, notify, profile, onChange }) {
           </>
         )}
       </Panel>
+      {data && (
+        <Panel
+          title="Choices by purpose"
+          subtitle="Contractual notices cannot be stopped, only routed; reminders can be; marketing is sent only after an opt-in with consent evidence."
+        >
+          <DataTable
+            rows={data.purposes || []}
+            rowKey={(p) => p.purpose}
+            empty="No purposes configured"
+            columns={[
+              {
+                key: "label",
+                label: "Purpose",
+                render: (p) => (
+                  <>
+                    {p.label}
+                    <small className="com-sub">
+                      {p.marketing ? "Marketing (opt-in)" : p.contractual ? "Contractual notice" : "Service notice"}
+                    </small>
+                  </>
+                ),
+              },
+              {
+                key: "status",
+                label: "Choice",
+                render: (p) => (
+                  <>
+                    <Badge tone={p.status === "OPTED_OUT" ? "red" : p.status === "OPTED_IN" ? "green" : "blue"}>
+                      {p.status === "DEFAULT" ? "Default" : label(p.status)}
+                    </Badge>
+                    {p.choices.map((c) => (
+                      <small className="com-sub" key={c.channel}>
+                        {channelName(c.channel)}: {label(c.status)}
+                        {c.consentSource ? ` · ${label(c.consentSource)}` : ""}
+                        {c.evidence ? ` · ${c.evidence}` : ""} · {c.updatedBy}
+                      </small>
+                    ))}
+                  </>
+                ),
+              },
+              {
+                key: "fallback",
+                label: "Fallback",
+                render: (p) => (p.fallbackChannels.length ? p.fallbackChannels.map(channelName).join(", then ") : "None"),
+              },
+              {
+                key: "act",
+                label: "",
+                render: (p) =>
+                  can(profile, "MANAGE_COMMUNICATION") &&
+                  (p.customerMayOptOut || p.marketing) && (
+                    <div className="ws-row-actions">
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          setPurpose({
+                            purpose: p.purpose,
+                            label: p.label,
+                            marketing: p.marketing,
+                            channel: "ALL",
+                            status: p.marketing ? "OPTED_IN" : "OPTED_OUT",
+                            consentSource: "PHONE",
+                            evidence: "",
+                          })
+                        }
+                      >
+                        Record choice
+                      </Button>
+                    </div>
+                  ),
+              },
+            ]}
+          />
+          <PreferenceHistory session={session} customerRef={data.customerRef} key={JSON.stringify(data)} />
+        </Panel>
+      )}
+      {purpose && (
+        <Drawer
+          title={"Record a choice: " + purpose.label}
+          description="Only on the customer's own instruction. Marketing needs the consent source and evidence."
+          onClose={() => setPurpose(null)}
+        >
+          <FormGrid submitLabel="Record choice" busy={save.busy} error={save.error} onSubmit={savePurpose}>
+            <Field label="Channel">
+              <select value={purpose.channel} onChange={(e) => setPurpose({ ...purpose, channel: e.target.value })}>
+                <option value="ALL">Every channel</option>
+                <option value="EMAIL">Email</option>
+                <option value="WHATSAPP">WhatsApp</option>
+                <option value="SMS">SMS</option>
+              </select>
+            </Field>
+            <Field label="Choice">
+              <select value={purpose.status} onChange={(e) => setPurpose({ ...purpose, status: e.target.value })}>
+                <option value="OPTED_IN">Opted in</option>
+                <option value="OPTED_OUT">Opted out</option>
+              </select>
+            </Field>
+            <Field label="Given by">
+              <select value={purpose.consentSource} onChange={(e) => setPurpose({ ...purpose, consentSource: e.target.value })}>
+                <option value="PHONE">Phone call</option>
+                <option value="PORTAL">Customer portal</option>
+                <option value="SIGNED_FORM">Signed form</option>
+                <option value="EMAIL">Email from the customer</option>
+              </select>
+            </Field>
+            <Field label="Evidence" full hint={purpose.marketing ? "Required for marketing, at least 10 characters" : "Optional"}>
+              <input
+                value={purpose.evidence}
+                maxLength={300}
+                required={purpose.marketing && purpose.status === "OPTED_IN"}
+                placeholder="e.g. Call reference and the wording read to the customer"
+                onChange={(e) => setPurpose({ ...purpose, evidence: e.target.value })}
+              />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {data && <Conversation session={session} customerRef={data.customerRef} key={data.customerRef + JSON.stringify(data.channels)} />}
       {data && can(profile, "MANAGE_COMMUNICATION") && (
         <Panel title="Change a channel" subtitle="Record the customer's own instruction. A new contact is unverified unless it matches their registered one.">
@@ -975,6 +1181,7 @@ function Preferences({ session, notify, profile, onChange }) {
               <select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value })}>
                 <option value="EMAIL">Email</option>
                 <option value="WHATSAPP">WhatsApp</option>
+                <option value="SMS">SMS</option>
               </select>
             </Field>
             <Field label="Choice">
@@ -984,7 +1191,7 @@ function Preferences({ session, notify, profile, onChange }) {
               </select>
             </Field>
             <Field
-              label={form.channel === "EMAIL" ? "Email address" : "WhatsApp number"}
+              label={form.channel === "EMAIL" ? "Email address" : channelName(form.channel) + " number"}
               full
               hint="Leave empty to keep the current contact."
             >
@@ -994,8 +1201,219 @@ function Preferences({ session, notify, profile, onChange }) {
                 placeholder={form.channel === "EMAIL" ? "name@example.com" : "+267 7x xxx xxx"}
               />
             </Field>
+            <Field label="Given by">
+              <select value={form.consentSource} onChange={(e) => setForm({ ...form, consentSource: e.target.value })}>
+                <option value="PHONE">Phone call</option>
+                <option value="PORTAL">Customer portal</option>
+                <option value="SIGNED_FORM">Signed form</option>
+                <option value="EMAIL">Email from the customer</option>
+              </select>
+            </Field>
+            <Field label="Evidence (optional)">
+              <input
+                value={form.evidence}
+                maxLength={300}
+                placeholder="e.g. call reference"
+                onChange={(e) => setForm({ ...form, evidence: e.target.value })}
+              />
+            </Field>
           </FormGrid>
         </Panel>
+      )}
+    </>
+  );
+}
+
+/** NS-SH01-005: every channel and purpose choice, newest first, with who recorded it and the consent evidence. */
+function PreferenceHistory({ session, customerRef }) {
+  const history = useResource(session, "/communications/preferences/" + encodeURIComponent(customerRef) + "/history", []);
+  if (!history.data?.length) return null;
+  return (
+    <details className="com-history">
+      <summary>History of choices ({history.data.length})</summary>
+      <ol>
+        {history.data.map((h, i) => (
+          <li key={i}>
+            <strong>
+              {channelName(h.channel)}
+              {h.purpose ? " · " + label(h.purpose) : ""}: {h.before ? label(h.before) + " → " : ""}
+              {label(h.after)}
+            </strong>
+            <small className="com-sub">
+              {when(h.at)} · {h.actor}
+              {h.contact ? " · " + h.contact : ""}
+              {h.verified === "Y" ? " · verified contact" : h.verified === "N" ? " · unverified contact" : ""}
+              {h.consentSource ? " · " + label(h.consentSource) : ""}
+              {h.evidence ? " · " + h.evidence : ""}
+            </small>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+/**
+ * SH09B delivery rules (demo defaults the insurer replaces): per purpose, the channels a message may fall back to and
+ * whether a customer may opt out of it; and the event-to-recipient matrix. Every change needs a reason and is audit
+ * evidence.
+ */
+function Rules({ session, notify, profile }) {
+  const rules = useResource(session, "/communications/rules", null);
+  const action = useAction(notify);
+  const [editing, setEditing] = useState(null);
+  const manage = can(profile, "MANAGE_COMMUNICATION");
+  const data = rules.data;
+  const cell = (eventType, role) => (data?.recipients || []).find((r) => r.eventType === eventType && r.recipientRole === role);
+  const save = async () => {
+    const r = await action.run(
+      () =>
+        editing.kind === "purpose"
+          ? request(session, "/communications/rules/purposes/" + editing.purpose, {
+              method: "PUT",
+              body: { fallbackChannels: editing.fallbackChannels, customerMayOptOut: editing.customerMayOptOut, reason: editing.reason },
+            })
+          : request(session, "/communications/rules/recipients", {
+              method: "PUT",
+              body: { eventType: editing.eventType, recipientRole: editing.recipientRole, enabled: editing.enabled, reason: editing.reason },
+            }),
+      "Rule saved",
+    );
+    if (r) {
+      setEditing(null);
+      rules.reload();
+    }
+  };
+  const toggleChannel = (c) =>
+    setEditing({
+      ...editing,
+      fallbackChannels: editing.fallbackChannels.includes(c)
+        ? editing.fallbackChannels.filter((x) => x !== c)
+        : [...editing.fallbackChannels, c],
+    });
+  return (
+    <>
+      <Panel
+        title="Purposes and fallback"
+        subtitle="Demo defaults, not an approved messaging policy. A message that cannot reach the customer falls back to the next channel listed, only with consent and a verified contact; every decision is written to its trail."
+      >
+        <ErrorNote error={rules.error || action.error} />
+        <DataTable
+          rows={data?.purposes || []}
+          loading={rules.loading}
+          rowKey={(p) => p.purpose}
+          empty="No purposes configured"
+          columns={[
+            { key: "label", label: "Purpose" },
+            {
+              key: "kind",
+              label: "Kind",
+              render: (p) => (p.marketing ? "Marketing (opt-in)" : p.contractual ? "Contractual" : "Service"),
+            },
+            {
+              key: "fallback",
+              label: "Fallback channels",
+              render: (p) => (p.fallbackChannels.length ? p.fallbackChannels.map(channelName).join(", then ") : "None"),
+            },
+            { key: "optOut", label: "Customer may opt out", render: (p) => (p.customerMayOptOut ? "Yes" : "No") },
+            { key: "updatedBy", label: "Changed", render: (p) => `${p.updatedBy} · ${when(p.updatedAt)}` },
+            {
+              key: "act",
+              label: "",
+              render: (p) =>
+                manage &&
+                !p.marketing && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setEditing({ kind: "purpose", ...p, fallbackChannels: [...p.fallbackChannels], reason: "" })}
+                  >
+                    Change
+                  </Button>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      <Panel
+        title="Who each event messages"
+        subtitle="The event-to-recipient matrix. Intermediaries and lenders get references only; sensitive detail stays in the secure portal."
+      >
+        <div className="com-matrix" role="table" aria-label="Event to recipient matrix">
+          <div className="com-matrix-row is-head" role="row">
+            <span role="columnheader">Event</span>
+            {(data?.roles || []).map((role) => (
+              <span role="columnheader" key={role}>
+                {label(role)}
+              </span>
+            ))}
+          </div>
+          {(data?.events || []).map((eventType) => (
+            <div className="com-matrix-row" role="row" key={eventType}>
+              <span role="cell">{eventType}</span>
+              {(data?.roles || []).map((role) => {
+                const c = cell(eventType, role);
+                const on = c ? c.enabled : false;
+                return (
+                  <span role="cell" key={role}>
+                    <button
+                      type="button"
+                      className={"com-toggle " + (on ? "is-on" : "")}
+                      disabled={!manage}
+                      title={c?.note || "Not configured: not sent"}
+                      aria-label={`${eventType} to ${label(role)}: ${on ? "sent" : "not sent"}`}
+                      onClick={() =>
+                        setEditing({ kind: "recipient", eventType, recipientRole: role, enabled: !on, note: c?.note, reason: "" })
+                      }
+                    >
+                      {on ? "Sent" : "—"}
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </Panel>
+      {editing && (
+        <Drawer
+          title={
+            editing.kind === "purpose"
+              ? "Change the rule for " + editing.label
+              : `${editing.enabled ? "Send" : "Stop sending"} ${editing.eventType} to ${label(editing.recipientRole).toLowerCase()}`
+          }
+          description="The change applies to new messages and is recorded as audit evidence with your reason."
+          onClose={() => setEditing(null)}
+        >
+          <FormGrid submitLabel="Save rule" busy={action.busy} error={action.error} onSubmit={save}>
+            {editing.kind === "purpose" && (
+              <>
+                <Field label="Fallback channels" full hint="In order of use. Email and SMS only.">
+                  <div className="com-checks">
+                    {(data?.fallbackChannels || []).map((c) => (
+                      <label key={c}>
+                        <input type="checkbox" checked={editing.fallbackChannels.includes(c)} onChange={() => toggleChannel(c)} />{" "}
+                        {channelName(c)}
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="Customer may opt out of this purpose">
+                  <select
+                    value={editing.customerMayOptOut ? "Y" : "N"}
+                    onChange={(e) => setEditing({ ...editing, customerMayOptOut: e.target.value === "Y" })}
+                  >
+                    <option value="N">No (channel choice only)</option>
+                    <option value="Y">Yes</option>
+                  </select>
+                </Field>
+              </>
+            )}
+            {editing.kind === "recipient" && editing.note && <p className="com-sub">Current note: {editing.note}</p>}
+            <Field label="Reason" full>
+              <input value={editing.reason} minLength={5} required onChange={(e) => setEditing({ ...editing, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
       )}
     </>
   );
