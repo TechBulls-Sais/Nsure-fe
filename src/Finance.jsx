@@ -1259,6 +1259,10 @@ function Suspense({ session, notify, profile }) {
               clearing.action === "SPLIT"
                 ? clearing.lines.filter((l) => l.policyRef.trim()).map((l) => ({ policyRef: l.policyRef.trim(), amount: l.amount }))
                 : undefined,
+            // NS-SH04-005: a refund names where the money goes; the approver verifies it.
+            payeeName: clearing.action === "REFUND" ? clearing.payeeName : undefined,
+            payoutMethod: clearing.action === "REFUND" ? clearing.payoutMethod : undefined,
+            accountRef: clearing.action === "REFUND" ? clearing.accountRef : undefined,
             reason: clearing.reason,
           },
         }),
@@ -1269,7 +1273,12 @@ function Suspense({ session, notify, profile }) {
       list.reload();
     }
   };
+  const [verifying, setVerifying] = useState(null);
   const decide = async (r, verdict) => {
+    if (verdict === "approve" && r.clearanceAction === "REFUND") {
+      setVerifying({ id: r.id, providerRef: r.providerRef, requestedBy: r.requestedBy, reason: r.clearanceReason, verificationNote: "" });
+      return;
+    }
     const ok = await confirm({
       title: (verdict === "approve" ? "Approve" : "Reject") + " clearance of " + r.providerRef + "?",
       message: (
@@ -1291,6 +1300,20 @@ function Suspense({ session, notify, profile }) {
       verdict === "approve" ? "Clearance approved" : "Clearance rejected",
     );
     if (done) list.reload();
+  };
+  const approveRefund = async () => {
+    const done = await action.run(
+      () =>
+        request(session, `/finance/suspense/${verifying.id}/clearance/approve`, {
+          method: "POST",
+          body: { verificationNote: verifying.verificationNote || undefined },
+        }),
+      "Refund approved; payout instruction sent",
+    );
+    if (done) {
+      setVerifying(null);
+      list.reload();
+    }
   };
   return (
     <>
@@ -1336,6 +1359,9 @@ function Suspense({ session, notify, profile }) {
                           reason: "",
                           unapplied: r.unapplied,
                           lines: [{ policyRef: "", amount: "" }],
+                          payeeName: "",
+                          payoutMethod: "Bank Account",
+                          accountRef: "",
                         })
                       }
                     >
@@ -1426,6 +1452,22 @@ function Suspense({ session, notify, profile }) {
                 </div>
               </Field>
             )}
+            {clearing.action === "REFUND" && (
+              <>
+                <Field label="Payee">
+                  <input required minLength={2} maxLength={150} value={clearing.payeeName} onChange={(e) => setClearing({ ...clearing, payeeName: e.target.value })} />
+                </Field>
+                <Field label="Payout method">
+                  <select value={clearing.payoutMethod} onChange={(e) => setClearing({ ...clearing, payoutMethod: e.target.value })}>
+                    <option>Bank Account</option>
+                    <option>Mobile Wallet</option>
+                  </select>
+                </Field>
+                <Field label="Account / wallet number" hint="The approver verifies it before the payout is sent">
+                  <input required minLength={4} maxLength={60} value={clearing.accountRef} onChange={(e) => setClearing({ ...clearing, accountRef: e.target.value })} />
+                </Field>
+              </>
+            )}
             {clearing.action === "ALLOCATE" && (
               <Field label="Policy">
                 <input
@@ -1447,6 +1489,15 @@ function Suspense({ session, notify, profile }) {
           </FormGrid>
         </Drawer>
       )}
+      {verifying && (
+        <Drawer title={"Approve refund of " + verifying.providerRef} description={verifying.requestedBy + " asked to refund it: " + verifying.reason} onClose={() => setVerifying(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={approveRefund} submitLabel="Approve and send payout">
+            <Field label="How you verified the destination" full hint="Not needed when the account is the payment mandate on file for the policy">
+              <input minLength={10} maxLength={250} value={verifying.verificationNote} onChange={(e) => setVerifying({ ...verifying, verificationNote: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
     </>
   );
 }
@@ -1455,6 +1506,7 @@ function Suspense({ session, notify, profile }) {
 // holds. Approval settles it (RefundSettled).
 const REFUND_SOURCES = {
   PREMIUM: "Premium",
+  SUSPENSE: "Suspense receipt",
   CREDIT_EARLY_SETTLEMENT: "Credit life early settlement",
   GROUP_SETTLEMENT: "Group settlement",
   OTHER: "Other",
@@ -1478,23 +1530,42 @@ function Refunds({ session, notify, profile }) {
       list.reload();
     }
   };
-  const approve = async (r) => {
-    const ok = await confirm({
-      title: "Approve refund " + r.ref + "?",
-      message: (
-        <>
-          Pays {pula(r.amount)} to <strong>{r.payeeName}</strong> by {r.payoutMethod} {r.accountRef}, raised by {r.requestedBy}:{" "}
-          <em>{r.reason}</em>.
-        </>
-      ),
-      confirmLabel: "Approve and pay",
-    });
-    if (!ok) return;
+  const [approving, setApproving] = useState(null);
+  const [destination, setDestination] = useState(null);
+  const [confirming, setConfirming] = useState(null);
+  const approve = async () => {
     const done = await action.run(
-      () => request(session, "/finance/refunds/" + r.ref + "/approve", { method: "POST", body: {} }),
-      "Refund approved and settled",
+      () =>
+        request(session, "/finance/refunds/" + approving.ref + "/approve", {
+          method: "POST",
+          body: { verificationNote: approving.verificationNote || undefined, note: approving.note || undefined },
+        }),
+      "Refund approved; payout instruction sent",
     );
-    if (done) list.reload();
+    if (done) {
+      setApproving(null);
+      list.reload();
+    }
+  };
+  const saveDestination = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + destination.ref + "/destination", { method: "POST", body: destination }),
+      "Destination recorded; someone else approves the refund",
+    );
+    if (done) {
+      setDestination(null);
+      list.reload();
+    }
+  };
+  const confirmPayout = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + confirming.ref + "/payout-confirmed", { method: "POST", body: { reference: confirming.reference } }),
+      "Payout confirmed; refund settled",
+    );
+    if (done) {
+      setConfirming(null);
+      list.reload();
+    }
   };
   const reject = async () => {
     const done = await action.run(
@@ -1539,19 +1610,48 @@ function Refunds({ session, notify, profile }) {
             { key: "requestedBy", label: "Raised by" },
             { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
             {
+              key: "payoutRef",
+              label: "Destination / payout",
+              render: (r) =>
+                r.payoutRef ? (
+                  <small className="ws-hint">
+                    {r.payoutRef} via {r.payoutProvider}
+                    {r.payoutReference ? " · " + r.payoutReference : ""}
+                    <br />
+                    {r.destinationCheck}
+                  </small>
+                ) : (
+                  <small className="ws-hint">{r.payoutMethod} {r.accountRef}</small>
+                ),
+            },
+            {
               key: "act",
               label: "",
               render: (r) =>
-                r.status !== "PENDING_APPROVAL" ? (
+                r.status === "PAYOUT_SENT" ? (
+                  can(profile, "MANAGE_FINANCE") && (
+                    <Button variant="secondary" onClick={() => setConfirming({ ref: r.ref, reference: "" })}>
+                      Confirm payout
+                    </Button>
+                  )
+                ) : r.status !== "PENDING_APPROVAL" ? (
                   <small className="ws-hint">
-                    {r.decidedBy ? (r.status === "SETTLED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                    {r.decidedBy ? (r.status === "REJECTED" ? "Rejected by " : "Approved by ") + r.decidedBy : ""}
                     {r.decisionNote ? ": " + r.decisionNote : ""}
                   </small>
-                ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                ) : r.source === "SUSPENSE" ? (
+                  <small className="ws-hint">Decided in the Suspense tab</small>
+                ) : r.accountRef === "TO CONFIRM" ? (
+                  can(profile, "MANAGE_FINANCE") && (
+                    <Button variant="secondary" onClick={() => setDestination({ ref: r.ref, payeeName: r.payeeName, payoutMethod: "Bank Account", accountRef: "" })}>
+                      Record destination
+                    </Button>
+                  )
+                ) : r.requestedBy === me || r.destinationSetBy === me || !can(profile, "APPROVE_JOURNAL") ? (
                   <small className="ws-hint">Waiting for another approver</small>
                 ) : (
                   <span className="ws-row-actions">
-                    <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                    <Button variant="secondary" busy={action.busy} onClick={() => setApproving({ ref: r.ref, r, verificationNote: "", note: "" })}>
                       Approve
                     </Button>
                     <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
@@ -1568,7 +1668,7 @@ function Refunds({ session, notify, profile }) {
           <FormGrid busy={action.busy} error={action.error} onSubmit={raise} submitLabel="Send for approval">
             <Field label="For">
               <select value={form.source} onChange={set("source")}>
-                {Object.entries(REFUND_SOURCES).map(([k, label]) => (
+                {Object.entries(REFUND_SOURCES).filter(([k]) => k !== "SUSPENSE").map(([k, label]) => (
                   <option key={k} value={k}>
                     {label}
                   </option>
@@ -1602,6 +1702,49 @@ function Refunds({ session, notify, profile }) {
           </FormGrid>
         </Drawer>
       )}
+      {approving && (
+        <Drawer
+          title={"Approve refund " + approving.ref}
+          description={"Pays " + pula(approving.r.amount) + " to " + approving.r.payeeName + " by " + approving.r.payoutMethod + " " + approving.r.accountRef + ", raised by " + approving.r.requestedBy + ": " + approving.r.reason}
+          onClose={() => setApproving(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={approve} submitLabel="Approve and send payout">
+            <Field label="How you verified the destination" full hint="Not needed when the account is the payment mandate on file for the policy">
+              <input minLength={10} maxLength={250} value={approving.verificationNote} onChange={(e) => setApproving({ ...approving, verificationNote: e.target.value })} />
+            </Field>
+            <Field label="Note" full>
+              <input maxLength={500} value={approving.note} onChange={(e) => setApproving({ ...approving, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {destination && (
+        <Drawer title={"Destination for refund " + destination.ref} description="Where the refund is paid. Someone other than you approves it." onClose={() => setDestination(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={saveDestination} submitLabel="Record destination">
+            <Field label="Payee">
+              <input required maxLength={150} value={destination.payeeName} onChange={(e) => setDestination({ ...destination, payeeName: e.target.value })} />
+            </Field>
+            <Field label="Payout method">
+              <select value={destination.payoutMethod} onChange={(e) => setDestination({ ...destination, payoutMethod: e.target.value })}>
+                <option>Bank Account</option>
+                <option>Mobile Wallet</option>
+              </select>
+            </Field>
+            <Field label="Account / wallet number">
+              <input required minLength={4} maxLength={60} value={destination.accountRef} onChange={(e) => setDestination({ ...destination, accountRef: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {confirming && (
+        <Drawer title={"Confirm payout of " + confirming.ref} description="Record the bank's payment reference once the payout has been made." onClose={() => setConfirming(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={confirmPayout} submitLabel="Confirm payout">
+            <Field label="Bank reference">
+              <input required maxLength={60} value={confirming.reference} onChange={(e) => setConfirming({ ...confirming, reference: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {rejecting && (
         <Drawer title={"Reject refund " + rejecting.ref} description="The person who raised it sees why." onClose={() => setRejecting(null)}>
           <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject refund">
@@ -1623,7 +1766,23 @@ function Billing({ session, notify, profile }) {
   const [policyRef, setPolicyRef] = useState("");
   const [account, setAccount] = useState(null);
   const [adjusting, setAdjusting] = useState(null);
+  const [reversing, setReversing] = useState(null);
+  const [reversalVersion, setReversalVersion] = useState(0);
   const manage = can(profile, "MANAGE_FINANCE");
+  const requestReversal = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/receipts/" + encodeURIComponent(reversing.receiptRef) + "/reverse", {
+          method: "POST",
+          body: { kind: reversing.kind, reason: reversing.reason },
+        }),
+      "Reversal sent for approval by a second person",
+    );
+    if (done) {
+      setReversing(null);
+      setReversalVersion((v) => v + 1);
+    }
+  };
   const follow = async (id) => {
     for (let i = 0; i < 120; i++) {
       const r = await request(session, "/operations/" + encodeURIComponent(id));
@@ -1748,6 +1907,52 @@ function Billing({ session, notify, profile }) {
           />
         )}
       </Panel>
+      {account && (
+        <Panel title={"Receipts on " + account.policyRef} subtitle="A receipt the bank returned, reversed or charged back is reversed only when a second person approves.">
+          <DataTable
+            rows={account.receipts}
+            rowKey={(r) => r.receiptRef}
+            searchFrom={99}
+            empty="No receipts"
+            columns={[
+              { key: "receiptRef", label: "Receipt" },
+              { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "method", label: "Method" },
+              { key: "status", label: "Status", render: (r) => <Badge>{r.reversalKind ? r.reversalKind : r.status}</Badge> },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  manage && r.status === "SUCCESSFUL" ? (
+                    <Button variant="secondary" onClick={() => setReversing({ receiptRef: r.receiptRef, kind: "RETURNED", reason: "" })}>
+                      Request reversal
+                    </Button>
+                  ) : (
+                    r.reversalReason && <small className="ws-hint">{r.reversalReason}</small>
+                  ),
+              },
+            ]}
+          />
+        </Panel>
+      )}
+      <ReversalRequests session={session} notify={notify} profile={profile} version={reversalVersion} />
+      {reversing && (
+        <Drawer title={"Reverse receipt " + reversing.receiptRef} description="Nothing changes until a different person approves the reversal." onClose={() => setReversing(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={requestReversal} submitLabel="Send for approval">
+            <Field label="Kind">
+              <select value={reversing.kind} onChange={(e) => setReversing({ ...reversing, kind: e.target.value })}>
+                <option value="RETURNED">Returned unpaid</option>
+                <option value="REVERSED">Reversed</option>
+                <option value="CHARGEBACK">Chargeback</option>
+              </select>
+            </Field>
+            <Field label="Bank's reason" full>
+              <input required minLength={10} maxLength={500} value={reversing.reason} onChange={(e) => setReversing({ ...reversing, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {adjusting && (
         <Drawer title={"Adjust " + adjusting.ref} description="A negative amount reduces what is owed; the billed amount itself never changes." onClose={() => setAdjusting(null)}>
           <FormGrid busy={action.busy} error={action.error} onSubmit={adjust} submitLabel="Record adjustment">
@@ -2102,5 +2307,83 @@ function DebitOrders({ session, notify, profile }) {
         </Drawer>
       )}
     </>
+  );
+}
+
+// NS-SH04-005 receipt reversals asked for by Finance and carried out only when a different person approves.
+function ReversalRequests({ session, notify, profile, version }) {
+  const list = useResource(session, "/collections/reversal-requests?v=" + version, []);
+  const action = useAction(notify);
+  const [rejecting, setRejecting] = useState(null);
+  const me = profile?.username;
+  const approve = async (r) => {
+    const done = await action.run(
+      () => request(session, "/collections/reversal-requests/" + r.ref + "/approve", { method: "POST", body: {} }),
+      "Reversal approved: the receipt is reversed and the cover reviewed",
+    );
+    if (done) list.reload();
+  };
+  const reject = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/reversal-requests/" + rejecting.ref + "/reject", { method: "POST", body: { note: rejecting.note } }),
+      "Reversal rejected",
+    );
+    if (done) {
+      setRejecting(null);
+      list.reload();
+    }
+  };
+  return (
+    <Panel title="Receipt reversals" subtitle="Requested by one person with the bank's reason; approved by another, which reverses the receipt, reopens the instalment and reviews the cover.">
+      <ErrorNote error={list.error || (!rejecting && action.error)} />
+      <DataTable
+        rows={list.data}
+        loading={list.loading}
+        rowKey={(r) => r.ref}
+        empty="No reversal requests"
+        columns={[
+          { key: "ref", label: "Request" },
+          { key: "receiptRef", label: "Receipt" },
+          { key: "policyRef", label: "Policy" },
+          { key: "kind", label: "Kind" },
+          { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+          { key: "reason", label: "Reason" },
+          { key: "requestedBy", label: "Requested by" },
+          { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+          {
+            key: "act",
+            label: "",
+            render: (r) =>
+              r.status !== "PENDING_APPROVAL" ? (
+                <small className="ws-hint">
+                  {r.decidedBy ? (r.status === "APPROVED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                  {r.reversalRef ? " · " + r.reversalRef : ""}
+                  {r.decisionNote ? ": " + r.decisionNote : ""}
+                </small>
+              ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                <small className="ws-hint">Waiting for another approver</small>
+              ) : (
+                <span className="ws-row-actions">
+                  <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                    Approve
+                  </Button>
+                  <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
+                    Reject
+                  </Button>
+                </span>
+              ),
+          },
+        ]}
+      />
+      {rejecting && (
+        <Drawer title={"Reject reversal " + rejecting.ref} description="The receipt stays as it is." onClose={() => setRejecting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject reversal">
+            <Field label="Why" full>
+              <input required minLength={5} maxLength={500} value={rejecting.note} onChange={(e) => setRejecting({ ...rejecting, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </Panel>
   );
 }
