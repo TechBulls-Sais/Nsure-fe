@@ -368,6 +368,9 @@ export default function AccessAdmin({ session, notify, profile }) {
           />
         </section>
       )}
+      {tab === "limits" && (can(profile, "APPROVE_CLAIM") || allow.readRoles) && (
+        <DelegationsPanel session={session} notify={notify} profile={profile} />
+      )}
 
       {tab === "approvals" && allow.readAudit && (
         <ApprovalsPanel
@@ -463,6 +466,100 @@ const when = (value) =>
   value ? new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "—";
 
 /** A one-line description of a pending command's body: grants and removals, or the fields it changes. */
+/**
+ * NS-SH10-003: an approver lends a higher claim approval limit to a colleague who also approves claims, for a time,
+ * never above their own limit. The server works out each user's effective limit.
+ */
+function DelegationsPanel({ session, notify, profile }) {
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState({ delegate: "", maxAmount: "", validTo: "", reason: "" });
+  const [error, setError] = useState("");
+  const load = () =>
+    request(session, "/admin/approval-delegations")
+      .then((r) => setData(r.data))
+      .catch((e) => setError(e.message));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+  const run = async (fn, done) => {
+    setError("");
+    try {
+      const r = await fn();
+      setData(r.data);
+      notify?.(done);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <div>
+          <h2>Delegated approval authority</h2>
+          <p className="subtitle">
+            Time-bound (at most {data?.maxDays ?? 30} days) and never above the delegator&apos;s own limit. Your effective limit:{" "}
+            <strong>{data ? (data.myLimit === "UNLIMITED" ? "no limit" : pula(data.myLimit)) : "…"}</strong>
+          </p>
+        </div>
+      </div>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      {can(profile, "APPROVE_CLAIM") && (
+        <form
+          className="field-grid"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => request(session, "/admin/approval-delegations", { method: "POST", body: form }), "Authority delegated");
+          }}
+        >
+          <label className="form-label">
+            <span>Colleague (username)</span>
+            <input value={form.delegate} required onChange={(e) => setForm({ ...form, delegate: e.target.value })} />
+          </label>
+          <label className="form-label">
+            <span>Limit lent</span>
+            <input type="number" min="1" value={form.maxAmount} required onChange={(e) => setForm({ ...form, maxAmount: e.target.value })} />
+          </label>
+          <label className="form-label">
+            <span>Last day</span>
+            <input type="date" value={form.validTo} required onChange={(e) => setForm({ ...form, validTo: e.target.value })} />
+          </label>
+          <label className="form-label">
+            <span>Reason</span>
+            <input value={form.reason} required minLength={5} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
+          </label>
+          <div className="ws-form-actions">
+            <button className="btn primary" type="submit">
+              Delegate
+            </button>
+          </div>
+        </form>
+      )}
+      <ul className="access-delegations">
+        {(data?.delegations || []).map((d) => (
+          <li key={d.id}>
+            <strong>
+              {d.delegator} → {d.delegate}: {pula(d.max_amount)}
+            </strong>{" "}
+            <span className="subtitle">
+              until {String(d.valid_to).slice(0, 10)} · {d.reason} · {d.active ? "in force" : d.revoked_at ? "revoked by " + d.revoked_by : "ended"}
+            </span>
+            {d.active && (d.delegator === profile?.username || can(profile, "UPDATE_ROLE")) && (
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => run(() => request(session, `/admin/approval-delegations/${d.id}/revoke`, { method: "POST" }), "Delegation ended")}
+              >
+                End now
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function describeCommand(command) {
   const body = command.command || {};
   if (body.permissions && typeof body.permissions === "object") {
