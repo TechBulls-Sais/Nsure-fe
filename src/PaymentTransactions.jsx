@@ -26,6 +26,8 @@ const STATUS_TONE = {
   SETTLED: "green",
   FAILED: "red",
   EXPIRED: "gray",
+  RETURNED: "red",
+  REVERSED: "red",
 };
 
 const STATUS_LABEL = {
@@ -35,6 +37,8 @@ const STATUS_LABEL = {
   SETTLED: "Settled",
   FAILED: "Failed",
   EXPIRED: "Expired",
+  RETURNED: "Returned unpaid",
+  REVERSED: "Reversed",
 };
 
 const PURPOSE_LABEL = {
@@ -49,6 +53,8 @@ const FILTERS = [
   ["SETTLED", "Settled"],
   ["FAILED", "Failed"],
   ["EXPIRED", "Expired"],
+  ["RETURNED", "Returned"],
+  ["REVERSED", "Reversed"],
 ];
 
 export function TransactionStatus({ status }) {

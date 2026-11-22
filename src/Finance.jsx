@@ -48,6 +48,7 @@ export default function Finance({ session, notify, profile }) {
           ["suspense", "Suspense"],
           ["refunds", "Refunds"],
           ["billing", "Billing"],
+          ["collections", "Debit orders"],
           ["reconciliation", "Reconciliation"],
         ]}
       />
@@ -61,6 +62,7 @@ export default function Finance({ session, notify, profile }) {
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
       {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} />}
       {tab === "billing" && <Billing session={session} notify={notify} profile={profile} />}
+      {tab === "collections" && <DebitOrders session={session} notify={notify} profile={profile} />}
       {tab === "reconciliation" && <Reconciliation session={session} notify={notify} profile={profile} />}
     </>
   );
@@ -1717,6 +1719,7 @@ function Billing({ session, notify, profile }) {
             <input required value={policyRef} placeholder="POL-…" onChange={(e) => setPolicyRef(e.target.value)} />
           </Field>
         </FormGrid>
+        {account && <MandatePanel session={session} notify={notify} profile={profile} account={account} onChange={() => load(account.policyRef)} />}
         {account && (
           <DataTable
             rows={account.instalments}
@@ -1753,6 +1756,347 @@ function Billing({ session, notify, profile }) {
             </Field>
             <Field label="Reason" full>
               <input required minLength={10} maxLength={500} value={adjusting.reason} onChange={(e) => setAdjusting({ ...adjusting, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// NS-SH04-002 payment mandate on a policy's billing account: the debit order or wallet a collection run pulls from.
+const CHANNEL_LABELS = { DEBIT_ORDER: "Debit order", MOBILE_WALLET: "Mobile wallet" };
+
+function MandatePanel({ session, notify, profile, account, onChange }) {
+  const action = useAction(notify);
+  const [form, setForm] = useState(null);
+  const [cancelling, setCancelling] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const m = account.mandate;
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const save = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/mandates", { method: "POST", body: { ...form, policyRef: account.policyRef } }),
+      "Mandate saved",
+    );
+    if (done) {
+      setForm(null);
+      onChange();
+    }
+  };
+  const cancel = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/mandates/" + m.ref + "/cancel", { method: "POST", body: { reason: cancelling } }),
+      "Mandate cancelled",
+    );
+    if (done) {
+      setCancelling(null);
+      onChange();
+    }
+  };
+  return (
+    <div style={{ margin: "12px 0", display: "grid", gap: 8 }}>
+      <div className="ws-kv">
+        <div>
+          <small>Payment mandate</small>
+          <strong>{m ? CHANNEL_LABELS[m.channel] + " · " + m.institution + " " + m.accountMasked : "None — paid by checkout or receipt"}</strong>
+        </div>
+        {m?.debitDay && (
+          <div>
+            <small>Debit day</small>
+            <strong>{m.debitDay}</strong>
+          </div>
+        )}
+        {m && (
+          <div>
+            <small>Source</small>
+            <strong>{m.source === "APPLICATION" ? "From the application" : "Recorded by " + m.createdBy}</strong>
+          </div>
+        )}
+        {account.unresolvedPayments?.length > 0 && (
+          <div>
+            <small>Unresolved payments</small>
+            <strong>{account.unresolvedPayments.join("; ")}</strong>
+          </div>
+        )}
+      </div>
+      {manage && (
+        <span className="ws-row-actions">
+          <Button variant="secondary" onClick={() => setForm({ channel: "DEBIT_ORDER", institution: "", accountNumber: "", accountHolder: "", debitDay: "" })}>
+            {m ? "Replace mandate" : "Add mandate"}
+          </Button>
+          {m && (
+            <Button variant="secondary" onClick={() => setCancelling("")}>
+              Cancel mandate
+            </Button>
+          )}
+        </span>
+      )}
+      {form && (
+        <Drawer title={"Payment mandate for " + account.policyRef} description="Collection runs pull the premium from this account or wallet. It replaces any mandate on file." onClose={() => setForm(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={save} submitLabel="Save mandate">
+            <Field label="Channel">
+              <select value={form.channel} onChange={set("channel")}>
+                <option value="DEBIT_ORDER">Debit order</option>
+                <option value="MOBILE_WALLET">Mobile wallet</option>
+              </select>
+            </Field>
+            <Field label={form.channel === "DEBIT_ORDER" ? "Bank" : "Wallet"}>
+              {form.channel === "DEBIT_ORDER" ? (
+                <input required minLength={2} maxLength={60} value={form.institution} onChange={set("institution")} />
+              ) : (
+                <select required value={form.institution} onChange={set("institution")}>
+                  <option value="">Choose…</option>
+                  <option>Orange Money</option>
+                  <option>MyZaka</option>
+                </select>
+              )}
+            </Field>
+            <Field label={form.channel === "DEBIT_ORDER" ? "Account number" : "Wallet number"} hint="Demo simulator: ending in 99 is unpaid, 98 stays pending">
+              <input required minLength={4} maxLength={30} value={form.accountNumber} onChange={set("accountNumber")} />
+            </Field>
+            <Field label="Account holder">
+              <input maxLength={150} value={form.accountHolder} onChange={set("accountHolder")} />
+            </Field>
+            {form.channel === "DEBIT_ORDER" && (
+              <Field label="Debit day (1–28)">
+                <input type="number" min="1" max="28" required value={form.debitDay} onChange={set("debitDay")} />
+              </Field>
+            )}
+          </FormGrid>
+        </Drawer>
+      )}
+      {cancelling !== null && (
+        <Drawer title={"Cancel mandate " + m.ref} description="No further collections are raised on it; the record is kept." onClose={() => setCancelling(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={cancel} submitLabel="Cancel mandate">
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={cancelling} onChange={(e) => setCancelling(e.target.value)} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </div>
+  );
+}
+
+// NS-SH04-002 debit-order and mobile-money collection runs: prepared by Finance, approved by another person, sent to
+// the (simulated) bank, whose response collects, fails or holds each instruction. Submission is not settlement.
+const OUTCOME_CHOICES = [
+  ["", "Bank decides (demo rule)"],
+  ["CONFIRMED", "Collected"],
+  ["FAILED", "Unpaid"],
+  ["PENDING", "No answer yet"],
+];
+
+function DebitOrders({ session, notify, profile }) {
+  const list = useResource(session, "/collections/batches", []);
+  const action = useAction(notify);
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [open, setOpen] = useState(null);
+  const [notes, setNotes] = useState([]);
+  const [outcomes, setOutcomes] = useState({});
+  const [returning, setReturning] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const me = profile?.username;
+  const show = (batch) => {
+    setOpen(batch);
+    setOutcomes({});
+  };
+  const prepare = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/batches", { method: "POST", body: { collectionDate: date } }),
+      "Collection run prepared; a second person must approve it",
+    );
+    if (done) {
+      setNotes(done.data.notes || []);
+      show(done.data);
+      list.reload();
+    }
+  };
+  const step = async (path, body, message) => {
+    const done = await action.run(() => request(session, "/collections/batches/" + open.ref + path, { method: "POST", body: body || {} }), message);
+    if (done) {
+      show(done.data);
+      list.reload();
+    }
+  };
+  const respond = () =>
+    step(
+      "/bank-response",
+      { outcomes: Object.entries(outcomes).filter(([, o]) => o).map(([instructionRef, outcome]) => ({ instructionRef, outcome })) },
+      "Bank response read",
+    );
+  const bankReturn = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/instructions/" + returning.ref + "/bank-return", {
+          method: "POST",
+          body: { kind: returning.kind, reason: returning.reason },
+        }),
+      "Return recorded; the receipt is reversed",
+    );
+    if (done) {
+      setReturning(null);
+      const r = await request(session, "/collections/batches/" + open.ref);
+      show(r.data);
+      list.reload();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Debit-order and mobile-money runs"
+        subtitle="One instruction per due instalment of an active policy with a mandate. Nothing is sent until a second person approves; only the bank's response collects money. The bank here is a SIMULATOR."
+        action={
+          manage && (
+            <span className="ws-row-actions">
+              <input type="date" aria-label="Collection date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Button busy={action.busy} onClick={prepare}>
+                Prepare run
+              </Button>
+            </span>
+          )
+        }
+      >
+        <ErrorNote error={list.error || (!open && action.error)} />
+        <DataTable
+          rows={list.data}
+          loading={list.loading}
+          rowKey={(r) => r.ref}
+          empty="No collection runs yet"
+          emptyDetail="Run billing, record a mandate on a policy's billing account, then prepare a run."
+          onRowClick={(r) => request(session, "/collections/batches/" + r.ref).then((res) => show(res.data))}
+          columns={[
+            { key: "ref", label: "Run" },
+            { key: "collectionDate", label: "Collect on" },
+            { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+            { key: "instructionCount", label: "Instructions", align: "right" },
+            { key: "totalAmount", label: "Control total", align: "right", render: (r) => pula(r.totalAmount) },
+            { key: "preparedBy", label: "Prepared by" },
+            { key: "approvedBy", label: "Approved by", render: (r) => r.approvedBy || "—" },
+            {
+              key: "byStatus",
+              label: "Outcome",
+              render: (r) =>
+                Object.entries(r.byStatus || {})
+                  .map(([k, v]) => v + " " + k.toLowerCase())
+                  .join(", "),
+            },
+          ]}
+        />
+      </Panel>
+      {open && (
+        <Drawer title={"Collection run " + open.ref} description={"Collect on " + open.collectionDate + " via " + open.provider + " (simulated bank)"} onClose={() => setOpen(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Status</small>
+              <strong>
+                <Badge>{open.status}</Badge>
+              </strong>
+            </div>
+            <div>
+              <small>Control total</small>
+              <strong>
+                {open.instructionCount} · {pula(open.totalAmount)}
+              </strong>
+            </div>
+            <div>
+              <small>Prepared</small>
+              <strong>
+                {open.preparedBy} · {when(open.preparedAt)}
+              </strong>
+            </div>
+            <div>
+              <small>Approved</small>
+              <strong>{open.approvedBy ? open.approvedBy + " · " + when(open.approvedAt) : "Waiting for a second person"}</strong>
+            </div>
+            {open.fileRef && (
+              <div>
+                <small>Bank file</small>
+                <strong>{open.fileRef}</strong>
+              </div>
+            )}
+            {open.note && (
+              <div>
+                <small>Note</small>
+                <strong>{open.note}</strong>
+              </div>
+            )}
+          </div>
+          {notes.length > 0 && open.status === "PREPARED" && <p className="ws-hint">Left out: {notes.join("; ")}</p>}
+          <ErrorNote error={!returning && action.error} />
+          <span className="ws-row-actions">
+            {open.status === "PREPARED" &&
+              (can(profile, "APPROVE_JOURNAL") && open.preparedBy !== me ? (
+                <Button busy={action.busy} onClick={() => step("/approve", null, "Run approved")}>
+                  Approve run
+                </Button>
+              ) : (
+                <small className="ws-hint">Waiting for another approver</small>
+              ))}
+            {open.status === "APPROVED" && manage && (
+              <Button busy={action.busy} onClick={() => step("/submit", null, "Sent to the bank (simulated)")}>
+                Send to bank
+              </Button>
+            )}
+            {["PREPARED", "APPROVED"].includes(open.status) && manage && (
+              <Button variant="secondary" busy={action.busy} onClick={() => step("/cancel", { reason: "Cancelled before submission from the workspace" }, "Run cancelled")}>
+                Cancel run
+              </Button>
+            )}
+            {open.status === "SUBMITTED" && manage && (
+              <Button busy={action.busy} onClick={respond}>
+                Read bank response (simulated)
+              </Button>
+            )}
+          </span>
+          <DataTable
+            rows={open.instructions}
+            rowKey={(r) => r.ref}
+            searchFrom={8}
+            empty="No instructions"
+            columns={[
+              { key: "ref", label: "Instruction" },
+              { key: "policyRef", label: "Policy" },
+              { key: "instalmentRef", label: "Instalment" },
+              { key: "institution", label: "From", render: (r) => CHANNEL_LABELS[r.channel] + " · " + r.institution + " " + r.accountMasked },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+              { key: "resultText", label: "Bank says", render: (r) => r.resultText || r.providerReference || "—" },
+              { key: "receiptRef", label: "Receipt", render: (r) => r.receiptRef || "—" },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  open.status === "SUBMITTED" && ["SUBMITTED", "PENDING"].includes(r.status) && manage ? (
+                    <select aria-label={"Simulated outcome for " + r.ref} value={outcomes[r.ref] || ""} onChange={(e) => setOutcomes({ ...outcomes, [r.ref]: e.target.value })}>
+                      {OUTCOME_CHOICES.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : r.status === "CONFIRMED" && r.receiptRef && manage ? (
+                    <Button variant="secondary" onClick={() => setReturning({ ref: r.ref, kind: "RETURNED", reason: "" })}>
+                      Simulate bank return
+                    </Button>
+                  ) : null,
+              },
+            ]}
+          />
+        </Drawer>
+      )}
+      {returning && (
+        <Drawer title={"Bank return of " + returning.ref} description="Simulated: the payer's bank takes the collected premium back. The receipt is reversed, the instalment reopens and the cover is reviewed." onClose={() => setReturning(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={bankReturn} submitLabel="Record return">
+            <Field label="Kind">
+              <select value={returning.kind} onChange={(e) => setReturning({ ...returning, kind: e.target.value })}>
+                <option value="RETURNED">Returned unpaid</option>
+                <option value="REVERSED">Reversed (disputed)</option>
+              </select>
+            </Field>
+            <Field label="Bank's reason" full>
+              <input required minLength={10} maxLength={400} value={returning.reason} onChange={(e) => setReturning({ ...returning, reason: e.target.value })} />
             </Field>
           </FormGrid>
         </Drawer>
