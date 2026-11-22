@@ -1250,7 +1250,29 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
                 {[r.ref, r.type, r.coveredLife, r.eventDate ? "event " + formatDate(r.eventDate) : "event date not recorded", r.status]
                   .filter(Boolean)
                   .join(" · ")}
-                {r.possibleDuplicate && <small>possibly the same event</small>}
+                {r.link ? (
+                  <small>
+                    {r.link === "SAME_EVENT" ? "linked as the same event" : "linked as a separate benefit"} by {r.linkedBy}:{" "}
+                    {r.linkNote}
+                  </small>
+                ) : (
+                  r.possibleDuplicate && <small>possibly the same event</small>
+                )}
+                {!r.link && (holds(profile, "ASSESS_CLAIM") || holds(profile, "UPDATE_CLAIM")) && (
+                  <span className="detail-actions">
+                    {["SAME_EVENT", "SEPARATE_BENEFIT"].map((type) => (
+                      <ReasonAction
+                        key={type}
+                        label={type === "SAME_EVENT" ? "Same event" : "Separate benefit"}
+                        busy={busy}
+                        placeholder="Why, e.g. funeral benefit beside the death benefit"
+                        onConfirm={(note) =>
+                          call("/links", { method: "POST", body: { relatedRef: r.ref, type, note } }, "Claims linked.")
+                        }
+                      />
+                    ))}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
