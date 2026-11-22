@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Download, Plus, Sparkles } from "lucide-react";
+import { Download, Plus, Send, Sparkles } from "lucide-react";
 import { request } from "./api";
 import {
   Badge,
@@ -40,6 +40,7 @@ export default function PlatformServices({ session, notify, profile }) {
     can(profile, "READ_PRODUCT") && ["wordings", "Wording library"],
     can(profile, "READ_REPORT") && ["extracts", "Extracts & metrics"],
     ["assistants", "Assistants"],
+    ["scope", "Scope & AI coverage"],
   ].filter(Boolean);
   const [tab, setTab] = useState(tabs[0][0]);
   return (
@@ -54,6 +55,7 @@ export default function PlatformServices({ session, notify, profile }) {
       {tab === "wordings" && <Wordings session={session} notify={notify} profile={profile} />}
       {tab === "extracts" && <Extracts session={session} notify={notify} profile={profile} />}
       {tab === "assistants" && <Assistants session={session} notify={notify} profile={profile} />}
+      {tab === "scope" && <ScopeCoverage session={session} notify={notify} profile={profile} />}
     </>
   );
 }
@@ -392,15 +394,28 @@ function Extracts({ session, notify, profile }) {
   );
 }
 
+const REVIEW_LABEL = { PENDING: "Awaiting review", ACCEPTED: "Accepted", OVERRIDDEN: "Overridden", REJECTED: "Rejected" };
+const reviewTone = (s) => ({ ACCEPTED: "green", OVERRIDDEN: "amber", REJECTED: "red" })[s] || "amber";
+
 function Assistants({ session, notify, profile }) {
   const cases = useResource(session, "/platform/assistants", []);
   const log = useResource(session, can(profile, "READ_AUDIT") ? "/platform/assistants/log" : null, []);
+  const changes = useResource(session, "/platform/assistants/changes", []);
+  const monitoring = useResource(session, "/platform/assistants/monitoring", []);
   const customers = useResource(session, can(profile, "READ_CUSTOMER") ? "/portfolio/customers" : null, []);
   const claims = useResource(session, can(profile, "READ_CLAIM") ? "/portfolio/claims" : null, []);
   const applications = useResource(session, can(profile, "READ_APPLICATION") ? "/portfolio/applications" : null, []);
   const [form, setForm] = useState({ useCase: "CLAIM_SUMMARY", subject: "", purpose: "PREMIUM_REMINDER" });
   const [result, setResult] = useState(null);
+  const [review, setReview] = useState(null);
+  const [change, setChange] = useState(null);
+  const [overridesOnly, setOverridesOnly] = useState(false);
   const action = useAction(notify);
+  const me = session?.username;
+  const reload = () => {
+    log.reload();
+    monitoring.reload();
+  };
   const options =
     form.useCase === "CLAIM_SUMMARY" ? claims.data || [] : form.useCase === "APPLICATION_CHECK" ? applications.data || [] : customers.data || [];
   const ask = async () => {
@@ -414,17 +429,26 @@ function Assistants({ session, notify, profile }) {
     const done = await action.run(() => request(session, path, { method: "POST", body }));
     if (done) {
       setResult(done.data);
-      log.reload();
+      reload();
     }
   };
-  const review = async (accept) => {
+  const submitReview = async () => {
     const done = await action.run(
-      () => request(session, "/platform/assistants/log/" + result.id + "/review", { method: "POST", body: { accept } }),
-      accept ? "Marked as reviewed and accepted" : "Marked as rejected",
+      () => request(session, "/platform/assistants/log/" + review.id + "/review", { method: "POST", body: review.body }),
+      "Review recorded: " + REVIEW_LABEL[{ ACCEPT: "ACCEPTED", OVERRIDE: "OVERRIDDEN", REJECT: "REJECTED" }[review.body.decision]],
     );
     if (done) {
-      setResult({ ...result, reviewStatus: done.data.reviewStatus });
-      log.reload();
+      if (result?.id === review.id) setResult({ ...result, reviewStatus: done.data.reviewStatus, finalText: done.data.finalText });
+      setReview(null);
+      reload();
+    }
+  };
+  const send = async (row) => {
+    const done = await action.run(() => request(session, "/platform/assistants/log/" + row.id + "/send", { method: "POST" }));
+    if (done) {
+      notify("Sent as " + done.data.messageRef + " (" + done.data.messageStatus.toLowerCase() + ")", "success");
+      if (result?.id === row.id) setResult({ ...result, sentRef: done.data.messageRef });
+      reload();
     }
   };
   const toggle = async (c) => {
@@ -434,13 +458,40 @@ function Assistants({ session, notify, profile }) {
     );
     if (done) cases.setData(done.data);
   };
+  const requestChange = async () => {
+    const { code, ...body } = change;
+    const done = await action.run(
+      () => request(session, "/platform/assistants/" + code + "/changes", { method: "POST", body }),
+      "Version change requested; a second person approves it",
+    );
+    if (done) {
+      setChange(null);
+      changes.reload();
+    }
+  };
+  const decide = async (c, approve) => {
+    const done = await action.run(
+      () =>
+        request(session, "/platform/assistants/changes/" + c.id + "/decision", {
+          method: "POST",
+          body: { approve, note: approve ? "Approved" : "Rejected after review" },
+        }),
+      approve ? c.useCase + " now runs " + c.toVersion : "Version change rejected",
+    );
+    if (done) {
+      changes.reload();
+      cases.reload();
+    }
+  };
+  const canReview = (r) => r.reviewStatus === "PENDING";
+  const logRows = (log.data || []).filter((r) => !overridesOnly || ["OVERRIDDEN", "REJECTED"].includes(r.reviewStatus));
   return (
     <>
       <Panel
         title="Ask an assistant"
-        subtitle="Assistants read the record and say where each point comes from. They never change a policy or claim, and a person reviews every output."
+        subtitle="No AI model is called: each assistant is a set of deterministic rules over the record, governed as a model would be — owner, permitted inputs, approved version, human review, override log and a switch. They never change a policy or claim."
       >
-        <ErrorNote error={action.error} />
+        <ErrorNote error={!review && !change && action.error} />
         <FormGrid submitLabel="Ask" busy={action.busy} onSubmit={ask}>
           <Field label="Assistant">
             <select value={form.useCase} onChange={(e) => setForm({ ...form, useCase: e.target.value, subject: "" })}>
@@ -475,11 +526,10 @@ function Assistants({ session, notify, profile }) {
         {result && (
           <div className="form-label full">
             <span>
-              <Sparkles size={14} aria-hidden="true" /> {result.useCase.replaceAll("_", " ").toLowerCase()} · {result.modelVersion} · confidence{" "}
-              {result.confidence}% ·{" "}
-              <Badge tone={result.reviewStatus === "ACCEPTED" ? "green" : result.reviewStatus === "REJECTED" ? "red" : "amber"}>
-                {result.reviewStatus === "PENDING" ? "Awaiting review" : result.reviewStatus.charAt(0) + result.reviewStatus.slice(1).toLowerCase()}
-              </Badge>
+              <Sparkles size={14} aria-hidden="true" /> {result.useCase.replaceAll("_", " ").toLowerCase()} · {result.engine} · {result.modelVersion} ·
+              computed confidence {result.confidence}% ·{" "}
+              <Badge tone={reviewTone(result.reviewStatus)}>{REVIEW_LABEL[result.reviewStatus]}</Badge>
+              {result.sentRef && <> · sent as {result.sentRef}</>}
             </span>
             <ul className="uw-list">
               {result.output.map((line, i) => (
@@ -487,59 +537,309 @@ function Assistants({ session, notify, profile }) {
               ))}
             </ul>
             <small className="ws-hint">Sources: {result.sources.join("; ")}</small>
-            {result.reviewStatus === "PENDING" && (
-              <div className="ws-form-actions">
-                <Button variant="secondary" onClick={() => review(false)}>
-                  Reject
+            {result.explanation?.length > 0 && <small className="ws-hint">Why: {result.explanation.join("; ")}</small>}
+            {result.finalText && result.reviewStatus === "OVERRIDDEN" && <small className="ws-hint">Final text kept: {result.finalText}</small>}
+            <div className="ws-form-actions">
+              {canReview(result) && (
+                <Button variant="secondary" onClick={() => setReview({ id: result.id, row: result, body: { decision: "ACCEPT", reason: "", finalText: result.output.join("\n") } })}>
+                  Review…
                 </Button>
-                <Button onClick={() => review(true)}>Reviewed and accepted</Button>
-              </div>
-            )}
+              )}
+              {result.useCase === "DRAFT_MESSAGE" && ["ACCEPTED", "OVERRIDDEN"].includes(result.reviewStatus) && !result.sentRef && can(profile, "MANAGE_COMMUNICATION") && (
+                <Button icon={Send} busy={action.busy} onClick={() => send(result)}>
+                  Send reviewed message
+                </Button>
+              )}
+            </div>
           </div>
         )}
       </Panel>
-      <Panel title="Assistant register" subtitle="Each assistant has an owner, a version and a switch. Switched off, the manual process carries on unaffected.">
+      <Panel title="Assistant register" subtitle="Each assistant has an owner, permitted inputs, an approved version, who may review it, a threshold and a switch. Switched off, the manual process carries on unaffected. A version change is its own approval, separate from wording edits.">
         <DataTable
           rows={cases.data}
           loading={cases.loading}
           rowKey={(r) => r.code}
           searchFrom={99}
           columns={[
-            { key: "name", label: "Assistant" },
-            { key: "purpose", label: "Purpose" },
-            { key: "owner", label: "Owner" },
-            { key: "modelVersion", label: "Version" },
+            { key: "name", label: "Assistant", render: (r) => r.name + " · " + r.owner },
+            { key: "permittedInputs", label: "Permitted inputs" },
+            { key: "engine", label: "Engine", render: (r) => r.engine + " · " + r.modelVersion },
+            { key: "reviewPermission", label: "Reviewed by", render: (r) => r.reviewPermission + (r.fourEyes ? " · four eyes" : "") },
+            { key: "acceptanceThreshold", label: "Threshold", align: "right", render: (r) => r.acceptanceThreshold + "%" },
             { key: "enabled", label: "Status", render: (r) => <Badge tone={r.enabled ? "green" : undefined}>{r.enabled ? "On" : "Off"}</Badge> },
             {
               key: "act",
               label: "",
               render: (r) =>
                 can(profile, "MANAGE_CONFIG") && (
-                  <Button variant="secondary" busy={action.busy} onClick={() => toggle(r)}>
-                    {r.enabled ? "Switch off" : "Switch on"}
+                  <div className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => toggle(r)}>
+                      {r.enabled ? "Switch off" : "Switch on"}
+                    </Button>
+                    <Button variant="secondary" onClick={() => setChange({ code: r.code, toVersion: "", changeNote: "", validationSummary: "" })}>
+                      Change version
+                    </Button>
+                  </div>
+                ),
+            },
+          ]}
+        />
+        {(changes.data || []).length > 0 && (
+          <>
+            <h3 className="subtitle">Version changes</h3>
+            <DataTable
+              rows={changes.data}
+              rowKey={(r) => r.id}
+              searchFrom={99}
+              columns={[
+                { key: "useCase", label: "Assistant" },
+                { key: "toVersion", label: "Change", render: (r) => r.fromVersion + " → " + r.toVersion },
+                { key: "changeNote", label: "Why" },
+                { key: "validationSummary", label: "Validation", render: (r) => r.validationSummary || "—" },
+                { key: "requestedBy", label: "Asked by" },
+                { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+                {
+                  key: "act",
+                  label: "",
+                  render: (r) =>
+                    r.status === "PENDING" &&
+                    (r.requestedBy === me ? (
+                      <small className="ws-hint">Needs another approver</small>
+                    ) : (
+                      can(profile, "APPROVE_CONFIG") && (
+                        <div className="ws-row-actions">
+                          <Button variant="secondary" busy={action.busy} onClick={() => decide(r, false)}>
+                            Reject
+                          </Button>
+                          <Button busy={action.busy} onClick={() => decide(r, true)}>
+                            Approve
+                          </Button>
+                        </div>
+                      )
+                    )),
+                },
+              ]}
+            />
+          </>
+        )}
+      </Panel>
+      <Panel title="Monitoring" subtitle="Reviewed outputs against each assistant's agreed threshold: acceptance, overrides, rejections (false positives), the review backlog and drift (last 30 days against before). Below threshold raises an alert.">
+        <ErrorNote error={monitoring.error} />
+        <DataTable
+          rows={monitoring.data}
+          loading={monitoring.loading}
+          rowKey={(r) => r.code}
+          searchFrom={99}
+          columns={[
+            { key: "name", label: "Assistant" },
+            { key: "outputs", label: "Outputs", align: "right" },
+            { key: "awaitingReview", label: "Awaiting review", align: "right" },
+            { key: "acceptanceRate", label: "Accepted", align: "right", render: (r) => (r.acceptanceRate == null ? "—" : r.acceptanceRate + "%") },
+            { key: "overrideRate", label: "Overridden", align: "right", render: (r) => (r.overrideRate == null ? "—" : r.overrideRate + "%") },
+            { key: "falsePositiveRate", label: "Rejected", align: "right", render: (r) => (r.falsePositiveRate == null ? "—" : r.falsePositiveRate + "%") },
+            { key: "drift", label: "Drift", align: "right", render: (r) => (r.drift == null ? "—" : (r.drift > 0 ? "+" : "") + r.drift + " pts") },
+            { key: "threshold", label: "Threshold", align: "right", render: (r) => r.threshold + "%" },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => (
+                <Badge tone={r.status === "BELOW_THRESHOLD" ? "red" : r.status === "WITHIN_THRESHOLD" ? "green" : undefined}>
+                  {r.status === "INSUFFICIENT_DATA" ? "Fewer than 5 reviews" : r.status === "BELOW_THRESHOLD" ? "Below threshold" : "Within threshold"}
+                </Badge>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      {can(profile, "READ_AUDIT") && (
+        <Panel
+          title="Assistant log and overrides"
+          subtitle="Every output with its version, sources, explanation, the reviewer's decision and reason, and the final human text. Outputs you may not read are withheld."
+          action={
+            <label className="checkbox-label">
+              <input type="checkbox" checked={overridesOnly} onChange={(e) => setOverridesOnly(e.target.checked)} /> Overrides and rejections only
+            </label>
+          }
+        >
+          <DataTable
+            rows={logRows}
+            loading={log.loading}
+            rowKey={(r) => r.id}
+            empty={overridesOnly ? "No overrides or rejections" : "No assistant has been used yet"}
+            columns={[
+              { key: "requestedAt", label: "When", render: (r) => when(r.requestedAt) },
+              { key: "useCase", label: "Assistant", render: (r) => r.useCase.replaceAll("_", " ").toLowerCase() + " · " + r.modelVersion },
+              { key: "subjectRef", label: "About" },
+              { key: "output", label: "Output", render: (r) => r.output[0] },
+              { key: "confidence", label: "Confidence", align: "right", render: (r) => r.confidence + "%" },
+              { key: "requestedBy", label: "Asked by" },
+              {
+                key: "reviewStatus",
+                label: "Review",
+                render: (r) => (
+                  <>
+                    <Badge tone={reviewTone(r.reviewStatus)}>{REVIEW_LABEL[r.reviewStatus]}</Badge>
+                    {r.reviewedBy ? " " + r.reviewedBy : ""}
+                    {r.reviewReason ? " · " + r.reviewReason : ""}
+                    {r.sentRef ? " · sent " + r.sentRef : ""}
+                  </>
+                ),
+              },
+              {
+                key: "act",
+                label: "",
+                render: (r) => (
+                  <div className="ws-row-actions">
+                    {canReview(r) && !r.withheld && (
+                      <Button variant="secondary" onClick={() => setReview({ id: r.id, row: r, body: { decision: "ACCEPT", reason: "", finalText: r.output.join("\n") } })}>
+                        Review
+                      </Button>
+                    )}
+                    {r.useCase === "DRAFT_MESSAGE" && ["ACCEPTED", "OVERRIDDEN"].includes(r.reviewStatus) && !r.sentRef && can(profile, "MANAGE_COMMUNICATION") && (
+                      <Button variant="secondary" icon={Send} busy={action.busy} onClick={() => send(r)}>
+                        Send
+                      </Button>
+                    )}
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </Panel>
+      )}
+      {review && (
+        <Drawer title="Review the output" description="Accept it as it is, accept it with your own changes (an override), or reject it. An override or rejection needs a reason; the final text you keep is what is used." onClose={() => setReview(null)}>
+          <ul className="uw-list">
+            {review.row.output.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+          <FormGrid submitLabel="Record review" busy={action.busy} error={action.error} onSubmit={submitReview}>
+            <Field label="Decision" full>
+              <select value={review.body.decision} onChange={(e) => setReview({ ...review, body: { ...review.body, decision: e.target.value } })}>
+                <option value="ACCEPT">Accept as it is</option>
+                <option value="OVERRIDE">Accept with my changes (override)</option>
+                <option value="REJECT">Reject</option>
+              </select>
+            </Field>
+            {review.body.decision === "OVERRIDE" && (
+              <Field label="Final text" full>
+                <textarea rows={5} value={review.body.finalText} onChange={(e) => setReview({ ...review, body: { ...review.body, finalText: e.target.value } })} required />
+              </Field>
+            )}
+            {review.body.decision !== "ACCEPT" && (
+              <Field label="Reason" full>
+                <textarea rows={2} value={review.body.reason} onChange={(e) => setReview({ ...review, body: { ...review.body, reason: e.target.value } })} required minLength={5} />
+              </Field>
+            )}
+          </FormGrid>
+        </Drawer>
+      )}
+      {change && (
+        <Drawer title={"Change the version of " + change.code} description="The running version changes only when a second person approves." onClose={() => setChange(null)}>
+          <FormGrid submitLabel="Request change" busy={action.busy} error={action.error} onSubmit={requestChange}>
+            <Field label="New version">
+              <input value={change.toVersion} onChange={(e) => setChange({ ...change, toVersion: e.target.value })} required placeholder="rules-1.1" />
+            </Field>
+            <Field label="What changes and why" full>
+              <textarea rows={3} value={change.changeNote} onChange={(e) => setChange({ ...change, changeNote: e.target.value })} required minLength={10} />
+            </Field>
+            <Field label="Validation evidence" full>
+              <textarea rows={2} value={change.validationSummary} onChange={(e) => setChange({ ...change, validationSummary: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+function ScopeCoverage({ session, notify, profile }) {
+  const coverage = useResource(session, "/platform/ai-coverage", []);
+  const scope = useResource(session, "/platform/scope-exceptions", []);
+  const [deciding, setDeciding] = useState(null);
+  const action = useAction(notify);
+  const decide = async () => {
+    const { code, ...body } = deciding;
+    const done = await action.run(
+      () => request(session, "/platform/scope-exceptions/" + code + "/decision", { method: "POST", body }),
+      "Insurer decision recorded",
+    );
+    if (done) {
+      setDeciding(null);
+      scope.reload();
+    }
+  };
+  return (
+    <>
+      <Panel title="Scope exceptions (RFP section 17)" subtitle="Each item the build does not fully deliver, with its current position, the proposed disposition and the insurer decision it awaits. A proposed exception is not an approved one until the insurer's decision is recorded.">
+        <ErrorNote error={scope.error} />
+        <DataTable
+          rows={scope.data}
+          loading={scope.loading}
+          rowKey={(r) => r.code}
+          searchFrom={99}
+          columns={[
+            { key: "code", label: "Item", render: (r) => r.code + " · " + r.requirement },
+            { key: "currentPosition", label: "Current position" },
+            { key: "proposedDisposition", label: "Proposed disposition" },
+            { key: "decisionRef", label: "Decision", render: (r) => r.decisionRef + " · " + r.owner },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => (
+                <>
+                  <Badge tone={r.status === "ACCEPTED" ? "green" : r.status === "REJECTED" ? "red" : "amber"}>{r.status === "PROPOSED" ? "Awaiting insurer" : r.status.toLowerCase()}</Badge>
+                  {r.decisionNote ? " " + r.decisionNote : ""}
+                </>
+              ),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.status === "PROPOSED" &&
+                can(profile, "APPROVE_CONFIG") && (
+                  <Button variant="secondary" onClick={() => setDeciding({ code: r.code, requirement: r.requirement, decision: "ACCEPTED", note: "" })}>
+                    Record decision
                   </Button>
                 ),
             },
           ]}
         />
       </Panel>
-      {can(profile, "READ_AUDIT") && (
-        <Panel title="Assistant log" subtitle="Every output, with its sources, version and the person who reviewed it.">
-          <DataTable
-            rows={log.data}
-            loading={log.loading}
-            rowKey={(r) => r.id}
-            empty="No assistant has been used yet"
-            columns={[
-              { key: "requestedAt", label: "When", render: (r) => when(r.requestedAt) },
-              { key: "useCase", label: "Assistant", render: (r) => r.useCase.replaceAll("_", " ").toLowerCase() },
-              { key: "subjectRef", label: "About" },
-              { key: "output", label: "Output", render: (r) => r.output[0] },
-              { key: "requestedBy", label: "Asked by" },
-              { key: "reviewStatus", label: "Review", render: (r) => (r.reviewStatus === "PENDING" ? "Awaiting review" : r.reviewStatus.toLowerCase() + " · " + r.reviewedBy) },
-            ]}
-          />
-        </Panel>
+      <Panel title="RFP AI coverage (AI-001 to AI-050)" subtitle="How each group of mandatory AI items is covered today. Nothing here calls an AI model: covered items are rule-based or governance; the rest await data, validation and hosting approval (decision D15).">
+        <ErrorNote error={coverage.error} />
+        <DataTable
+          rows={coverage.data}
+          loading={coverage.loading}
+          rowKey={(r) => r.range}
+          searchFrom={99}
+          columns={[
+            { key: "range", label: "RFP items" },
+            { key: "capability", label: "Capability" },
+            { key: "disposition", label: "Disposition", render: (r) => <Badge tone={r.disposition === "DELIVERED_RULES" ? "green" : "amber"}>{r.disposition.replaceAll("_", " ").toLowerCase()}</Badge> },
+            { key: "deliveredBy", label: "Covered by" },
+            { key: "limits", label: "Not covered" },
+            { key: "owner", label: "Owner", render: (r) => r.owner + " · " + r.decisionRef },
+            { key: "status", label: "Status", render: (r) => (r.status === "PROPOSED" ? "Proposed" : r.status) },
+          ]}
+        />
+      </Panel>
+      {deciding && (
+        <Drawer title={"Insurer decision: " + deciding.code} description={deciding.requirement + ". Record the decision the insurer signed; it is kept as audit evidence."} onClose={() => setDeciding(null)}>
+          <FormGrid submitLabel="Record decision" busy={action.busy} error={action.error} onSubmit={decide}>
+            <Field label="Decision" full>
+              <select value={deciding.decision} onChange={(e) => setDeciding({ ...deciding, decision: e.target.value })}>
+                <option value="ACCEPTED">Exception accepted</option>
+                <option value="REJECTED">Exception rejected (deliver it)</option>
+              </select>
+            </Field>
+            <Field label="Decision reference and date" full>
+              <textarea rows={2} value={deciding.note} onChange={(e) => setDeciding({ ...deciding, note: e.target.value })} required minLength={10} />
+            </Field>
+          </FormGrid>
+        </Drawer>
       )}
     </>
   );
