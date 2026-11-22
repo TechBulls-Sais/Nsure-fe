@@ -798,6 +798,9 @@ function SchemeDetail({ session, notify, profile, schemes }) {
   const certificates = useResource(session, base && base + "/certificates", []);
   const loans = useResource(session, base && base + "/credit-loans", []);
   const bordereaux = useResource(session, base && base + "/bordereaux", []);
+  const terms = useResource(session, base && base + "/benefit-terms", []);
+  const rules = useResource(session, "/group-life/product-rules", []);
+  const detail = useResource(session, current ? "/group/schemes/" + current : null, null);
   const [loan, setLoan] = useState(null);
   const [form, setForm] = useState(null);
   const [certificate, setCertificate] = useState(null);
@@ -844,17 +847,33 @@ function SchemeDetail({ session, notify, profile, schemes }) {
       loans.reload();
     }
   };
-  const pendingPlan = (benefits.data || []).filter((b) => b.approvalStatus === "PENDING");
+  const pendingTerms = (terms.data || []).filter((t) => t.approvalStatus === "PENDING");
+  const pendingPlan = [...(benefits.data || []).filter((b) => b.approvalStatus === "PENDING"), ...pendingTerms];
+  // One approval for every plan change waiting: definitions and versioned benefit terms (GL02 version approval).
   const approvePlan = async () => {
     const done = await action.run(
-      () => request(session, base + "/benefits/approval", { method: "POST", body: { note: form.note } }),
+      () => request(session, base + "/plan-approval", { method: "POST", body: { note: form.note } }),
       "Plan approved",
     );
     if (done) {
       setForm(null);
       benefits.reload();
+      terms.reload();
     }
   };
+  const saveTerms = async () => {
+    const { kind, parameters, ...rest } = form;
+    const body = { ...rest, parameters: Object.fromEntries(Object.entries(parameters).filter(([, v]) => v !== "")) };
+    if (!body.categoryCode) delete body.categoryCode;
+    if (!body.effectiveFrom) delete body.effectiveFrom;
+    if (!body.reason) delete body.reason;
+    const done = await action.run(() => request(session, base + "/benefit-terms", { method: "PUT", body }), "Benefit terms saved for approval");
+    if (done) {
+      setForm(null);
+      terms.reload();
+    }
+  };
+  const rulesFor = (type) => (rules.data || []).filter((r) => r.benefitType === type);
   if (!schemes.length) {
     return <Panel title="No schemes yet" subtitle="Activate a quotation to create the first scheme." />;
   }
@@ -881,6 +900,17 @@ function SchemeDetail({ session, notify, profile, schemes }) {
             {manage && (
               <Button icon={Plus} onClick={() => { action.setError(""); setForm({ kind: "benefit", benefitType: "GLA", basis: "SALARY_MULTIPLE", multiple: "", fixedAmount: "", waitingMonths: "", terms: "" }); }}>
                 Add or change a benefit
+              </Button>
+            )}
+            {manage && (benefits.data || []).length > 0 && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  action.setError("");
+                  setForm({ kind: "terms", benefitType: benefits.data[0].benefitType, categoryCode: "", included: true, parameters: {}, effectiveFrom: "", reason: "" });
+                }}
+              >
+                Set benefit terms
               </Button>
             )}
           </div>
@@ -916,6 +946,26 @@ function SchemeDetail({ session, notify, profile, schemes }) {
             },
           ]}
         />
+        {(terms.data || []).length > 0 && (
+          <details className="gl-impact-list" open={pendingTerms.length > 0}>
+            <summary>Benefit terms versions ({terms.data.length})</summary>
+            <DataTable
+              rows={terms.data}
+              rowKey={(t) => t.id}
+              searchFrom={30}
+              columns={[
+                { key: "benefitType", label: "Benefit", render: (t) => BENEFIT[t.benefitType] || t.benefitType },
+                { key: "categoryCode", label: "Scope", render: (t) => (t.categoryCode ? "Category " + t.categoryCode : "Scheme") },
+                { key: "version", label: "Version", align: "right" },
+                { key: "included", label: "Included", render: (t) => (t.included ? "Yes" : "Left out") },
+                { key: "parameters", label: "Terms", render: (t) => (t.parameters ? Object.entries(t.parameters).map(([k, v]) => k.toLowerCase().replaceAll("_", " ") + " " + v).join(" · ") : "—") },
+                { key: "effectiveFrom", label: "From" },
+                { key: "approvalStatus", label: "Approval", render: (t) => (t.approvalStatus === "PENDING" ? <Badge tone="amber">Awaiting approval</Badge> : <span className="ws-hint">Approved by {t.approvedBy}</span>) },
+                { key: "impact", label: "Impact", render: (t) => (t.impact ? t.impact.membersInScope + " member(s)" + (t.impact.backdated ? " · backdated" : "") : "—") },
+              ]}
+            />
+          </details>
+        )}
         {pendingPlan.length > 0 && (
           <p className="ws-hint">
             {pendingPlan.length} benefit change(s) wait for a second person to approve the plan
@@ -1132,7 +1182,73 @@ function SchemeDetail({ session, notify, profile, schemes }) {
           </FormGrid>
         </Drawer>
       )}
-      {form && form.kind !== "approval" && (
+      {form?.kind === "terms" && (
+        <Drawer size="lg" title="Benefit terms" description="Scheme terms override the product defaults; a category's terms override the scheme's. Parameters the product fixes cannot be changed. Saved for a second person's approval." onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Save for approval" busy={action.busy} error={action.error} onSubmit={saveTerms}>
+            <Field label="Benefit">
+              <select value={form.benefitType} onChange={(e) => setForm({ ...form, benefitType: e.target.value, parameters: {} })}>
+                {(benefits.data || []).map((b) => (
+                  <option key={b.benefitType} value={b.benefitType}>
+                    {BENEFIT[b.benefitType] || b.benefitType}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Applies to">
+              <select value={form.categoryCode} onChange={(e) => setForm({ ...form, categoryCode: e.target.value })}>
+                <option value="">The whole scheme</option>
+                {(detail.data?.categories || []).map((c) => (
+                  <option key={c.code} value={c.code}>
+                    Category {c.code} · {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {form.categoryCode && (
+              <Field label="Benefit for this category" full>
+                <select value={form.included ? "yes" : "no"} onChange={(e) => setForm({ ...form, included: e.target.value === "yes" })}>
+                  <option value="yes">Included</option>
+                  <option value="no">Left out for this category (not on its certificates or claimable)</option>
+                </select>
+              </Field>
+            )}
+            {rulesFor(form.benefitType).map((r) => (
+              <Field
+                key={r.parameter}
+                label={r.label}
+                hint={(r.overridable ? "Product default " + (r.defaultValue ?? "none") + (r.maxValue != null ? " · maximum " + r.maxValue : "") + (r.minValue != null ? " · minimum " + r.minValue : "") : "Fixed by the product: " + r.defaultValue) + " · " + r.source}
+              >
+                {r.valueType === "CHOICE" ? (
+                  <select value={form.parameters[r.parameter] ?? ""} disabled={!r.overridable} onChange={(e) => setForm({ ...form, parameters: { ...form.parameters, [r.parameter]: e.target.value } })}>
+                    <option value="">Default ({r.defaultValue})</option>
+                    {(r.allowedValues || []).map((v) => (
+                      <option key={v} value={v}>
+                        {v.toLowerCase().replaceAll("_", " ")}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={r.valueType === "TEXT" ? "text" : "number"}
+                    step="any"
+                    value={form.parameters[r.parameter] ?? ""}
+                    placeholder={r.defaultValue ?? ""}
+                    disabled={!r.overridable}
+                    onChange={(e) => setForm({ ...form, parameters: { ...form.parameters, [r.parameter]: e.target.value } })}
+                  />
+                )}
+              </Field>
+            ))}
+            <Field label="Effective from" hint="Blank: today. An earlier date needs underwriting authority and a reason.">
+              <input type="date" value={form.effectiveFrom} max={today()} onChange={(e) => setForm({ ...form, effectiveFrom: e.target.value })} />
+            </Field>
+            <Field label="Reason" hint="Required for a backdated change.">
+              <input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} maxLength={500} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {form && !["approval", "terms"].includes(form.kind) && (
         <Drawer
           title={form.kind === "benefit" ? "Scheme benefit" : "Loan bordereau"}
           description={form.kind === "bordereau" ? "One loan per line: lender's loan id, borrower, loan amount, term in months." : undefined}

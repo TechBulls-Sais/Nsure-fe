@@ -181,6 +181,16 @@
 .gl-ages input {
   width: 70px;
 }
+.ga-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
 
 @media (max-width: 1150px) {
   .group-admin .ga-stats {
