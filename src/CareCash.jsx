@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Plus } from "lucide-react";
 import { newIdempotencyKey, request } from "./api";
 import { money } from "./data";
+import { PayoutInstructions } from "./PayoutInstructions";
 import {
   Badge,
   Button,
@@ -402,6 +403,23 @@ function Events({ session, notify, profile, resource }) {
                 </div>
               )}
             </div>
+          )}
+          {open.paymentReference && (
+            <PayoutInstructions
+              session={session}
+              source="CARE_CASH"
+              sourceRef={open.ref}
+              profile={profile}
+              notify={notify}
+              version={open.status + (open.paymentReference || "")}
+              onChanged={async () => {
+                // The simulated bank's answer may have moved the event (Paid, Payment failed).
+                const r = await request(session, "/care-cash/events");
+                const fresh = (r.data || []).find((e) => e.ref === open.ref);
+                if (fresh && (fresh.status !== open.status || fresh.paymentReference !== open.paymentReference)) setOpen(fresh);
+                resource.reload();
+              }}
+            />
           )}
           <ErrorNote error={action.error} />
           {open.status === "ASSESSED" && can(profile, "APPROVE_CLAIM") && open.createdBy !== me && (

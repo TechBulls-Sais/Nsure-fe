@@ -21,6 +21,7 @@ import { fetchFile, newIdempotencyKey, request, uploadFile } from "./api";
 import { money } from "./data";
 import { useConfirm } from "./ui/overlay";
 import { can as holds } from "./ui/workspace";
+import { PayoutInstructions } from "./PayoutInstructions";
 import "./workflow.css";
 import "./access.css";
 
@@ -1420,8 +1421,8 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         <div className="notice">
           <Clock3 size={18} aria-hidden="true" />
           <p>
-            {money(c.payoutAmount)} sent to {payee.name} · {c.payoutReference}. It counts as paid once the provider
-            confirms settlement.
+            {money(c.payoutAmount)} sent to {payee.name} · {c.payoutReference}. It counts as paid once the bank
+            confirms settlement (by its callback, a status enquiry, or a statement line confirmed below).
           </p>
         </div>
       )}
@@ -1433,6 +1434,25 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
             again. The claim history records the provider's reason.
           </p>
         </div>
+      )}
+      {["Approved", "Payout Sent", "Payout Failed", "Paid"].includes(c.status) && (
+        <>
+          <h3 className="section-title">Payment instructions</h3>
+          <PayoutInstructions
+            session={session}
+            source="CLAIM"
+            sourceRef={c.id}
+            profile={profile}
+            notify={notify}
+            version={c.version}
+            onChanged={async () => {
+              // The bank's answer may have moved the claim (Paid, Payout Failed): show it as the server has it.
+              const all = await request(session, "/portfolio/claims");
+              const fresh = (all.data || []).find((row) => row.id === c.id);
+              if (fresh && fresh.version !== c.version) onUpdated(fresh);
+            }}
+          />
+        </>
       )}
 
       <div className="detail-actions">

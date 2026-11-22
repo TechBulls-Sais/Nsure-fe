@@ -1,0 +1,47 @@
+/* Payment instructions and the simulated bank (NS-SH05-007). */
+.payout-list {
+  display: grid;
+  gap: 12px;
+}
+.payout-card {
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  background: var(--surface, transparent);
+}
+.payout-card.payout-exception {
+  border-color: var(--red-border, #f3b4b4);
+}
+.payout-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.payout-amount {
+  margin-left: auto;
+  font-weight: 600;
+}
+.payout-meta {
+  overflow-wrap: anywhere;
+}
+.payout-trail summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.payout-simulator {
+  border-top: 1px dashed var(--border, #e5e7eb);
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+.payout-reason {
+  max-width: 280px;
+}
+@media (max-width: 640px) {
+  .payout-amount {
+    margin-left: 0;
+  }
+}
