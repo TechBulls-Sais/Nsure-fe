@@ -42,8 +42,8 @@ export default function Reinsurance({ session, notify, profile }) {
   const cessions = list.reduce((s, t) => s + (t.cessionCount || 0), 0);
   const cededPremium = list.reduce((s, t) => s + Number(t.totalCededPremium || 0), 0);
   const expected = (recoveries.data || [])
-    .filter((r) => r.status === "EXPECTED")
-    .reduce((s, r) => s + Number(r.recoveryAmount || 0), 0);
+    .filter((r) => ["EXPECTED", "DISPUTED", "WRITE_OFF_PENDING"].includes(r.status))
+    .reduce((s, r) => s + Number(r.outstanding ?? r.recoveryAmount ?? 0), 0);
 
   return (
     <>
@@ -80,7 +80,7 @@ export default function Reinsurance({ session, notify, profile }) {
       />
       {tab === "treaties" && <Treaties session={session} notify={notify} profile={profile} resource={treaties} />}
       {tab === "cessions" && <Cessions session={session} treaties={list} />}
-      {tab === "recoveries" && <Recoveries resource={recoveries} />}
+      {tab === "recoveries" && <Recoveries session={session} notify={notify} profile={profile} resource={recoveries} />}
       {tab === "bordereaux" && (
         <Bordereaux session={session} notify={notify} profile={profile} treaties={list} onChange={treaties.reload} />
       )}
@@ -355,11 +355,70 @@ function Cessions({ session, treaties }) {
 
 // ── recoveries ──────────────────────────────────────────────────────────────────────────────────
 
-function Recoveries({ resource }) {
+const RECOVERY_STATUS = {
+  EXPECTED: ["Receivable", "amber"],
+  DISPUTED: ["Disputed", "red"],
+  WRITE_OFF_PENDING: ["Write-off to approve", "amber"],
+  RECEIVED: ["Received", "green"],
+  WRITTEN_OFF: ["Written off", undefined],
+};
+
+// What each recovery step asks for: [title, description, fields, submit label].
+const RECOVERY_STEPS = {
+  receive: [
+    "Record cash from the reinsurer",
+    "Part or all of what is outstanding. Posted to cash against the recovery receivable.",
+    [
+      ["amount", "Amount received (BWP)", "number"],
+      ["receivedOn", "Received on", "date"],
+      ["reference", "Reinsurer's payment reference", "text"],
+    ],
+    "Record receipt",
+  ],
+  dispute: ["Record a dispute", "The recovery stays receivable while the dispute is open.", [["reason", "What the reinsurer disputes", "area"]], "Record dispute"],
+  resolve: ["Resolve the dispute", "The recovery returns to receivable.", [["note", "How it was resolved", "area"]], "Resolve"],
+  "write-off": [
+    "Propose a write-off",
+    "Someone other than you approves it before anything is written off.",
+    [["reason", "Why it cannot be collected", "area"]],
+    "Propose write-off",
+  ],
+  "approve-write-off": ["Approve the write-off", "What is outstanding is written off and posted.", [["note", "Note", "area"]], "Approve write-off"],
+  "reject-write-off": ["Reject the write-off", "The recovery returns to receivable.", [["note", "Why it is rejected", "area"]], "Reject write-off"],
+};
+
+const RECOVERY_DONE = {
+  receive: "Receipt recorded",
+  dispute: "Dispute recorded",
+  resolve: "Dispute resolved",
+  "write-off": "Write-off proposed",
+  "approve-write-off": "Write-off approved",
+  "reject-write-off": "Write-off rejected",
+};
+
+function Recoveries({ session, notify, profile, resource }) {
+  const [step, setStep] = useState(null);
+  const action = useAction(notify);
+  const manage = can(profile, "MANAGE_REINSURANCE");
+  const approver = can(profile, "APPROVE_TREATY");
+  const me = profile?.username;
+  const submit = async () => {
+    const { recovery, kind, ...body } = step;
+    const done = await action.run(
+      () => request(session, "/reinsurance/recoveries/" + recovery.ref + "/" + kind, { method: "POST", body }),
+      RECOVERY_DONE[kind] + " · " + recovery.ref,
+    );
+    if (done) {
+      setStep(null);
+      resource.reload();
+    }
+  };
+  const open = (recovery, kind) =>
+    setStep({ recovery, kind, ...(kind === "receive" ? { amount: recovery.outstanding, receivedOn: today() } : {}) });
   return (
     <Panel
       title="Claim recoveries"
-      subtitle="The reinsurer's share of each paid claim on a ceded policy. Recorded separately; the customer's payout never waits for it."
+      subtitle="The reinsurer's share of each paid claim on a ceded policy, followed to the cash. Recorded separately; the customer's payout never waits for it."
     >
       <ErrorNote error={resource.error} />
       <DataTable
@@ -377,12 +436,108 @@ function Recoveries({ resource }) {
           { key: "claimAmount", label: "Claim paid", align: "right", render: (r) => pula(r.claimAmount) },
           { key: "cededShare", label: "Share", align: "right", render: (r) => share(r.cededShare) },
           { key: "recoveryAmount", label: "Recovery", align: "right", render: (r) => pula(r.recoveryAmount) },
-          { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+          { key: "receivedAmount", label: "Received", align: "right", render: (r) => pula(r.receivedAmount || 0) },
+          {
+            key: "status",
+            label: "Status",
+            render: (r) => {
+              const [text, tone] = RECOVERY_STATUS[r.status] || [r.status];
+              return (
+                <span title={r.statusNote || ""}>
+                  <Badge tone={tone}>{text}</Badge>
+                  {r.statusNote && <small className="ws-hint"> {r.statusNote}</small>}
+                </span>
+              );
+            },
+          },
+          {
+            key: "act",
+            label: "",
+            render: (r) => (
+              <div className="ws-row-actions">
+                {manage && ["EXPECTED", "DISPUTED"].includes(r.status) && (
+                  <Button variant="secondary" onClick={() => open(r, "receive")}>
+                    Record receipt
+                  </Button>
+                )}
+                {manage && r.status === "EXPECTED" && (
+                  <Button variant="secondary" onClick={() => open(r, "dispute")}>
+                    Dispute
+                  </Button>
+                )}
+                {manage && r.status === "DISPUTED" && (
+                  <Button variant="secondary" onClick={() => open(r, "resolve")}>
+                    Resolve
+                  </Button>
+                )}
+                {manage && ["EXPECTED", "DISPUTED"].includes(r.status) && (
+                  <Button variant="secondary" onClick={() => open(r, "write-off")}>
+                    Write off
+                  </Button>
+                )}
+                {r.status === "WRITE_OFF_PENDING" &&
+                  (approver && r.proposedBy !== me ? (
+                    <>
+                      <Button variant="secondary" onClick={() => open(r, "approve-write-off")}>
+                        Approve write-off
+                      </Button>
+                      <Button variant="secondary" onClick={() => open(r, "reject-write-off")}>
+                        Reject
+                      </Button>
+                    </>
+                  ) : (
+                    <small className="ws-hint">Needs another approver</small>
+                  ))}
+              </div>
+            ),
+          },
         ]}
       />
+      {step && (
+        <Drawer
+          title={RECOVERY_STEPS[step.kind][0] + " · " + step.recovery.ref}
+          description={RECOVERY_STEPS[step.kind][1] + " Outstanding: " + pula(step.recovery.outstanding) + "."}
+          onClose={() => setStep(null)}
+        >
+          <FormGrid submitLabel={RECOVERY_STEPS[step.kind][3]} busy={action.busy} error={action.error} onSubmit={submit}>
+            {RECOVERY_STEPS[step.kind][2].map(([key, label, type]) => (
+              <Field key={key} label={label} full={type === "area"}>
+                {type === "area" ? (
+                  <textarea rows={3} required value={step[key] || ""} onChange={(e) => setStep({ ...step, [key]: e.target.value })} />
+                ) : (
+                  <input
+                    type={type}
+                    required
+                    step={type === "number" ? "0.01" : undefined}
+                    min={type === "number" ? "0.01" : undefined}
+                    max={type === "number" ? step.recovery.outstanding : type === "date" ? today() : undefined}
+                    value={step[key] ?? ""}
+                    onChange={(e) => setStep({ ...step, [key]: e.target.value })}
+                  />
+                )}
+              </Field>
+            ))}
+          </FormGrid>
+        </Drawer>
+      )}
     </Panel>
   );
 }
+
+const BORDEREAU_STATUS = {
+  SUBMITTED: ["Submitted", "blue"],
+  ACKNOWLEDGED: ["Acknowledged", "amber"],
+  CORRECTION_REQUESTED: ["Correction requested", "red"],
+  SETTLED: ["Settled", "green"],
+};
+const BORDEREAU_NEXT = { SUBMITTED: ["acknowledge", "correction"], ACKNOWLEDGED: ["settle", "correction"], CORRECTION_REQUESTED: ["resubmit"] };
+// [title, description, [field, label], button]
+const BORDEREAU_STEPS = {
+  acknowledge: ["Reinsurer acknowledged", "The reinsurer has received and accepted the bordereau.", ["reinsurerRef", "Reinsurer's reference"], "Acknowledged"],
+  correction: ["Correction requested", "The reinsurer asked for a correction; resubmit it once corrected.", ["note", "What must be corrected"], "Needs correction"],
+  resubmit: ["Resubmit", "The corrected bordereau is sent again.", ["note", "What was corrected"], "Resubmit"],
+  settle: ["Ceded premium paid", "The premium on this bordereau was paid to the reinsurer. Posted to cash.", ["settlementRef", "Payment reference"], "Settled"],
+};
 
 // ── bordereaux ──────────────────────────────────────────────────────────────────────────────────
 
@@ -392,6 +547,18 @@ function Bordereaux({ session, notify, profile, treaties, onChange }) {
   const [form, setForm] = useState(null);
   const action = useAction(notify);
 
+  const [step, setStep] = useState(null);
+  const move = async () => {
+    const { bordereau, kind, ...body } = step;
+    const done = await action.run(
+      () => request(session, "/reinsurance/bordereaux/" + bordereau.ref + "/" + kind, { method: "POST", body }),
+      BORDEREAU_STEPS[kind][3] + " · " + bordereau.ref,
+    );
+    if (done) {
+      setStep(null);
+      bordereaux.reload();
+    }
+  };
   const generate = async () => {
     const done = await action.run(
       () => request(session, "/reinsurance/bordereaux", { method: "POST", body: form }),
@@ -469,11 +636,53 @@ function Bordereaux({ session, notify, profile, treaties, onChange }) {
             { key: "recordCount", label: "Records", align: "right" },
             { key: "totalCededPremium", label: "Ceded premium", align: "right", render: (r) => pula(r.totalCededPremium) },
             { key: "totalCededSum", label: "Ceded sum", align: "right", render: (r) => pula(r.totalCededSum) },
-            { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (r) => {
+                const [text, tone] = BORDEREAU_STATUS[r.status] || [r.status];
+                return (
+                  <span>
+                    <Badge tone={tone}>{text}</Badge>
+                    {(r.reinsurerRef || r.settlementRef || r.statusNote) && (
+                      <small className="ws-hint">
+                        {" "}
+                        {[r.reinsurerRef && "ack " + r.reinsurerRef, r.settlementRef && "paid " + r.settlementRef, r.statusNote]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </small>
+                    )}
+                  </span>
+                );
+              },
+            },
             { key: "createdAt", label: "Produced", render: (r) => when(r.createdAt) + " · " + r.createdBy },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                can(profile, "MANAGE_REINSURANCE") && (
+                  <div className="ws-row-actions">
+                    {(BORDEREAU_NEXT[r.status] || []).map((kind) => (
+                      <Button key={kind} variant="secondary" onClick={() => setStep({ bordereau: r, kind })}>
+                        {BORDEREAU_STEPS[kind][3]}
+                      </Button>
+                    ))}
+                  </div>
+                ),
+            },
           ]}
         />
       </Panel>
+      {step && (
+        <Drawer title={BORDEREAU_STEPS[step.kind][0] + " · " + step.bordereau.ref} description={BORDEREAU_STEPS[step.kind][1]} onClose={() => setStep(null)}>
+          <FormGrid submitLabel={BORDEREAU_STEPS[step.kind][3]} busy={action.busy} error={action.error} onSubmit={move}>
+            <Field label={BORDEREAU_STEPS[step.kind][2][1]} full>
+              <input required value={step[BORDEREAU_STEPS[step.kind][2][0]] || ""} onChange={(e) => setStep({ ...step, [BORDEREAU_STEPS[step.kind][2][0]]: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
     </>
   );
 }
