@@ -35,6 +35,7 @@ import "./group-admin.css";
 import {
   AdjustmentsSection,
   BillingExceptionsPanel,
+  CensusTermsBar,
   CoverHistoryDrawer,
   HeldRowReview,
   STAGE_BADGE,
@@ -1065,6 +1066,13 @@ function CensusTab({ session, notify, profile, detail, loading, reload }) {
             </Button>
           }
         >
+          <CensusTermsBar
+            session={session}
+            notify={notify}
+            profile={profile}
+            schemeRef={scheme.ref}
+            onChange={(t) => t.atomicRequired && setForm((f) => ({ ...f, mode: "ATOMIC" }))}
+          />
           <FormGrid onSubmit={submit} busy={upload.busy} error={upload.error} submitLabel="Validate batch">
             <Field label="External batch id" hint="Resubmitting the same id and file returns the same batch.">
               <input

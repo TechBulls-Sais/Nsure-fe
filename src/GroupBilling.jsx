@@ -424,3 +424,32 @@ export function BillingExceptionsPanel({ session, notify, profile }) {
 }
 
 export const STAGE_BADGE = (stage) => (stage ? <Badge tone={STAGE_TONES[stage]}>{label(stage)}</Badge> : null);
+
+/** The scheme's census terms (NS-GL04-002): all-or-nothing batches required, and a second person to commit. */
+export function CensusTermsBar({ session, notify, profile, schemeRef, onChange }) {
+  const terms = useResource(session, `/group/schemes/${encodeURIComponent(schemeRef)}/census-terms`);
+  const action = useAction(inlineErrors(notify));
+  const t = terms.data;
+  const save = async (next) => {
+    const r = await action.run(() => request(session, `/group/schemes/${schemeRef}/census-terms`, { method: "PUT", body: next }), "Census terms saved");
+    if (r) {
+      terms.reload();
+      onChange?.(r.data);
+    }
+  };
+  if (!t) return null;
+  const manage = can(profile, "MANAGE_SCHEME");
+  return (
+    <div className="ga-batch-tools">
+      <ErrorNote error={action.error} />
+      <label className="ga-check">
+        <input type="checkbox" disabled={!manage || action.busy} checked={t.atomicRequired} onChange={(e) => save({ ...t, atomicRequired: e.target.checked })} />
+        Scheme requires atomic batches (all rows or none)
+      </label>
+      <label className="ga-check">
+        <input type="checkbox" disabled={!manage || action.busy} checked={t.fourEyes} onChange={(e) => save({ ...t, fourEyes: e.target.checked })} />
+        Someone other than the submitter commits
+      </label>
+    </div>
+  );
+}
