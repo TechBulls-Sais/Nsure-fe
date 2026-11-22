@@ -188,7 +188,117 @@ export function ProductTermsLog({ session, notify, profile, products = [] }) {
           </Field>
         </FormGrid>
       )}
+      {product && <TermsMigrations session={session} notify={notify} profile={profile} product={product} versions={list} onApplied={versions.reload} />}
     </Panel>
+  );
+}
+
+/**
+ * NS-SH02-004: in-force policies keep the terms they were sold under unless a migration, proposed with a reason and
+ * approved by a second person, moves them to the version in force.
+ */
+function TermsMigrations({ session, notify, profile, product, versions, onApplied }) {
+  const path = "/portfolio/products/" + encodeURIComponent(product) + "/migrations";
+  const migrations = useResource(session, path, []);
+  const action = useAction(notify);
+  const [draft, setDraft] = useState(null);
+  const me = (profile?.username || "").toLowerCase();
+  const inForce = versions.find((v) => v.inForce);
+  const older = versions.filter((v) => v.approvalStatus === "APPROVED" && !v.inForce && v.policies > 0);
+  const rows = migrations.data || [];
+  const decide = async (id, verb) => {
+    const done = await action.run(
+      () => request(session, path + "/" + id + "/" + verb, { method: "POST", body: verb === "reject" ? { reason: "Not agreed" } : {} }),
+      verb === "approve" ? "Migration applied: in-force policies moved" : "Migration rejected",
+    );
+    if (done) {
+      migrations.reload();
+      onApplied?.();
+    }
+  };
+  return (
+    <>
+      <h3 className="section-title">In-force policy migrations</h3>
+      <DataTable
+        rows={rows}
+        rowKey={(m) => m.id}
+        searchFrom={99}
+        empty="No migrations"
+        emptyDetail="Issued policies keep their terms version unless a migration moves them."
+        columns={[
+          { key: "id", label: "#" },
+          { key: "toVersion", label: "Move", render: (m) => (m.fromVersion ? "v" + m.fromVersion : "older versions") + " → v" + m.toVersion },
+          { key: "status", label: "Status", render: (m) => <Badge>{m.status}</Badge> },
+          { key: "policiesExpected", label: "Policies", align: "right", render: (m) => m.policiesMoved ?? m.policiesExpected },
+          { key: "reason", label: "Reason" },
+          { key: "proposedBy", label: "Proposed", render: (m) => m.proposedBy + " · " + when(m.proposedAt) },
+          {
+            key: "actions",
+            label: "",
+            render: (m) =>
+              m.status === "PROPOSED" &&
+              can(profile, "ACTIVATE_PRODUCT") &&
+              (m.proposedBy || "").toLowerCase() !== me && (
+                <span className="detail-actions">
+                  <Button variant="secondary" busy={action.busy} onClick={() => decide(m.id, "approve")}>
+                    Approve
+                  </Button>
+                  <Button variant="ghost" busy={action.busy} onClick={() => decide(m.id, "reject")}>
+                    Reject
+                  </Button>
+                </span>
+              ),
+          },
+        ]}
+      />
+      <ErrorNote error={action.error || migrations.error} />
+      {inForce && older.length > 0 && can(profile, "UPDATE_PRODUCT") && !draft && (
+        <div className="ws-form-actions">
+          <Button variant="secondary" onClick={() => setDraft({ fromVersion: "", reason: "" })}>
+            Propose moving in-force policies to v{inForce.version}
+          </Button>
+        </div>
+      )}
+      {draft && (
+        <FormGrid
+          submitLabel="Propose for approval"
+          busy={action.busy}
+          onSubmit={async () => {
+            const done = await action.run(
+              () =>
+                request(session, path, {
+                  method: "POST",
+                  body: { toVersion: inForce.version, reason: draft.reason, ...(draft.fromVersion ? { fromVersion: Number(draft.fromVersion) } : {}) },
+                }),
+              "Migration proposed for a second person to approve",
+            );
+            if (done) {
+              setDraft(null);
+              migrations.reload();
+            }
+          }}
+          extra={
+            <Button type="button" variant="secondary" onClick={() => setDraft(null)}>
+              Cancel
+            </Button>
+          }
+        >
+          <Field label="Move policies on">
+            <select value={draft.fromVersion} onChange={(e) => setDraft({ ...draft, fromVersion: e.target.value })}>
+              <option value="">Every older version</option>
+              {older.map((v) => (
+                <option key={v.version} value={v.version}>
+                  v{v.version} ({v.policies} policies)
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Why issued contracts change (approved change)" full>
+            <textarea rows={2} value={draft.reason} onChange={(e) => setDraft({ ...draft, reason: e.target.value })} required />
+          </Field>
+        </FormGrid>
+      )}
+    </>
   );
 }
 
