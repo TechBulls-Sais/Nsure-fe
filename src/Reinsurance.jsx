@@ -29,7 +29,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const endOfYear = () => new Date().getFullYear() + "-12-31";
 const share = (v) => (v === null || v === undefined ? "—" : (Number(v) * 100).toFixed(2) + "%");
-const typeLabel = (t) => (t === "SURPLUS" ? "Surplus" : "Quota share");
+const typeLabel = (t) => (t === "SURPLUS" ? "Surplus" : t === "FACULTATIVE" ? "Facultative" : "Quota share");
 
 export default function Reinsurance({ session, notify, profile }) {
   const [tab, setTab] = useState("treaties");
@@ -44,6 +44,8 @@ export default function Reinsurance({ session, notify, profile }) {
   const expected = (recoveries.data || [])
     .filter((r) => r.status === "EXPECTED")
     .reduce((s, r) => s + Number(r.recoveryAmount || 0), 0);
+  const facultative = useResource(session, "/reinsurance/facultative", []);
+  const referred = (facultative.data || []).filter((f) => f.status === "REFERRED" || f.status === "OFFERED").length;
 
   return (
     <>
@@ -54,7 +56,7 @@ export default function Reinsurance({ session, notify, profile }) {
       />
       <div className="stat-grid">
         <Stat label="Treaties ceding today" value={ceding} note={drafts + " awaiting approval"} loading={loading} />
-        <Stat label="Cessions" value={cessions} tone="blue" loading={loading} />
+        <Stat label="Cessions" value={cessions} tone="blue" loading={loading} note={referred + " facultative referral(s) open"} />
         <Stat label="Premium ceded" value={pula(cededPremium)} tone="blue" loading={loading} />
         <Stat
           label="Recoveries expected"
@@ -70,14 +72,19 @@ export default function Reinsurance({ session, notify, profile }) {
           setTab(next);
           treaties.reload();
           recoveries.reload();
+          facultative.reload();
         }}
         tabs={[
           ["treaties", "Treaties"],
+          ["exposures", "Exposures"],
+          ["facultative", "Facultative"],
           ["cessions", "Cessions"],
           ["recoveries", "Recoveries"],
           ["bordereaux", "Bordereaux"],
         ]}
       />
+      {tab === "exposures" && <Exposures session={session} />}
+      {tab === "facultative" && <FacultativeQueue session={session} notify={notify} profile={profile} resource={facultative} onChange={treaties.reload} />}
       {tab === "treaties" && <Treaties session={session} notify={notify} profile={profile} resource={treaties} />}
       {tab === "cessions" && <Cessions session={session} treaties={list} />}
       {tab === "recoveries" && <Recoveries session={session} notify={notify} profile={profile} resource={recoveries} />}
@@ -97,6 +104,7 @@ const blankTreaty = () => ({
   products: [],
   cededPercent: "",
   retention: "",
+  capacity: "",
   effectiveFrom: today(),
   effectiveTo: endOfYear(),
 });
@@ -120,6 +128,7 @@ function Treaties({ session, notify, profile, resource }) {
     const body = { ...form };
     if (body.treatyType === "QUOTA_SHARE") delete body.retention;
     else delete body.cededPercent;
+    if (!body.capacity) delete body.capacity;
     const done = await draft.run(
       () => request(session, "/reinsurance/treaties", { method: "POST", body }),
       "Treaty drafted. Another user must approve it before it cedes.",
@@ -197,6 +206,9 @@ function Treaties({ session, notify, profile, resource }) {
                 />
               </Field>
             )}
+            <Field label="Capacity per life (BWP ceded, optional)" hint="Above it the excess is referred for facultative placement">
+              <input type="number" min="0.01" step="0.01" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} />
+            </Field>
             <Field label="Effective from">
               <input
                 type="date"
@@ -257,7 +269,9 @@ function Treaties({ session, notify, profile, resource }) {
               label: "Terms",
               sortValue: (r) => (r.treatyType === "SURPLUS" ? Number(r.retention) : Number(r.cededPercent)),
               render: (r) =>
-                r.treatyType === "SURPLUS" ? "Retention " + pula(r.retention) : Number(r.cededPercent).toFixed(2) + "% ceded",
+                (r.treatyType === "SURPLUS" ? "Retention " + pula(r.retention) : Number(r.cededPercent).toFixed(2) + "% ceded") +
+                (r.capacity ? " · capacity " + pula(r.capacity) + " per life" : "") +
+                (r.policyRef ? " · policy " + r.policyRef : ""),
             },
             { key: "products", label: "Products", render: (r) => (r.products || []).join(", ") },
             {
@@ -315,7 +329,7 @@ function Cessions({ session, treaties }) {
   return (
     <Panel
       title="Cessions"
-      subtitle="One per premium received on a policy covered by an approved treaty."
+      subtitle="One per premium received, at the share of the policy's exposure in force; returned premiums and refunds add a negative adjustment linked to the cession it adjusts."
       action={
         <select aria-label="Treaty" value={treaty} onChange={(e) => setTreaty(e.target.value)}>
           <option value="">All treaties</option>
@@ -346,6 +360,15 @@ function Cessions({ session, treaties }) {
           { key: "cededSum", label: "Ceded sum", align: "right", render: (r) => pula(r.cededSum) },
           { key: "premium", label: "Premium", align: "right", render: (r) => pula(r.premium) },
           { key: "cededPremium", label: "Ceded premium", align: "right", render: (r) => pula(r.cededPremium) },
+          { key: "receiptRef", label: "Receipt", render: (r) => r.receiptRef || "—" },
+          {
+            key: "adjustsRef",
+            label: "Adjusts / exposure",
+            render: (r) =>
+              r.adjustsRef
+                ? r.adjustsRef + " (" + (r.reason === "PaymentReturned" ? "returned premium" : r.reason === "REFUND" ? "refund" : r.reason) + ")"
+                : r.exposureRef || "—",
+          },
           { key: "bordereauRef", label: "Bordereau", render: (r) => r.bordereauRef || <Badge tone="amber">Unreported</Badge> },
         ]}
       />
@@ -382,7 +405,7 @@ function Recoveries({ session, notify, profile, resource }) {
   return (
     <Panel
       title="Claim recoveries"
-      subtitle="The reinsurer's share of each paid claim on a ceded policy. Recorded separately; the customer's payout never waits for it. Open one to record the reinsurer's payment."
+      subtitle="The reinsurer's share of each approved claim on a ceded policy, at the cover in force on the event date. Recorded separately; the customer's payout never waits for it. Open one to record a payment, a dispute or a write-off (approved by a second person)."
     >
       <ErrorNote error={resource.error} />
       <DataTable
@@ -391,14 +414,14 @@ function Recoveries({ session, notify, profile, resource }) {
         rowKey={(r) => r.ref}
         onRowClick={show}
         empty="No recoveries"
-        emptyDetail="A recovery is recognised when a claim is paid on a ceded policy."
+        emptyDetail="A recovery is expected when a claim on a ceded policy is approved."
         columns={[
           { key: "ref", label: "Recovery" },
           { key: "createdAt", label: "Recognised", render: (r) => when(r.createdAt) },
           { key: "claimRef", label: "Claim" },
           { key: "policyRef", label: "Policy" },
           { key: "treatyRef", label: "Treaty", render: (r) => r.treatyRef + " · " + r.reinsurer },
-          { key: "claimAmount", label: "Claim paid", align: "right", render: (r) => pula(r.claimAmount) },
+          { key: "claimAmount", label: "Claim", align: "right", render: (r) => pula(r.claimAmount) },
           { key: "cededShare", label: "Share", align: "right", render: (r) => share(r.cededShare) },
           { key: "recoveryAmount", label: "Recovery", align: "right", render: (r) => pula(r.recoveryAmount) },
           {
@@ -407,51 +430,375 @@ function Recoveries({ session, notify, profile, resource }) {
             align: "right",
             render: (r) => (r.receivedAmount == null ? "—" : pula(r.receivedAmount)),
           },
-          { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+          { key: "status", label: "Status", render: (r) => <Badge>{r.stage && r.stage !== "NONE" ? r.stage.replace(/_/g, " ") : r.status}</Badge> },
+          { key: "ageDays", label: "Age", align: "right", render: (r) => (r.status === "EXPECTED" ? r.ageDays + " d" : "—") },
         ]}
       />
       {open && (
-        <Drawer
-          title={open.ref + " · " + open.claimRef}
-          description={open.reinsurer + " owes " + pula(open.recoveryAmount) + " on claim " + open.claimRef}
+        <RecoveryDrawer
+          session={session}
+          profile={profile}
+          open={open}
+          form={form}
+          setForm={setForm}
+          receive={receive}
+          action={action}
+          manage={manage}
+          differs={differs}
+          onDone={() => {
+            setOpen(null);
+            resource.reload();
+          }}
           onClose={() => setOpen(null)}
-        >
-          {open.status === "RECEIVED" ? (
-            <div className="ws-kv">
-              <div>
-                <small>Received</small>
-                <strong>{pula(open.receivedAmount)}</strong>
-              </div>
-              <div>
-                <small>Reference</small>
-                <strong>{open.receivedReference}</strong>
-              </div>
-              <div>
-                <small>Recorded</small>
-                <strong>{when(open.receivedAt) + " by " + open.receivedBy}</strong>
-              </div>
-              {open.receivedNote && (
-                <div>
-                  <small>Note</small>
-                  <strong>{open.receivedNote}</strong>
-                </div>
-              )}
+        />
+      )}
+    </Panel>
+  );
+}
+
+// NS-SH07-005 recovery ledger: receipt, dispute, and write-off approved by a second person.
+function RecoveryDrawer({ session, profile, open, form, setForm, receive, action, manage, differs, onDone, onClose }) {
+  const [step, setStep] = useState(null);
+  const me = profile?.username;
+  const run = async (path, body, message) => {
+    const done = await action.run(
+      () => request(session, "/reinsurance/recoveries/" + encodeURIComponent(open.ref) + path, { method: "POST", body: body || {} }),
+      message,
+    );
+    if (done) onDone();
+  };
+  const expected = open.status === "EXPECTED";
+  return (
+    <Drawer
+      title={open.ref + " · " + open.claimRef}
+      description={open.reinsurer + " owes " + pula(open.recoveryAmount) + " on claim " + open.claimRef + (open.eventDate ? " (event " + open.eventDate + ")" : "")}
+      onClose={onClose}
+    >
+      <div className="ws-kv">
+        <div>
+          <small>Status</small>
+          <strong>
+            <Badge>{open.stage && open.stage !== "NONE" ? open.stage.replace(/_/g, " ") : open.status}</Badge>
+          </strong>
+        </div>
+        <div>
+          <small>Claim approved / paid</small>
+          <strong>
+            {pula(open.claimAmount)}
+            {open.claimPaidAmount != null ? " · paid " + pula(open.claimPaidAmount) : " · not yet paid"}
+          </strong>
+        </div>
+        {open.originalAmount != null && (
+          <div>
+            <small>First expected</small>
+            <strong>{pula(open.originalAmount)}</strong>
+          </div>
+        )}
+        {expected && (
+          <div>
+            <small>Age</small>
+            <strong>{open.ageDays} days</strong>
+          </div>
+        )}
+        {open.disputeReason && (
+          <div>
+            <small>Dispute</small>
+            <strong>{open.disputeReason}</strong>
+          </div>
+        )}
+        {open.writeOffReason && (
+          <div>
+            <small>Write-off</small>
+            <strong>
+              {pula(open.writeOffAmount)} · {open.writeOffReason} · asked by {open.writeOffRequestedBy}
+              {open.writeOffDecidedBy ? " · decided by " + open.writeOffDecidedBy : ""}
+            </strong>
+          </div>
+        )}
+        {open.status === "RECEIVED" && (
+          <>
+            <div>
+              <small>Received</small>
+              <strong>
+                {pula(open.receivedAmount)} · {open.receivedReference}
+              </strong>
             </div>
-          ) : manage ? (
-            <FormGrid submitLabel="Record receipt" busy={action.busy} error={action.error} onSubmit={receive}>
-              <Field label="Amount received (BWP)">
-                <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
-              </Field>
-              <Field label="Reinsurer's payment reference">
-                <input value={form.reference} maxLength={60} onChange={(e) => setForm({ ...form, reference: e.target.value })} required />
-              </Field>
-              <Field label={differs ? "Why it differs from " + pula(open.recoveryAmount) : "Note (optional)"} full>
-                <textarea rows={2} maxLength={500} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} required={differs} />
-              </Field>
-            </FormGrid>
-          ) : (
-            <p className="ws-hint">Expected from the reinsurer; recording its payment needs reinsurance management access.</p>
-          )}
+            <div>
+              <small>Recorded</small>
+              <strong>{when(open.receivedAt) + " by " + open.receivedBy}</strong>
+            </div>
+            {open.receivedNote && (
+              <div>
+                <small>Note</small>
+                <strong>{open.receivedNote}</strong>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <ErrorNote error={!step && action.error} />
+      {expected && manage && open.stage === "NONE" && (
+        <span className="ws-row-actions">
+          <Button variant="secondary" onClick={() => setStep({ kind: "dispute", reason: "" })}>
+            Record dispute
+          </Button>
+          <Button variant="secondary" onClick={() => setStep({ kind: "writeoff", reason: "", amount: String(open.recoveryAmount) })}>
+            Request write-off
+          </Button>
+        </span>
+      )}
+      {expected && manage && open.stage === "DISPUTED" && (
+        <Button variant="secondary" onClick={() => setStep({ kind: "resolve", note: "", agreedAmount: String(open.recoveryAmount) })}>
+          Resolve dispute
+        </Button>
+      )}
+      {expected &&
+        open.stage === "WRITE_OFF_PENDING" &&
+        (can(profile, "APPROVE_TREATY") && open.writeOffRequestedBy !== me ? (
+          <span className="ws-row-actions">
+            <Button busy={action.busy} onClick={() => run("/write-off/approve", null, "Recovery written off")}>
+              Approve write-off
+            </Button>
+            <Button variant="secondary" busy={action.busy} onClick={() => run("/write-off/reject", null, "Write-off rejected")}>
+              Reject
+            </Button>
+          </span>
+        ) : (
+          <p className="ws-hint">Write-off waiting for another approver.</p>
+        ))}
+      {step?.kind === "dispute" && (
+        <FormGrid submitLabel="Record dispute" busy={action.busy} error={action.error} onSubmit={() => run("/dispute", { reason: step.reason }, "Dispute recorded")}>
+          <Field label="What the reinsurer disputes" full>
+            <input required maxLength={500} value={step.reason} onChange={(e) => setStep({ ...step, reason: e.target.value })} />
+          </Field>
+        </FormGrid>
+      )}
+      {step?.kind === "resolve" && (
+        <FormGrid
+          submitLabel="Resolve dispute"
+          busy={action.busy}
+          error={action.error}
+          onSubmit={() => run("/resolve-dispute", { note: step.note, agreedAmount: step.agreedAmount }, "Dispute resolved")}
+        >
+          <Field label="Agreed recovery (BWP)">
+            <input type="number" min="0" step="0.01" value={step.agreedAmount} onChange={(e) => setStep({ ...step, agreedAmount: e.target.value })} />
+          </Field>
+          <Field label="How it was settled" full>
+            <input required maxLength={300} value={step.note} onChange={(e) => setStep({ ...step, note: e.target.value })} />
+          </Field>
+        </FormGrid>
+      )}
+      {step?.kind === "writeoff" && (
+        <FormGrid
+          submitLabel="Ask for approval"
+          busy={action.busy}
+          error={action.error}
+          onSubmit={() => run("/write-off", { amount: step.amount, reason: step.reason }, "Write-off sent for approval")}
+        >
+          <Field label="Amount to write off (BWP)">
+            <input type="number" min="0.01" step="0.01" value={step.amount} onChange={(e) => setStep({ ...step, amount: e.target.value })} />
+          </Field>
+          <Field label="Why it will not be recovered" full>
+            <input required maxLength={500} value={step.reason} onChange={(e) => setStep({ ...step, reason: e.target.value })} />
+          </Field>
+        </FormGrid>
+      )}
+      {expected && open.stage === "NONE" && !step && manage && (
+        <FormGrid submitLabel="Record receipt" busy={action.busy} error={action.error} onSubmit={receive}>
+          <Field label="Amount received (BWP)">
+            <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
+          </Field>
+          <Field label="Reinsurer's payment reference">
+            <input value={form.reference} maxLength={60} onChange={(e) => setForm({ ...form, reference: e.target.value })} required />
+          </Field>
+          <Field label={differs ? "Why it differs from " + pula(open.recoveryAmount) : "Note (optional)"} full>
+            <textarea rows={2} maxLength={500} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} required={differs} />
+          </Field>
+        </FormGrid>
+      )}
+      {expected && !manage && <p className="ws-hint">Expected from the reinsurer; recording its payment needs reinsurance management access.</p>}
+    </Drawer>
+  );
+}
+
+// ── exposures (NS-SH07-002/003) ─────────────────────────────────────────────────────────────────
+
+function Exposures({ session }) {
+  const [policy, setPolicy] = useState("");
+  const exposures = useResource(session, "/reinsurance/exposures" + (policy.trim() ? "?policyRef=" + encodeURIComponent(policy.trim()) : ""), []);
+  return (
+    <Panel
+      title="Exposures"
+      subtitle="The risk each policy cedes, worked out per life at issue and on every benefit change under the treaty in force on that date. A change adds a version; earlier versions keep their treaty and share."
+      action={<input aria-label="Policy" placeholder="Filter by policy POL-…" value={policy} onChange={(e) => setPolicy(e.target.value)} />}
+    >
+      <ErrorNote error={exposures.error} />
+      <DataTable
+        rows={exposures.data}
+        loading={exposures.loading}
+        rowKey={(r) => r.ref}
+        empty="No exposures yet"
+        emptyDetail="An exposure is recorded when a policy is issued."
+        searchPlaceholder="Search policy, life, treaty…"
+        columns={[
+          { key: "ref", label: "Exposure" },
+          { key: "policyRef", label: "Policy", render: (r) => r.policyRef + " v" + r.version },
+          { key: "customerRef", label: "Life" },
+          { key: "product", label: "Product" },
+          { key: "sumAssured", label: "Sum assured", align: "right", render: (r) => pula(r.sumAssured) },
+          { key: "aggregateSum", label: "Life total", align: "right", render: (r) => pula(r.aggregateSum) },
+          { key: "retainedSum", label: "Retained", align: "right", render: (r) => pula(r.retainedSum) },
+          { key: "cededSum", label: "Ceded", align: "right", render: (r) => pula(r.cededSum) + " (" + share(r.cededShare) + ")" },
+          { key: "treatyRef", label: "Treaty", render: (r) => r.treatyRef || "—" },
+          {
+            key: "facultativeRef",
+            label: "Facultative",
+            render: (r) => (r.facultativeRef ? r.facultativeRef + " · " + r.facultativeStatus.toLowerCase() : "—"),
+          },
+          { key: "effectiveFrom", label: "In force", render: (r) => r.effectiveFrom + (r.endedOn ? " → " + r.endedOn : "") },
+          { key: "status", label: "Status", render: (r) => <Badge tone={r.status === "NO_TREATY" ? "red" : undefined}>{r.status.replace("_", " ")}</Badge> },
+          { key: "reason", label: "Why" },
+        ]}
+      />
+    </Panel>
+  );
+}
+
+// ── facultative queue (NS-SH07-002) ─────────────────────────────────────────────────────────────
+
+function FacultativeQueue({ session, notify, profile, resource, onChange }) {
+  const action = useAction(notify);
+  const [offer, setOffer] = useState(null);
+  const [decision, setDecision] = useState(null);
+  const me = profile?.username;
+  const send = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/reinsurance/facultative/" + offer.ref + "/offer", {
+          method: "POST",
+          body: { reinsurer: offer.reinsurer, offeredSum: offer.offeredSum },
+        }),
+      "Offered to " + offer.reinsurer,
+    );
+    if (done) {
+      setOffer(null);
+      resource.reload();
+    }
+  };
+  const decide = async () => {
+    const done = await action.run(
+      () => request(session, "/reinsurance/facultative/" + decision.ref + "/decision", { method: "POST", body: decision }),
+      decision.outcome === "ACCEPTED" ? "Acceptance captured; the facultative share cedes from now on" : "Decline recorded; the excess is retained",
+    );
+    if (done) {
+      setDecision(null);
+      resource.reload();
+      onChange?.();
+    }
+  };
+  return (
+    <Panel
+      title="Facultative queue"
+      subtitle="Risks above a treaty's capacity per life, referred automatically. Offer each to a reinsurer; someone other than the person who offered it captures the reinsurer's answer."
+    >
+      <ErrorNote error={resource.error || (!offer && !decision && action.error)} />
+      <DataTable
+        rows={resource.data}
+        loading={resource.loading}
+        rowKey={(r) => r.ref}
+        empty="Nothing referred"
+        emptyDetail="A referral appears when a life's ceded sum would exceed a treaty's capacity."
+        columns={[
+          { key: "ref", label: "Referral" },
+          { key: "policyRef", label: "Policy" },
+          { key: "customerRef", label: "Life" },
+          { key: "product", label: "Product" },
+          { key: "aggregateSum", label: "Life total", align: "right", render: (r) => pula(r.aggregateSum) },
+          { key: "excessSum", label: "To place", align: "right", render: (r) => pula(r.excessSum) },
+          { key: "treatyRef", label: "Over treaty", render: (r) => r.treatyRef || "—" },
+          { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+          {
+            key: "reinsurer",
+            label: "Placement",
+            render: (r) =>
+              r.reinsurer
+                ? r.reinsurer +
+                  " · offered " +
+                  pula(r.offeredSum) +
+                  (r.acceptedSum != null ? " · accepted " + pula(r.acceptedSum) + " (" + r.acceptanceRef + ", " + r.facTreatyRef + ")" : "")
+                : "—",
+          },
+          {
+            key: "act",
+            label: "",
+            render: (r) =>
+              r.status === "REFERRED" && can(profile, "MANAGE_REINSURANCE") ? (
+                <Button variant="secondary" onClick={() => setOffer({ ref: r.ref, reinsurer: "", offeredSum: String(r.excessSum) })}>
+                  Offer
+                </Button>
+              ) : r.status === "OFFERED" ? (
+                can(profile, "APPROVE_TREATY") && r.offeredBy !== me ? (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setDecision({ ref: r.ref, outcome: "ACCEPTED", acceptedSum: String(r.offeredSum), acceptanceRef: "", note: "" })}
+                  >
+                    Record answer
+                  </Button>
+                ) : (
+                  <small className="ws-hint">Answer captured by another person</small>
+                )
+              ) : (
+                r.decisionNote && <small className="ws-hint">{r.decidedBy + ": " + r.decisionNote}</small>
+              ),
+          },
+        ]}
+      />
+      {offer && (
+        <Drawer title={"Offer " + offer.ref} description="Send the excess to a reinsurer for facultative acceptance." onClose={() => setOffer(null)}>
+          <FormGrid submitLabel="Record offer" busy={action.busy} error={action.error} onSubmit={send}>
+            <Field label="Reinsurer">
+              <input required maxLength={150} value={offer.reinsurer} onChange={(e) => setOffer({ ...offer, reinsurer: e.target.value })} />
+            </Field>
+            <Field label="Sum offered (BWP)">
+              <input type="number" min="0.01" step="0.01" required value={offer.offeredSum} onChange={(e) => setOffer({ ...offer, offeredSum: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {decision && (
+        <Drawer
+          title={"Reinsurer's answer on " + decision.ref}
+          description="An acceptance becomes a facultative arrangement for this policy and cedes on every later premium and claim."
+          onClose={() => setDecision(null)}
+        >
+          <FormGrid submitLabel="Record answer" busy={action.busy} error={action.error} onSubmit={decide}>
+            <Field label="Answer">
+              <select value={decision.outcome} onChange={(e) => setDecision({ ...decision, outcome: e.target.value })}>
+                <option value="ACCEPTED">Accepted</option>
+                <option value="DECLINED">Declined (retained)</option>
+              </select>
+            </Field>
+            {decision.outcome === "ACCEPTED" && (
+              <>
+                <Field label="Accepted sum (BWP)">
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    required
+                    value={decision.acceptedSum}
+                    onChange={(e) => setDecision({ ...decision, acceptedSum: e.target.value })}
+                  />
+                </Field>
+                <Field label="Reinsurer's acceptance reference">
+                  <input required maxLength={60} value={decision.acceptanceRef} onChange={(e) => setDecision({ ...decision, acceptanceRef: e.target.value })} />
+                </Field>
+              </>
+            )}
+            <Field label="Note" full>
+              <input required maxLength={500} value={decision.note} onChange={(e) => setDecision({ ...decision, note: e.target.value })} />
+            </Field>
+          </FormGrid>
         </Drawer>
       )}
     </Panel>
