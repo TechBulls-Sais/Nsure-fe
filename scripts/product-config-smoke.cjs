@@ -49,7 +49,7 @@ const os = require("node:os");
       animations: "disabled",
     });
     await page.getByRole("button", { name: "Continue", exact: true }).click();
-    await page.getByLabel("Sample premium (BWP)", { exact: true }).fill("350");
+    await page.getByLabel("Premium (BWP)", { exact: true }).fill("350");
     await page
       .getByRole("checkbox", { name: "Customer portal", exact: true })
       .check();
@@ -57,11 +57,11 @@ const os = require("node:os");
     await page.getByRole("button", { name: "Submit for review" }).click();
     await page
       .getByRole("alert")
-      .getByText("Confirm that these are illustrative settings.")
+      .getByText("Confirm the settings before saving.")
       .waitFor();
     await page
       .getByRole("checkbox", {
-        name: /I understand this is a dummy configuration/,
+        name: /I confirm these settings are ready to publish/,
       })
       .check();
     await page.getByRole("button", { name: "Submit for review" }).click();
@@ -81,14 +81,14 @@ const os = require("node:os");
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     assert.equal(
       await page
-        .getByLabel("Sample premium (BWP)", { exact: true })
+        .getByLabel("Premium (BWP)", { exact: true })
         .inputValue(),
       "350",
     );
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page
       .getByRole("checkbox", {
-        name: /I understand this is a dummy configuration/,
+        name: /I confirm these settings are ready to publish/,
       })
       .check();
     await page.getByRole("button", { name: "Activate" }).click();

@@ -1809,15 +1809,15 @@ export default function App() {
             </div>
           </Panel>
           <Panel
-            title="Start fresh"
-            subtitle="Reloading restores the original records."
+            title="Refresh data"
+            subtitle="Read every list again from the server. Nothing is changed or deleted."
           >
             <Button
               variant="secondary"
               icon="RotateCcw"
               onClick={() => setModal({ type: "reset" })}
             >
-              Reset data
+              Refresh data
             </Button>
           </Panel>
         </div>
@@ -2238,7 +2238,7 @@ export default function App() {
                     : modal.type === "census"
                       ? "Explore a census import"
                       : modal.type === "reset"
-                          ? "Reset this workspace?"
+                          ? "Refresh this workspace?"
                           : modal.type === "command"
                             ? "Your workspace, one shortcut away."
                             : "Nsure"
@@ -2393,15 +2393,15 @@ export default function App() {
           {modal.type === "reset" && (
             <>
               <p>
-                This restores the original records and clears your
-                session changes. You stay signed in.
+                Every list is read again from the server. Nothing is changed or
+                deleted, and you stay signed in.
               </p>
               <div className="modal-footer">
                 <Button variant="secondary" onClick={close}>
-                  Keep exploring
+                  Cancel
                 </Button>
                 <Button icon="RotateCcw" onClick={() => location.reload()}>
-                  Reset
+                  Refresh
                 </Button>
               </div>
             </>

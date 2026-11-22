@@ -287,9 +287,9 @@ function NewCase({ session, notify, onClose, onCreated }) {
 }
 
 const PROMPTS = {
-  pause: { field: "reason", label: "Why is the SLA clock paused?", button: "Pause clock" },
-  resolve: { field: "resolution", label: "Resolution given to the customer", button: "Resolve" },
-  reopen: { field: "reason", label: "Why is the case reopened?", button: "Reopen" },
+  pause: { field: "reason", label: "Why is the SLA clock paused?", button: "Pause clock", done: "SLA clock paused" },
+  resolve: { field: "resolution", label: "Resolution given to the customer", button: "Resolve", done: "resolved" },
+  reopen: { field: "reason", label: "Why is the case reopened?", button: "Reopen", done: "reopened" },
 };
 
 function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
@@ -360,7 +360,7 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
       });
       if (!ok) return;
     }
-    act(prompt, { [PROMPTS[prompt].field]: text }, `${c.ref}: ${PROMPTS[prompt].button.toLowerCase()} done`);
+    act(prompt, { [PROMPTS[prompt].field]: text }, `${c.ref} ${PROMPTS[prompt].done}`);
   };
   const stale = /refresh and retry/i.test(action.error);
 

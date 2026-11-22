@@ -115,7 +115,9 @@ export default function CustomerPortal({
     session,
     Boolean(shop && !shop.error && (awaitingPayment.length || policies.some((p) => IN_FORCE_STATES.includes(p.status)))),
   );
-  const [declared, markDeclared] = useDeclaredPolicies(customer?.id);
+  const [declaredHere, markDeclared] = useDeclaredPolicies(customer?.id);
+  // The server knows every purchase this customer has declared, whichever device or sign-in it was made on.
+  const declared = [...new Set([...(declaredHere || []), ...(lock?.declaredPolicies || [])])];
   const payProps = { session, lock, reloadLock, onShop, notify, onNavigate, onDeclared: markDeclared };
   const chosenTier = (products.find((product) => product.name === choice)?.tiers || []).find(
     (tier) => tier.name === tierChoice,

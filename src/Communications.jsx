@@ -53,7 +53,7 @@ export default function Communications({ session, notify, profile }) {
     const r = await action.run(() => request(session, "/communications/dispatch", { method: "POST" }));
     if (r) {
       const d = r.data;
-      notify(`Sent ${d.processed}: ${d.delivered} delivered, ${d.retrying} will retry, ${d.failed} failed`);
+      notify(`Sent ${d.processed}: ${d.delivered} delivered, ${d.retrying} will retry, ${d.failed} failed`, d.failed ? "error" : "success");
       all.reload();
       setRefresh((n) => n + 1);
     }

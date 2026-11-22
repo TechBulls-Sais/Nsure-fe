@@ -48,7 +48,7 @@ export default function IntegrationMonitor({ session, notify, profile }) {
     if (!ok) return;
     const r = await action.run(() => request(session, "/integration/outbox/dispatch", { method: "POST" }));
     if (r) {
-      notify(`Dispatched: ${r.data.delivered} delivered, ${r.data.failed} failed`);
+      notify(`Dispatched: ${r.data.delivered} delivered, ${r.data.failed} failed`, r.data.failed ? "error" : "success");
       dashboard.reload();
       setRefresh((n) => n + 1);
     }
@@ -129,7 +129,7 @@ function Events({ session, notify, profile, failedOnly, onChange }) {
       request(session, `/integration/deliveries/${delivery.id}/replay`, { method: "POST" }),
     );
     if (r) {
-      notify(`Replayed: ${r.data.delivered} delivered, ${r.data.failed} failed`);
+      notify(`Replayed: ${r.data.delivered} delivered, ${r.data.failed} failed`, r.data.failed ? "error" : "success");
       events.reload();
       onChange();
     }
