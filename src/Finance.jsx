@@ -44,10 +44,12 @@ export default function Finance({ session, notify, profile }) {
           ["rules", "Posting rules"],
           ["periods", "Periods"],
           ["gl", "GL export"],
+          ["ageing", "Ageing"],
           ["manual", "Manual journals"],
           ["suspense", "Suspense"],
           ["refunds", "Refunds"],
           ["billing", "Billing"],
+          ["collections", "Debit orders"],
           ["reconciliation", "Reconciliation"],
         ]}
       />
@@ -57,10 +59,12 @@ export default function Finance({ session, notify, profile }) {
       {tab === "rules" && <Rules session={session} notify={notify} profile={profile} />}
       {tab === "periods" && <Periods session={session} notify={notify} profile={profile} />}
       {tab === "gl" && <GlExport session={session} notify={notify} profile={profile} />}
+      {tab === "ageing" && <Ageing session={session} />}
       {tab === "manual" && <ManualJournals session={session} notify={notify} profile={profile} />}
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
       {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} />}
       {tab === "billing" && <Billing session={session} notify={notify} profile={profile} />}
+      {tab === "collections" && <DebitOrders session={session} notify={notify} profile={profile} />}
       {tab === "reconciliation" && <Reconciliation session={session} notify={notify} profile={profile} />}
     </>
   );
@@ -176,6 +180,11 @@ function Journals({ session, notify, profile }) {
           { key: "domain", label: "Domain" },
           { key: "periodCode", label: "Period" },
           { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+          {
+            key: "costCentre",
+            label: "Dimensions",
+            render: (r) => <small className="ws-hint">{[r.costCentre, r.policyRef, r.product, r.intermediaryRef, r.treatyRef, r.schemeRef].filter(Boolean).join(" · ") || "—"}</small>,
+          },
           {
             key: "status",
             label: "Status",
@@ -388,6 +397,9 @@ function Rules({ session, notify, profile }) {
       description: r.description,
       effectiveFrom: today,
       reason: "",
+      product: r.product || "",
+      costCentre: r.costCentre || "",
+      failureMode: r.failureMode || "CONTINUE",
     });
   };
   const accountSelect = (field) => (
@@ -425,7 +437,10 @@ function Rules({ session, notify, profile }) {
             { key: "debitAccount", label: "Debit" },
             { key: "creditAccount", label: "Credit" },
             { key: "domain", label: "Domain" },
-            { key: "status", label: "Posts", render: (r) => <Badge>{r.status}</Badge> },
+            { key: "product", label: "Product", render: (r) => r.product || "All" },
+            { key: "costCentre", label: "Cost centre", render: (r) => r.costCentre || "—" },
+            { key: "status", label: "Posts", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+            { key: "failureMode", label: "On failure", render: (r) => (r.failureMode === "BLOCK" ? <Badge tone="red">Blocks</Badge> : "Exception") },
             {
               key: "effectiveFrom",
               label: "Applies",
@@ -497,10 +512,23 @@ function Rules({ session, notify, profile }) {
                 ))}
               </select>
             </Field>
-            <Field label="Status">
+            <Field label="Status" hint="NOT_POSTED: deliberately not posted under the recognition basis in force">
               <select value={edit.status} onChange={(e) => setEdit({ ...edit, status: e.target.value })}>
                 <option>ACTIVE</option>
                 <option>INACTIVE</option>
+                <option>NOT_POSTED</option>
+              </select>
+            </Field>
+            <Field label="Product (empty = every product)">
+              <input value={edit.product} maxLength={100} onChange={(e) => setEdit({ ...edit, product: e.target.value })} />
+            </Field>
+            <Field label="Cost centre">
+              <input value={edit.costCentre} maxLength={20} onChange={(e) => setEdit({ ...edit, costCentre: e.target.value })} />
+            </Field>
+            <Field label="If it cannot post" hint="BLOCK refuses the business action instead of raising a financial exception">
+              <select value={edit.failureMode} onChange={(e) => setEdit({ ...edit, failureMode: e.target.value })}>
+                <option value="CONTINUE">Continue, raise an exception</option>
+                <option value="BLOCK">Block the business action</option>
               </select>
             </Field>
             <Field label="Description">
@@ -541,9 +569,9 @@ function Periods({ session, notify, profile }) {
       confirmLabel: "Soft-close",
     },
     reopen: {
-      title: "Reopen " + code + "?",
-      message: "Period " + code + " opens again for posting." + (reason ? " Reason: " + reason + "." : ""),
-      confirmLabel: "Reopen period",
+      title: "Ask to reopen " + code + "?",
+      message: "Someone with Finance authority must authorise it before " + code + " opens again." + (reason ? " Reason: " + reason + "." : ""),
+      confirmLabel: "Ask to reopen",
     },
     close: {
       title: "Close " + code + "?",
@@ -566,10 +594,36 @@ function Periods({ session, notify, profile }) {
         }),
       "Period " + code + ": " + verb,
     );
+    if (done) {
+      periods.reload();
+      report.reload();
+    }
+  };
+  const report = useResource(session, code ? "/finance/periods/" + code + "/close-report" : null, []);
+  const decideReopen = async (p, verdict) => {
+    const done = await action.run(
+      () => request(session, `/finance/periods/${p.code}/reopen/${verdict}`, { method: "POST" }),
+      verdict === "approve" ? "Period " + p.code + " reopened" : "Reopening of " + p.code + " declined",
+    );
     if (done) periods.reload();
   };
   return (
     <>
+      <Panel title={"Close report · " + code} subtitle="What stands in the way of closing the period. Closing with open items needs a reason and your acknowledgement.">
+        <ErrorNote error={report.error} />
+        <DataTable
+          rowKey={(r) => r.code}
+          rows={report.data}
+          loading={report.loading}
+          searchFrom={99}
+          empty="Nothing to report"
+          columns={[
+            { key: "label", label: "Open item" },
+            { key: "count", label: "Count", align: "right", render: (r) => (r.count > 0 ? <Badge tone="amber">{r.count}</Badge> : <Badge tone="green">0</Badge>) },
+            { key: "examples", label: "Examples", render: (r) => <small className="ws-hint">{(r.examples || []).slice(0, 6).join(", ") || "—"}</small> },
+          ]}
+        />
+      </Panel>
       {can(profile, "CLOSE_PERIOD") && (
         <Panel title="Period control" subtitle="Open → soft-closed → closed. Closing lists unposted events, unexported journals and unacknowledged GL batches.">
           <div className="field-grid">
@@ -596,7 +650,7 @@ function Periods({ session, notify, profile }) {
               Soft-close
             </Button>
             <Button variant="secondary" busy={action.busy} onClick={() => act("reopen")}>
-              Reopen
+              Ask to reopen
             </Button>
             <Button busy={action.busy} onClick={() => act("close")}>
               Close period
@@ -621,6 +675,26 @@ function Periods({ session, notify, profile }) {
             { key: "note", label: "Note", render: (r) => r.note || "—" },
             { key: "updatedBy", label: "By" },
             { key: "updatedAt", label: "When", render: (r) => when(r.updatedAt) },
+            {
+              key: "reopen",
+              label: "Reopen request",
+              render: (r) =>
+                !r.reopenRequestedBy ? (
+                  "—"
+                ) : can(profile, "APPROVE_JOURNAL") && r.reopenRequestedBy !== profile?.username ? (
+                  <span className="ws-row-actions">
+                    <small className="ws-hint">{r.reopenRequestedBy + ": " + r.reopenReason}</small>
+                    <Button variant="secondary" busy={action.busy} onClick={() => decideReopen(r, "approve")}>
+                      Authorise
+                    </Button>
+                    <Button variant="ghost" busy={action.busy} onClick={() => decideReopen(r, "reject")}>
+                      Decline
+                    </Button>
+                  </span>
+                ) : (
+                  <small className="ws-hint">{"Asked by " + r.reopenRequestedBy + "; waiting for another person"}</small>
+                ),
+            },
           ]}
         />
       </Panel>
@@ -647,12 +721,43 @@ function GlExport({ session, notify, profile }) {
     );
     if (done) batches.reload();
   };
+  const [simulate, setSimulate] = useState("ACCEPT");
   const submit = async (r) => {
     const done = await action.run(
-      () => request(session, `/finance/gl-batches/${r.ref}/submit`, { method: "POST" }),
-      "GL batch " + r.ref + " submitted",
+      () => request(session, `/finance/gl-batches/${r.ref}/submit`, { method: "POST", body: { simulate } }),
+      "GL batch " + r.ref + " sent to the GL (simulated)",
     );
     if (done) batches.reload();
+  };
+  const statusCheck = async (r) => {
+    const done = await action.run(
+      () => request(session, `/finance/gl-batches/${r.ref}/status-check`, { method: "POST" }),
+      "Checked with the GL by batch id",
+    );
+    if (done) batches.reload();
+  };
+  const reconcileFromGl = async (r) => {
+    const done = await action.run(
+      () => request(session, `/finance/gl-batches/${r.ref}/reconcile`, { method: "POST", body: {} }),
+      "GL batch " + r.ref + " reconciled to the GL's totals",
+    );
+    if (done) batches.reload();
+  };
+  const download = async (r) => {
+    const done = await action.run(() => request(session, `/finance/gl-batches/${r.ref}/export`));
+    if (!done) return;
+    const f = done.data;
+    const cols = ["lineId", "journalRef", "eventType", "accountingDate", "periodCode", "accountCode", "debit", "credit", "currency", "costCentre", "policyRef", "product", "intermediaryRef", "treatyRef", "schemeRef", "description"];
+    const esc = (v) => (v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v));
+    const csv = ["# batch " + f.batchRef + " · journals " + f.journalCount + " · lines " + f.lineCount + " · debit " + f.debitTotal + " · credit " + f.creditTotal + " · " + f.currency, cols.join(",")]
+      .concat(f.lines.map((l) => cols.map((c) => esc(l[c])).join(",")))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = f.batchRef + ".csv";
+    a.click();
+    URL.revokeObjectURL(url);
   };
   const acknowledge = async () => {
     const done = await action.run(
@@ -677,12 +782,19 @@ function GlExport({ session, notify, profile }) {
     <>
       <Panel
         title="GL export batches"
-        subtitle="Prepared → submitted → accepted or rejected → reconciled. Control totals travel with each batch; a rejected batch's journals go out again in the next one."
+        subtitle="Prepared → submitted → accepted or rejected → reconciled. The corporate GL here is a SIMULATOR keyed by batch id: sending a batch again never posts it twice, and a lost answer is resolved by asking by batch id."
         action={
           can(profile, "EXPORT_GL") && (
-            <Button icon={Upload} busy={action.busy} onClick={exportNow}>
-              Prepare GL batch
-            </Button>
+            <span className="ws-row-actions">
+              <select aria-label="Simulated GL answer" value={simulate} onChange={(e) => setSimulate(e.target.value)}>
+                <option value="ACCEPT">GL accepts (simulated)</option>
+                <option value="REJECT">GL rejects (simulated)</option>
+                <option value="TIMEOUT">GL posts, answer lost (simulated)</option>
+              </select>
+              <Button icon={Upload} busy={action.busy} onClick={exportNow}>
+                Prepare GL batch
+              </Button>
+            </span>
           )
         }
       >
@@ -702,7 +814,18 @@ function GlExport({ session, notify, profile }) {
             { key: "debitTotal", label: "Debits", align: "right", render: (r) => pula(r.debitTotal) },
             { key: "creditTotal", label: "Credits", align: "right", render: (r) => pula(r.creditTotal) },
             { key: "glReference", label: "GL ref", render: (r) => r.glReference || "—" },
+            { key: "periodCodes", label: "Periods", render: (r) => r.periodCodes || "—" },
+            { key: "deliveryNote", label: "Last delivery", render: (r) => <small className="ws-hint">{r.deliveryNote || r.note || "—"}</small> },
             { key: "createdAt", label: "Prepared", render: (r) => when(r.createdAt) },
+            {
+              key: "file",
+              label: "",
+              render: (r) => (
+                <Button variant="ghost" icon={FileDown} onClick={() => download(r)}>
+                  Export file
+                </Button>
+              ),
+            },
             {
               key: "act",
               label: "",
@@ -712,20 +835,30 @@ function GlExport({ session, notify, profile }) {
                     Submit to GL
                   </Button>
                 ) : r.status === "SUBMITTED" ? (
-                  <Button
-                    variant="secondary"
-                    icon={FileDown}
-                    onClick={() => setAck({ ref: r.ref, status: "ACCEPTED", glReference: "", note: "" })}
-                  >
-                    Record GL response
-                  </Button>
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => statusCheck(r)}>
+                      Check status by batch id
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      icon={FileDown}
+                      onClick={() => setAck({ ref: r.ref, status: "ACCEPTED", glReference: "", note: "" })}
+                    >
+                      Record GL response
+                    </Button>
+                  </span>
                 ) : r.status === "ACCEPTED" ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => setAck({ ref: r.ref, mode: "reconcile", glDebitTotal: "", glCreditTotal: "" })}
-                  >
-                    Reconcile
-                  </Button>
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => reconcileFromGl(r)}>
+                      Reconcile to GL totals
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setAck({ ref: r.ref, mode: "reconcile", glDebitTotal: "", glCreditTotal: "" })}
+                    >
+                      Enter totals
+                    </Button>
+                  </span>
                 ) : null,
             },
           ]}
@@ -1026,6 +1159,7 @@ const RECON_LABELS = {
   CURRENCY_MISMATCH: "Currency differs",
   DUPLICATE: "Twice on the statement",
   NOT_ON_STATEMENT: "Here, not on the statement",
+  LATE_SETTLEMENT: "Settled late (closed or unconfirmed here)",
 };
 
 /** Statement lines "reference,amount[,currency][,valueDate]", one per line; a header line is skipped. */
@@ -1172,6 +1306,19 @@ function Reconciliation({ session, notify, profile }) {
             { key: "lines", label: "Lines", align: "right" },
             { key: "matched", label: "Matched", align: "right" },
             { key: "openExceptions", label: "Open", align: "right" },
+            {
+              key: "totals",
+              label: "Control totals",
+              render: (s) =>
+                s.totals ? (
+                  <small className="ws-hint">
+                    statement {pula(s.totals.statementTotal)} · matched {pula(s.totals.matchedTotal)} · receipts here {pula(s.totals.receiptsTotal)} ·
+                    allocated {pula(s.totals.allocationsTotal)} · ledger cash {pula(s.totals.ledgerCash)} · difference {pula(s.totals.statementLessReceipts)}
+                  </small>
+                ) : (
+                  "—"
+                ),
+            },
             { key: "uploadedBy", label: "By", render: (s) => s.uploadedBy + " · " + when(s.uploadedAt) },
           ]}
         />
@@ -1257,6 +1404,10 @@ function Suspense({ session, notify, profile }) {
               clearing.action === "SPLIT"
                 ? clearing.lines.filter((l) => l.policyRef.trim()).map((l) => ({ policyRef: l.policyRef.trim(), amount: l.amount }))
                 : undefined,
+            // NS-SH04-005: a refund names where the money goes; the approver verifies it.
+            payeeName: clearing.action === "REFUND" ? clearing.payeeName : undefined,
+            payoutMethod: clearing.action === "REFUND" ? clearing.payoutMethod : undefined,
+            accountRef: clearing.action === "REFUND" ? clearing.accountRef : undefined,
             reason: clearing.reason,
           },
         }),
@@ -1267,7 +1418,12 @@ function Suspense({ session, notify, profile }) {
       list.reload();
     }
   };
+  const [verifying, setVerifying] = useState(null);
   const decide = async (r, verdict) => {
+    if (verdict === "approve" && r.clearanceAction === "REFUND") {
+      setVerifying({ id: r.id, providerRef: r.providerRef, requestedBy: r.requestedBy, reason: r.clearanceReason, verificationNote: "" });
+      return;
+    }
     const ok = await confirm({
       title: (verdict === "approve" ? "Approve" : "Reject") + " clearance of " + r.providerRef + "?",
       message: (
@@ -1289,6 +1445,20 @@ function Suspense({ session, notify, profile }) {
       verdict === "approve" ? "Clearance approved" : "Clearance rejected",
     );
     if (done) list.reload();
+  };
+  const approveRefund = async () => {
+    const done = await action.run(
+      () =>
+        request(session, `/finance/suspense/${verifying.id}/clearance/approve`, {
+          method: "POST",
+          body: { verificationNote: verifying.verificationNote || undefined },
+        }),
+      "Refund approved; payout instruction sent",
+    );
+    if (done) {
+      setVerifying(null);
+      list.reload();
+    }
   };
   return (
     <>
@@ -1334,6 +1504,9 @@ function Suspense({ session, notify, profile }) {
                           reason: "",
                           unapplied: r.unapplied,
                           lines: [{ policyRef: "", amount: "" }],
+                          payeeName: "",
+                          payoutMethod: "Bank Account",
+                          accountRef: "",
                         })
                       }
                     >
@@ -1424,6 +1597,22 @@ function Suspense({ session, notify, profile }) {
                 </div>
               </Field>
             )}
+            {clearing.action === "REFUND" && (
+              <>
+                <Field label="Payee">
+                  <input required minLength={2} maxLength={150} value={clearing.payeeName} onChange={(e) => setClearing({ ...clearing, payeeName: e.target.value })} />
+                </Field>
+                <Field label="Payout method">
+                  <select value={clearing.payoutMethod} onChange={(e) => setClearing({ ...clearing, payoutMethod: e.target.value })}>
+                    <option>Bank Account</option>
+                    <option>Mobile Wallet</option>
+                  </select>
+                </Field>
+                <Field label="Account / wallet number" hint="The approver verifies it before the payout is sent">
+                  <input required minLength={4} maxLength={60} value={clearing.accountRef} onChange={(e) => setClearing({ ...clearing, accountRef: e.target.value })} />
+                </Field>
+              </>
+            )}
             {clearing.action === "ALLOCATE" && (
               <Field label="Policy">
                 <input
@@ -1445,6 +1634,15 @@ function Suspense({ session, notify, profile }) {
           </FormGrid>
         </Drawer>
       )}
+      {verifying && (
+        <Drawer title={"Approve refund of " + verifying.providerRef} description={verifying.requestedBy + " asked to refund it: " + verifying.reason} onClose={() => setVerifying(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={approveRefund} submitLabel="Approve and send payout">
+            <Field label="How you verified the destination" full hint="Not needed when the account is the payment mandate on file for the policy">
+              <input minLength={10} maxLength={250} value={verifying.verificationNote} onChange={(e) => setVerifying({ ...verifying, verificationNote: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
     </>
   );
 }
@@ -1453,6 +1651,7 @@ function Suspense({ session, notify, profile }) {
 // holds. Approval settles it (RefundSettled).
 const REFUND_SOURCES = {
   PREMIUM: "Premium",
+  SUSPENSE: "Suspense receipt",
   CREDIT_EARLY_SETTLEMENT: "Credit life early settlement",
   GROUP_SETTLEMENT: "Group settlement",
   OTHER: "Other",
@@ -1476,23 +1675,42 @@ function Refunds({ session, notify, profile }) {
       list.reload();
     }
   };
-  const approve = async (r) => {
-    const ok = await confirm({
-      title: "Approve refund " + r.ref + "?",
-      message: (
-        <>
-          Pays {pula(r.amount)} to <strong>{r.payeeName}</strong> by {r.payoutMethod} {r.accountRef}, raised by {r.requestedBy}:{" "}
-          <em>{r.reason}</em>.
-        </>
-      ),
-      confirmLabel: "Approve and pay",
-    });
-    if (!ok) return;
+  const [approving, setApproving] = useState(null);
+  const [destination, setDestination] = useState(null);
+  const [confirming, setConfirming] = useState(null);
+  const approve = async () => {
     const done = await action.run(
-      () => request(session, "/finance/refunds/" + r.ref + "/approve", { method: "POST", body: {} }),
-      "Refund approved and settled",
+      () =>
+        request(session, "/finance/refunds/" + approving.ref + "/approve", {
+          method: "POST",
+          body: { verificationNote: approving.verificationNote || undefined, note: approving.note || undefined },
+        }),
+      "Refund approved; payout instruction sent",
     );
-    if (done) list.reload();
+    if (done) {
+      setApproving(null);
+      list.reload();
+    }
+  };
+  const saveDestination = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + destination.ref + "/destination", { method: "POST", body: destination }),
+      "Destination recorded; someone else approves the refund",
+    );
+    if (done) {
+      setDestination(null);
+      list.reload();
+    }
+  };
+  const confirmPayout = async () => {
+    const done = await action.run(
+      () => request(session, "/finance/refunds/" + confirming.ref + "/payout-confirmed", { method: "POST", body: { reference: confirming.reference } }),
+      "Payout confirmed; refund settled",
+    );
+    if (done) {
+      setConfirming(null);
+      list.reload();
+    }
   };
   const reject = async () => {
     const done = await action.run(
@@ -1537,19 +1755,48 @@ function Refunds({ session, notify, profile }) {
             { key: "requestedBy", label: "Raised by" },
             { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
             {
+              key: "payoutRef",
+              label: "Destination / payout",
+              render: (r) =>
+                r.payoutRef ? (
+                  <small className="ws-hint">
+                    {r.payoutRef} via {r.payoutProvider}
+                    {r.payoutReference ? " · " + r.payoutReference : ""}
+                    <br />
+                    {r.destinationCheck}
+                  </small>
+                ) : (
+                  <small className="ws-hint">{r.payoutMethod} {r.accountRef}</small>
+                ),
+            },
+            {
               key: "act",
               label: "",
               render: (r) =>
-                r.status !== "PENDING_APPROVAL" ? (
+                r.status === "PAYOUT_SENT" ? (
+                  can(profile, "MANAGE_FINANCE") && (
+                    <Button variant="secondary" onClick={() => setConfirming({ ref: r.ref, reference: "" })}>
+                      Confirm payout
+                    </Button>
+                  )
+                ) : r.status !== "PENDING_APPROVAL" ? (
                   <small className="ws-hint">
-                    {r.decidedBy ? (r.status === "SETTLED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                    {r.decidedBy ? (r.status === "REJECTED" ? "Rejected by " : "Approved by ") + r.decidedBy : ""}
                     {r.decisionNote ? ": " + r.decisionNote : ""}
                   </small>
-                ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                ) : r.source === "SUSPENSE" ? (
+                  <small className="ws-hint">Decided in the Suspense tab</small>
+                ) : r.accountRef === "TO CONFIRM" ? (
+                  can(profile, "MANAGE_FINANCE") && (
+                    <Button variant="secondary" onClick={() => setDestination({ ref: r.ref, payeeName: r.payeeName, payoutMethod: "Bank Account", accountRef: "" })}>
+                      Record destination
+                    </Button>
+                  )
+                ) : r.requestedBy === me || r.destinationSetBy === me || !can(profile, "APPROVE_JOURNAL") ? (
                   <small className="ws-hint">Waiting for another approver</small>
                 ) : (
                   <span className="ws-row-actions">
-                    <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                    <Button variant="secondary" busy={action.busy} onClick={() => setApproving({ ref: r.ref, r, verificationNote: "", note: "" })}>
                       Approve
                     </Button>
                     <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
@@ -1566,7 +1813,7 @@ function Refunds({ session, notify, profile }) {
           <FormGrid busy={action.busy} error={action.error} onSubmit={raise} submitLabel="Send for approval">
             <Field label="For">
               <select value={form.source} onChange={set("source")}>
-                {Object.entries(REFUND_SOURCES).map(([k, label]) => (
+                {Object.entries(REFUND_SOURCES).filter(([k]) => k !== "SUSPENSE").map(([k, label]) => (
                   <option key={k} value={k}>
                     {label}
                   </option>
@@ -1600,6 +1847,49 @@ function Refunds({ session, notify, profile }) {
           </FormGrid>
         </Drawer>
       )}
+      {approving && (
+        <Drawer
+          title={"Approve refund " + approving.ref}
+          description={"Pays " + pula(approving.r.amount) + " to " + approving.r.payeeName + " by " + approving.r.payoutMethod + " " + approving.r.accountRef + ", raised by " + approving.r.requestedBy + ": " + approving.r.reason}
+          onClose={() => setApproving(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={approve} submitLabel="Approve and send payout">
+            <Field label="How you verified the destination" full hint="Not needed when the account is the payment mandate on file for the policy">
+              <input minLength={10} maxLength={250} value={approving.verificationNote} onChange={(e) => setApproving({ ...approving, verificationNote: e.target.value })} />
+            </Field>
+            <Field label="Note" full>
+              <input maxLength={500} value={approving.note} onChange={(e) => setApproving({ ...approving, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {destination && (
+        <Drawer title={"Destination for refund " + destination.ref} description="Where the refund is paid. Someone other than you approves it." onClose={() => setDestination(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={saveDestination} submitLabel="Record destination">
+            <Field label="Payee">
+              <input required maxLength={150} value={destination.payeeName} onChange={(e) => setDestination({ ...destination, payeeName: e.target.value })} />
+            </Field>
+            <Field label="Payout method">
+              <select value={destination.payoutMethod} onChange={(e) => setDestination({ ...destination, payoutMethod: e.target.value })}>
+                <option>Bank Account</option>
+                <option>Mobile Wallet</option>
+              </select>
+            </Field>
+            <Field label="Account / wallet number">
+              <input required minLength={4} maxLength={60} value={destination.accountRef} onChange={(e) => setDestination({ ...destination, accountRef: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {confirming && (
+        <Drawer title={"Confirm payout of " + confirming.ref} description="Record the bank's payment reference once the payout has been made." onClose={() => setConfirming(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={confirmPayout} submitLabel="Confirm payout">
+            <Field label="Bank reference">
+              <input required maxLength={60} value={confirming.reference} onChange={(e) => setConfirming({ ...confirming, reference: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {rejecting && (
         <Drawer title={"Reject refund " + rejecting.ref} description="The person who raised it sees why." onClose={() => setRejecting(null)}>
           <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject refund">
@@ -1621,7 +1911,23 @@ function Billing({ session, notify, profile }) {
   const [policyRef, setPolicyRef] = useState("");
   const [account, setAccount] = useState(null);
   const [adjusting, setAdjusting] = useState(null);
+  const [reversing, setReversing] = useState(null);
+  const [reversalVersion, setReversalVersion] = useState(0);
   const manage = can(profile, "MANAGE_FINANCE");
+  const requestReversal = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/receipts/" + encodeURIComponent(reversing.receiptRef) + "/reverse", {
+          method: "POST",
+          body: { kind: reversing.kind, reason: reversing.reason },
+        }),
+      "Reversal sent for approval by a second person",
+    );
+    if (done) {
+      setReversing(null);
+      setReversalVersion((v) => v + 1);
+    }
+  };
   const follow = async (id) => {
     for (let i = 0; i < 120; i++) {
       const r = await request(session, "/operations/" + encodeURIComponent(id));
@@ -1717,6 +2023,7 @@ function Billing({ session, notify, profile }) {
             <input required value={policyRef} placeholder="POL-…" onChange={(e) => setPolicyRef(e.target.value)} />
           </Field>
         </FormGrid>
+        {account && <MandatePanel session={session} notify={notify} profile={profile} account={account} onChange={() => load(account.policyRef)} />}
         {account && (
           <DataTable
             rows={account.instalments}
@@ -1726,6 +2033,7 @@ function Billing({ session, notify, profile }) {
             columns={[
               { key: "ref", label: "Instalment" },
               { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "dueDate", label: "Due" },
               { key: "billed", label: "Billed", align: "right", render: (r) => pula(r.billed) },
               { key: "adjustments", label: "Adjustments", align: "right", render: (r) => pula(r.adjustments) },
               { key: "allocated", label: "Paid", align: "right", render: (r) => pula(r.allocated) },
@@ -1745,6 +2053,68 @@ function Billing({ session, notify, profile }) {
           />
         )}
       </Panel>
+      {account?.schedule?.length > 0 && (
+        <Panel title={"Due schedule ahead · " + account.policyRef} subtitle="Projected from the contract frequency; a debit order falls due on its debit day, moved to the next working day of the business calendar.">
+          <DataTable
+            rows={account.schedule}
+            rowKey={(r) => r.periodStart}
+            searchFrom={99}
+            empty="Nothing projected"
+            columns={[
+              { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "dueDate", label: "Due" },
+              { key: "amount", label: "Premium", align: "right", render: (r) => pula(r.amount) },
+              { key: "currency", label: "Currency" },
+            ]}
+          />
+        </Panel>
+      )}
+      {account && (
+        <Panel title={"Receipts on " + account.policyRef} subtitle="A receipt the bank returned, reversed or charged back is reversed only when a second person approves.">
+          <DataTable
+            rows={account.receipts}
+            rowKey={(r) => r.receiptRef}
+            searchFrom={99}
+            empty="No receipts"
+            columns={[
+              { key: "receiptRef", label: "Receipt" },
+              { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "method", label: "Method" },
+              { key: "status", label: "Status", render: (r) => <Badge>{r.reversalKind ? r.reversalKind : r.status}</Badge> },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  manage && r.status === "SUCCESSFUL" ? (
+                    <Button variant="secondary" onClick={() => setReversing({ receiptRef: r.receiptRef, kind: "RETURNED", reason: "" })}>
+                      Request reversal
+                    </Button>
+                  ) : (
+                    r.reversalReason && <small className="ws-hint">{r.reversalReason}</small>
+                  ),
+              },
+            ]}
+          />
+        </Panel>
+      )}
+      <ReversalRequests session={session} notify={notify} profile={profile} version={reversalVersion} />
+      {reversing && (
+        <Drawer title={"Reverse receipt " + reversing.receiptRef} description="Nothing changes until a different person approves the reversal." onClose={() => setReversing(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={requestReversal} submitLabel="Send for approval">
+            <Field label="Kind">
+              <select value={reversing.kind} onChange={(e) => setReversing({ ...reversing, kind: e.target.value })}>
+                <option value="RETURNED">Returned unpaid</option>
+                <option value="REVERSED">Reversed</option>
+                <option value="CHARGEBACK">Chargeback</option>
+              </select>
+            </Field>
+            <Field label="Bank's reason" full>
+              <input required minLength={10} maxLength={500} value={reversing.reason} onChange={(e) => setReversing({ ...reversing, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {adjusting && (
         <Drawer title={"Adjust " + adjusting.ref} description="A negative amount reduces what is owed; the billed amount itself never changes." onClose={() => setAdjusting(null)}>
           <FormGrid busy={action.busy} error={action.error} onSubmit={adjust} submitLabel="Record adjustment">
@@ -1757,6 +2127,467 @@ function Billing({ session, notify, profile }) {
           </FormGrid>
         </Drawer>
       )}
+    </>
+  );
+}
+
+// NS-SH04-002 payment mandate on a policy's billing account: the debit order or wallet a collection run pulls from.
+const CHANNEL_LABELS = { DEBIT_ORDER: "Debit order", MOBILE_WALLET: "Mobile wallet" };
+
+function MandatePanel({ session, notify, profile, account, onChange }) {
+  const action = useAction(notify);
+  const [form, setForm] = useState(null);
+  const [cancelling, setCancelling] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const m = account.mandate;
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const save = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/mandates", { method: "POST", body: { ...form, policyRef: account.policyRef } }),
+      "Mandate saved",
+    );
+    if (done) {
+      setForm(null);
+      onChange();
+    }
+  };
+  const cancel = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/mandates/" + m.ref + "/cancel", { method: "POST", body: { reason: cancelling } }),
+      "Mandate cancelled",
+    );
+    if (done) {
+      setCancelling(null);
+      onChange();
+    }
+  };
+  return (
+    <div style={{ margin: "12px 0", display: "grid", gap: 8 }}>
+      <div className="ws-kv">
+        <div>
+          <small>Payment mandate</small>
+          <strong>{m ? CHANNEL_LABELS[m.channel] + " · " + m.institution + " " + m.accountMasked : "None — paid by checkout or receipt"}</strong>
+        </div>
+        {m?.debitDay && (
+          <div>
+            <small>Debit day</small>
+            <strong>{m.debitDay}</strong>
+          </div>
+        )}
+        {m && (
+          <div>
+            <small>Source</small>
+            <strong>{m.source === "APPLICATION" ? "From the application" : "Recorded by " + m.createdBy}</strong>
+          </div>
+        )}
+        {account.unresolvedPayments?.length > 0 && (
+          <div>
+            <small>Unresolved payments</small>
+            <strong>{account.unresolvedPayments.join("; ")}</strong>
+          </div>
+        )}
+      </div>
+      {manage && (
+        <span className="ws-row-actions">
+          <Button variant="secondary" onClick={() => setForm({ channel: "DEBIT_ORDER", institution: "", accountNumber: "", accountHolder: "", debitDay: "" })}>
+            {m ? "Replace mandate" : "Add mandate"}
+          </Button>
+          {m && (
+            <Button variant="secondary" onClick={() => setCancelling("")}>
+              Cancel mandate
+            </Button>
+          )}
+        </span>
+      )}
+      {form && (
+        <Drawer title={"Payment mandate for " + account.policyRef} description="Collection runs pull the premium from this account or wallet. It replaces any mandate on file." onClose={() => setForm(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={save} submitLabel="Save mandate">
+            <Field label="Channel">
+              <select value={form.channel} onChange={set("channel")}>
+                <option value="DEBIT_ORDER">Debit order</option>
+                <option value="MOBILE_WALLET">Mobile wallet</option>
+              </select>
+            </Field>
+            <Field label={form.channel === "DEBIT_ORDER" ? "Bank" : "Wallet"}>
+              {form.channel === "DEBIT_ORDER" ? (
+                <input required minLength={2} maxLength={60} value={form.institution} onChange={set("institution")} />
+              ) : (
+                <select required value={form.institution} onChange={set("institution")}>
+                  <option value="">Choose…</option>
+                  <option>Orange Money</option>
+                  <option>MyZaka</option>
+                </select>
+              )}
+            </Field>
+            <Field label={form.channel === "DEBIT_ORDER" ? "Account number" : "Wallet number"} hint="Demo simulator: ending in 99 is unpaid, 98 stays pending">
+              <input required minLength={4} maxLength={30} value={form.accountNumber} onChange={set("accountNumber")} />
+            </Field>
+            <Field label="Account holder">
+              <input maxLength={150} value={form.accountHolder} onChange={set("accountHolder")} />
+            </Field>
+            {form.channel === "DEBIT_ORDER" && (
+              <Field label="Debit day (1–28)">
+                <input type="number" min="1" max="28" required value={form.debitDay} onChange={set("debitDay")} />
+              </Field>
+            )}
+          </FormGrid>
+        </Drawer>
+      )}
+      {cancelling !== null && (
+        <Drawer title={"Cancel mandate " + m.ref} description="No further collections are raised on it; the record is kept." onClose={() => setCancelling(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={cancel} submitLabel="Cancel mandate">
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={cancelling} onChange={(e) => setCancelling(e.target.value)} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </div>
+  );
+}
+
+// NS-SH04-002 debit-order and mobile-money collection runs: prepared by Finance, approved by another person, sent to
+// the (simulated) bank, whose response collects, fails or holds each instruction. Submission is not settlement.
+const OUTCOME_CHOICES = [
+  ["", "Bank decides (demo rule)"],
+  ["CONFIRMED", "Collected"],
+  ["FAILED", "Unpaid"],
+  ["PENDING", "No answer yet"],
+];
+
+function DebitOrders({ session, notify, profile }) {
+  const list = useResource(session, "/collections/batches", []);
+  const action = useAction(notify);
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [open, setOpen] = useState(null);
+  const [notes, setNotes] = useState([]);
+  const [outcomes, setOutcomes] = useState({});
+  const [returning, setReturning] = useState(null);
+  const manage = can(profile, "MANAGE_FINANCE");
+  const me = profile?.username;
+  const show = (batch) => {
+    setOpen(batch);
+    setOutcomes({});
+  };
+  const prepare = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/batches", { method: "POST", body: { collectionDate: date } }),
+      "Collection run prepared; a second person must approve it",
+    );
+    if (done) {
+      setNotes(done.data.notes || []);
+      show(done.data);
+      list.reload();
+    }
+  };
+  const step = async (path, body, message) => {
+    const done = await action.run(() => request(session, "/collections/batches/" + open.ref + path, { method: "POST", body: body || {} }), message);
+    if (done) {
+      show(done.data);
+      list.reload();
+    }
+  };
+  const respond = () =>
+    step(
+      "/bank-response",
+      { outcomes: Object.entries(outcomes).filter(([, o]) => o).map(([instructionRef, outcome]) => ({ instructionRef, outcome })) },
+      "Bank response read",
+    );
+  const bankReturn = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/instructions/" + returning.ref + "/bank-return", {
+          method: "POST",
+          body: { kind: returning.kind, reason: returning.reason },
+        }),
+      "Return recorded; the receipt is reversed",
+    );
+    if (done) {
+      setReturning(null);
+      const r = await request(session, "/collections/batches/" + open.ref);
+      show(r.data);
+      list.reload();
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Debit-order and mobile-money runs"
+        subtitle="One instruction per due instalment of an active policy with a mandate. Nothing is sent until a second person approves; only the bank's response collects money. The bank here is a SIMULATOR."
+        action={
+          manage && (
+            <span className="ws-row-actions">
+              <input type="date" aria-label="Collection date" value={date} onChange={(e) => setDate(e.target.value)} />
+              <Button busy={action.busy} onClick={prepare}>
+                Prepare run
+              </Button>
+            </span>
+          )
+        }
+      >
+        <ErrorNote error={list.error || (!open && action.error)} />
+        <DataTable
+          rows={list.data}
+          loading={list.loading}
+          rowKey={(r) => r.ref}
+          empty="No collection runs yet"
+          emptyDetail="Run billing, record a mandate on a policy's billing account, then prepare a run."
+          onRowClick={(r) => request(session, "/collections/batches/" + r.ref).then((res) => show(res.data))}
+          columns={[
+            { key: "ref", label: "Run" },
+            { key: "collectionDate", label: "Collect on" },
+            { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+            { key: "instructionCount", label: "Instructions", align: "right" },
+            { key: "totalAmount", label: "Control total", align: "right", render: (r) => pula(r.totalAmount) },
+            { key: "preparedBy", label: "Prepared by" },
+            { key: "approvedBy", label: "Approved by", render: (r) => r.approvedBy || "—" },
+            {
+              key: "byStatus",
+              label: "Outcome",
+              render: (r) =>
+                Object.entries(r.byStatus || {})
+                  .map(([k, v]) => v + " " + k.toLowerCase())
+                  .join(", "),
+            },
+          ]}
+        />
+      </Panel>
+      {open && (
+        <Drawer title={"Collection run " + open.ref} description={"Collect on " + open.collectionDate + " via " + open.provider + " (simulated bank)"} onClose={() => setOpen(null)}>
+          <div className="ws-kv">
+            <div>
+              <small>Status</small>
+              <strong>
+                <Badge>{open.status}</Badge>
+              </strong>
+            </div>
+            <div>
+              <small>Control total</small>
+              <strong>
+                {open.instructionCount} · {pula(open.totalAmount)}
+              </strong>
+            </div>
+            <div>
+              <small>Prepared</small>
+              <strong>
+                {open.preparedBy} · {when(open.preparedAt)}
+              </strong>
+            </div>
+            <div>
+              <small>Approved</small>
+              <strong>{open.approvedBy ? open.approvedBy + " · " + when(open.approvedAt) : "Waiting for a second person"}</strong>
+            </div>
+            {open.fileRef && (
+              <div>
+                <small>Bank file</small>
+                <strong>{open.fileRef}</strong>
+              </div>
+            )}
+            {open.note && (
+              <div>
+                <small>Note</small>
+                <strong>{open.note}</strong>
+              </div>
+            )}
+          </div>
+          {notes.length > 0 && open.status === "PREPARED" && <p className="ws-hint">Left out: {notes.join("; ")}</p>}
+          <ErrorNote error={!returning && action.error} />
+          <span className="ws-row-actions">
+            {open.status === "PREPARED" &&
+              (can(profile, "APPROVE_JOURNAL") && open.preparedBy !== me ? (
+                <Button busy={action.busy} onClick={() => step("/approve", null, "Run approved")}>
+                  Approve run
+                </Button>
+              ) : (
+                <small className="ws-hint">Waiting for another approver</small>
+              ))}
+            {open.status === "APPROVED" && manage && (
+              <Button busy={action.busy} onClick={() => step("/submit", null, "Sent to the bank (simulated)")}>
+                Send to bank
+              </Button>
+            )}
+            {["PREPARED", "APPROVED"].includes(open.status) && manage && (
+              <Button variant="secondary" busy={action.busy} onClick={() => step("/cancel", { reason: "Cancelled before submission from the workspace" }, "Run cancelled")}>
+                Cancel run
+              </Button>
+            )}
+            {open.status === "SUBMITTED" && manage && (
+              <Button busy={action.busy} onClick={respond}>
+                Read bank response (simulated)
+              </Button>
+            )}
+          </span>
+          <DataTable
+            rows={open.instructions}
+            rowKey={(r) => r.ref}
+            searchFrom={8}
+            empty="No instructions"
+            columns={[
+              { key: "ref", label: "Instruction" },
+              { key: "policyRef", label: "Policy" },
+              { key: "instalmentRef", label: "Instalment" },
+              { key: "institution", label: "From", render: (r) => CHANNEL_LABELS[r.channel] + " · " + r.institution + " " + r.accountMasked },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+              { key: "resultText", label: "Bank says", render: (r) => r.resultText || r.providerReference || "—" },
+              { key: "receiptRef", label: "Receipt", render: (r) => r.receiptRef || "—" },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  open.status === "SUBMITTED" && ["SUBMITTED", "PENDING"].includes(r.status) && manage ? (
+                    <select aria-label={"Simulated outcome for " + r.ref} value={outcomes[r.ref] || ""} onChange={(e) => setOutcomes({ ...outcomes, [r.ref]: e.target.value })}>
+                      {OUTCOME_CHOICES.map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : r.status === "CONFIRMED" && r.receiptRef && manage ? (
+                    <Button variant="secondary" onClick={() => setReturning({ ref: r.ref, kind: "RETURNED", reason: "" })}>
+                      Simulate bank return
+                    </Button>
+                  ) : null,
+              },
+            ]}
+          />
+        </Drawer>
+      )}
+      {returning && (
+        <Drawer title={"Bank return of " + returning.ref} description="Simulated: the payer's bank takes the collected premium back. The receipt is reversed, the instalment reopens and the cover is reviewed." onClose={() => setReturning(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={bankReturn} submitLabel="Record return">
+            <Field label="Kind">
+              <select value={returning.kind} onChange={(e) => setReturning({ ...returning, kind: e.target.value })}>
+                <option value="RETURNED">Returned unpaid</option>
+                <option value="REVERSED">Reversed (disputed)</option>
+              </select>
+            </Field>
+            <Field label="Bank's reason" full>
+              <input required minLength={10} maxLength={400} value={returning.reason} onChange={(e) => setReturning({ ...returning, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// NS-SH04-005 receipt reversals asked for by Finance and carried out only when a different person approves.
+function ReversalRequests({ session, notify, profile, version }) {
+  const list = useResource(session, "/collections/reversal-requests?v=" + version, []);
+  const action = useAction(notify);
+  const [rejecting, setRejecting] = useState(null);
+  const me = profile?.username;
+  const approve = async (r) => {
+    const done = await action.run(
+      () => request(session, "/collections/reversal-requests/" + r.ref + "/approve", { method: "POST", body: {} }),
+      "Reversal approved: the receipt is reversed and the cover reviewed",
+    );
+    if (done) list.reload();
+  };
+  const reject = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/reversal-requests/" + rejecting.ref + "/reject", { method: "POST", body: { note: rejecting.note } }),
+      "Reversal rejected",
+    );
+    if (done) {
+      setRejecting(null);
+      list.reload();
+    }
+  };
+  return (
+    <Panel title="Receipt reversals" subtitle="Requested by one person with the bank's reason; approved by another, which reverses the receipt, reopens the instalment and reviews the cover.">
+      <ErrorNote error={list.error || (!rejecting && action.error)} />
+      <DataTable
+        rows={list.data}
+        loading={list.loading}
+        rowKey={(r) => r.ref}
+        empty="No reversal requests"
+        columns={[
+          { key: "ref", label: "Request" },
+          { key: "receiptRef", label: "Receipt" },
+          { key: "policyRef", label: "Policy" },
+          { key: "kind", label: "Kind" },
+          { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+          { key: "reason", label: "Reason" },
+          { key: "requestedBy", label: "Requested by" },
+          { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+          {
+            key: "act",
+            label: "",
+            render: (r) =>
+              r.status !== "PENDING_APPROVAL" ? (
+                <small className="ws-hint">
+                  {r.decidedBy ? (r.status === "APPROVED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                  {r.reversalRef ? " · " + r.reversalRef : ""}
+                  {r.decisionNote ? ": " + r.decisionNote : ""}
+                </small>
+              ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                <small className="ws-hint">Waiting for another approver</small>
+              ) : (
+                <span className="ws-row-actions">
+                  <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                    Approve
+                  </Button>
+                  <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
+                    Reject
+                  </Button>
+                </span>
+              ),
+          },
+        ]}
+      />
+      {rejecting && (
+        <Drawer title={"Reject reversal " + rejecting.ref} description="The receipt stays as it is." onClose={() => setRejecting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject reversal">
+            <Field label="Why" full>
+              <input required minLength={5} maxLength={500} value={rejecting.note} onChange={(e) => setRejecting({ ...rejecting, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </Panel>
+  );
+}
+
+// NS-SH08-004 aged receivables and payables.
+function Ageing({ session }) {
+  const ageing = useResource(session, "/finance/ageing", null);
+  const a = ageing.data;
+  const table = (rows, totals, title, subtitle) => (
+    <Panel title={title} subtitle={subtitle}>
+      {totals && (
+        <div className="ws-kv">
+          {Object.entries(totals).map(([k, v]) => (
+            <div key={k}>
+              <small>{k === "TOTAL" ? "Total" : k + " days"}</small>
+              <strong>{pula(v)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      <DataTable
+        rows={rows}
+        loading={ageing.loading}
+        rowKey={(r) => r.kind + r.ref}
+        empty="Nothing open"
+        columns={[
+          { key: "kind", label: "Type" },
+          { key: "ref", label: "Reference" },
+          { key: "party", label: "Party / policy" },
+          { key: "dueDate", label: "Due" },
+          { key: "ageDays", label: "Age (days)", align: "right" },
+          { key: "bucket", label: "Bucket", render: (r) => <Badge tone={r.bucket === "90+" ? "red" : r.bucket === "0-30" ? "green" : "amber"}>{r.bucket}</Badge> },
+          { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+        ]}
+      />
+    </Panel>
+  );
+  return (
+    <>
+      <ErrorNote error={ageing.error} />
+      {table(a?.receivables, a?.receivableTotals, "Aged receivables", "Individual instalments and group invoices owed, and reinsurance recoveries still expected, as at " + (a?.asOf || "today") + ".")}
+      {table(a?.payables, a?.payableTotals, "Aged payables", "Commission statements, refunds and approved claims not yet paid.")}
     </>
   );
 }

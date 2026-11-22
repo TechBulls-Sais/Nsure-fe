@@ -940,7 +940,7 @@ function BillingAccount({ session, policy: p, profile, notify, onChanged }) {
       const updated = (fresh.data || []).find((x) => x.id === p.id);
       if (updated) onChanged(updated);
       return result.data;
-    }, receipt.receiptRef + " recorded as " + kind.toLowerCase() + "; cover is under review.");
+    }, "Reversal of " + receipt.receiptRef + " sent for approval by a second person (Finance > Billing).");
   const mayReverse = holds(profile, "MANAGE_FINANCE");
   return (
     <div className="wf-billing">
