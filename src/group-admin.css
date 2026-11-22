@@ -184,3 +184,10 @@
   font-size: 0.95rem;
   margin: 18px 0 6px;
 }
+.ga-checks {
+  margin: 6px 0 12px 18px;
+  padding: 0;
+}
+.ga-checks li {
+  margin: 2px 0;
+}
