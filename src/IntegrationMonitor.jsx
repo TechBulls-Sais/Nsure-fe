@@ -133,7 +133,12 @@ export default function IntegrationMonitor({ session, notify, profile }) {
       {tab === "interfaces" && (
         <Interfaces key={refresh} session={session} notify={notify} profile={profile} onChange={changed} />
       )}
-      {tab === "batches" && <Batches session={session} />}
+      {tab === "batches" && (
+        <>
+          <BatchReceipts session={session} notify={notify} profile={profile} />
+          <Batches session={session} />
+        </>
+      )}
       {tab === "reconciliation" && <Reconciliation key={refresh} session={session} />}
       {tab === "compensations" && <Compensations key={refresh} session={session} />}
       {tab === "inbound" && (
@@ -517,6 +522,177 @@ function Interfaces({ session, notify, profile, onChange }) {
                   : "Availability comes from the real interface."}
             </p>
           )}
+        </Drawer>
+      )}
+    </Panel>
+  );
+}
+
+const CENSUS_HEADER = "memberKey,firstName,lastName,dateOfBirth,category,salary,action,effectiveDate";
+
+const sha256 = async (text) => {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+/** §11 batch contract: a census batch arrives with a manifest that is checked before any row is staged. */
+function BatchReceipts({ session, notify, profile }) {
+  const receipts = useResource(session, "/integration/batch-receipts", []);
+  const [form, setForm] = useState(null);
+  const [ack, setAck] = useState(null);
+  const action = useAction(notify);
+  const norm = (csv) => csv.replaceAll("\r\n", "\n").trim();
+  const rows = (csv) => Math.max(0, norm(csv).split("\n").filter((l) => l.trim()).length - 1);
+  const total = (csv) =>
+    norm(csv)
+      .split("\n")
+      .slice(1)
+      .reduce((sum, l) => sum + (Number(l.split(",")[5]) || 0), 0)
+      .toFixed(2);
+  const fill = async () => {
+    setForm({ ...form, recordCount: rows(form.csv), controlTotal: total(form.csv), checksum: await sha256(norm(form.csv)) });
+  };
+  const submit = async () => {
+    const r = await action.run(() =>
+      request(session, "/integration/batches/census", {
+        method: "POST",
+        body: {
+          schemeRef: form.schemeRef,
+          mode: "PARTIAL",
+          csv: form.csv,
+          correctsRef: form.correctsRef || undefined,
+          manifest: {
+            schemaVersion: form.schemaVersion,
+            source: form.source,
+            externalBatchId: form.externalBatchId,
+            createdOn: new Date().toISOString().slice(0, 10),
+            asOf: form.asOf,
+            recordCount: Number(form.recordCount),
+            currency: "BWP",
+            controlTotal: form.controlTotal,
+            checksum: form.checksum,
+          },
+        },
+      }),
+    );
+    if (r) {
+      notify(r.data.receiptRef + ": " + (r.data.status === "STAGED" ? "manifest checked, rows staged as " + r.data.stagedRef : "rejected before staging"), r.data.status === "STAGED" ? "success" : "error");
+      setForm(null);
+      receipts.reload();
+      const detail = await action.run(() => request(session, "/integration/batch-receipts/" + r.data.receiptRef + "/acknowledgement"));
+      if (detail) setAck(detail.data);
+    }
+  };
+  const open = async (row) => {
+    const r = await action.run(() => request(session, "/integration/batch-receipts/" + row.receiptRef + "/acknowledgement"));
+    if (r) setAck(r.data);
+  };
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  return (
+    <Panel
+      title="Partner batches with a manifest"
+      subtitle="Each census batch declares its schema version, source, external id, dates, record count, currency, salary control total and SHA-256 checksum. The manifest is checked against the file before any row is staged; the acknowledgement gives accepted, rejected and pending rows, row errors and created members."
+      action={
+        can(profile, "PROCESS_CENSUS") && (
+          <Button
+            icon={Plus}
+            onClick={() =>
+              setForm({ schemeRef: "", externalBatchId: "HR-" + Date.now().toString().slice(-6), schemaVersion: "census-1", source: "Employer HR system", asOf: new Date().toISOString().slice(0, 10), csv: CENSUS_HEADER + "\n", recordCount: "", controlTotal: "", checksum: "", correctsRef: "" })
+            }
+          >
+            Receive census batch
+          </Button>
+        )
+      }
+    >
+      <ErrorNote error={receipts.error || (!form && action.error)} />
+      <DataTable
+        rowKey={(r) => r.receiptRef}
+        rows={receipts.data}
+        loading={receipts.loading}
+        empty="No partner batches received"
+        onRowClick={open}
+        columns={[
+          { key: "receivedAt", label: "Received", render: (r) => when(r.receivedAt) },
+          { key: "receiptRef", label: "Receipt" },
+          { key: "targetRef", label: "Scheme" },
+          { key: "external", label: "External id", render: (r) => r.manifest.externalBatchId || "—" },
+          { key: "status", label: "Manifest", render: (r) => <Badge tone={r.status === "STAGED" ? "green" : "red"}>{r.status.toLowerCase()}</Badge> },
+          { key: "count", label: "Records", align: "right", render: (r) => r.manifest.actualCount + " (declared " + (r.manifest.declaredCount ?? "—") + ")" },
+          { key: "accepted", label: "Accepted", align: "right" },
+          { key: "rejected", label: "Rejected", align: "right" },
+          { key: "pending", label: "Pending", align: "right" },
+          { key: "correctsRef", label: "Corrects", render: (r) => r.correctsRef || "—" },
+        ]}
+      />
+      {form && (
+        <Drawer title="Receive a census batch" description="Paste the file and its manifest. 'Fill from the file' computes the count, salary total and checksum; change any of them to see the batch refused before staging." size="lg" onClose={() => setForm(null)}>
+          <FormGrid
+            submitLabel="Check manifest and stage"
+            busy={action.busy}
+            error={action.error}
+            onSubmit={submit}
+            extra={
+              <Button type="button" variant="secondary" onClick={fill}>
+                Fill from the file
+              </Button>
+            }
+          >
+            <Field label="Scheme reference">
+              <input value={form.schemeRef} onChange={set("schemeRef")} required placeholder="SCH-001" />
+            </Field>
+            <Field label="External batch id">
+              <input value={form.externalBatchId} onChange={set("externalBatchId")} required />
+            </Field>
+            <Field label="Schema version">
+              <input value={form.schemaVersion} onChange={set("schemaVersion")} required />
+            </Field>
+            <Field label="Source">
+              <input value={form.source} onChange={set("source")} required />
+            </Field>
+            <Field label="As of">
+              <input type="date" value={form.asOf} onChange={set("asOf")} />
+            </Field>
+            <Field label="Corrects receipt (optional)">
+              <input value={form.correctsRef} onChange={set("correctsRef")} placeholder="BR-00001" />
+            </Field>
+            <Field label="Census file (CSV)" full>
+              <textarea rows={6} className="ws-mono" value={form.csv} onChange={set("csv")} required />
+            </Field>
+            <Field label="Declared record count">
+              <input type="number" value={form.recordCount} onChange={set("recordCount")} required />
+            </Field>
+            <Field label="Declared salary total (BWP)">
+              <input value={form.controlTotal} onChange={set("controlTotal")} required />
+            </Field>
+            <Field label="Declared SHA-256 checksum" full>
+              <input className="ws-mono" value={form.checksum} onChange={set("checksum")} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {ack && (
+        <Drawer title={"Acknowledgement " + ack.receiptRef} description={ack.status === "STAGED" ? "Manifest matched; rows staged as " + ack.stagedRef + " (" + (ack.batchStatus || "") + ")" : "Rejected before staging: nothing was staged."} size="lg" onClose={() => setAck(null)}>
+          {ack.problems.length > 0 && <ErrorNote error={ack.problems.join(". ")} />}
+          <div className="stat-grid">
+            <Stat label="Accepted" value={ack.accepted} tone="green" />
+            <Stat label="Rejected" value={ack.rejected} tone={ack.rejected ? "red" : "green"} />
+            <Stat label="Pending commit" value={ack.pending} tone="amber" />
+            <Stat label="Records" value={ack.manifest.actualCount} note={"Declared " + (ack.manifest.declaredCount ?? "—")} />
+          </div>
+          {ack.rowErrors?.length > 0 && (
+            <DataTable
+              rowKey={(e) => e.line}
+              rows={ack.rowErrors}
+              columns={[
+                { key: "line", label: "Line" },
+                { key: "memberKey", label: "Member" },
+                { key: "error", label: "Error" },
+              ]}
+            />
+          )}
+          {ack.createdRefs?.length > 0 && <p className="subtitle">Members created or changed: {ack.createdRefs.join(", ")}</p>}
+          <pre className="ws-mono">{JSON.stringify(ack.manifest, null, 2)}</pre>
         </Drawer>
       )}
     </Panel>
