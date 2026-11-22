@@ -618,9 +618,22 @@ const blankConfirmation = () => ({
   providerHolds: true,
 });
 
+const blankCallback = () => ({
+  provider: "OrangeMoney",
+  providerTransactionId: "",
+  policyRef: "",
+  amount: "",
+  method: "Orange Money",
+  providerHolds: true,
+  repeat: true,
+  tamper: false,
+});
+
 function Inbound({ session, notify, profile, onChange }) {
   const inbound = useResource(session, "/integration/inbound", []);
   const [form, setForm] = useState(null);
+  const [signed, setSigned] = useState(null);
+  const [sent, setSent] = useState(null);
   const action = useAction(notify);
   const submit = async () => {
     const { providerHolds, ...notification } = form;
@@ -643,20 +656,41 @@ function Inbound({ session, notify, profile, onChange }) {
       notify(
         r.data.status === "APPLIED"
           ? "Payment applied to " + r.data.businessRef
-          : "Payment held in suspense: " + r.data.detail,
+          : r.data.status === "UNKNOWN"
+            ? "Outcome unknown: the provider did not answer the status query"
+            : "Payment held in suspense: " + r.data.detail,
       );
       setForm(null);
       inbound.reload();
       onChange();
     }
   };
+  const sendSigned = async () => {
+    const r = await action.run(() => request(session, "/integration/simulator/payment-callbacks", { method: "POST", body: signed }));
+    if (r) {
+      setSent(r.data);
+      setSigned(null);
+      inbound.reload();
+      onChange();
+    }
+  };
+  const requery = async (row) => {
+    const r = await action.run(() => request(session, `/integration/inbound/${row.id}/status-query`, { method: "POST" }));
+    if (r) {
+      notify(r.data.status === "UNKNOWN" ? "The provider still does not answer; asked " + r.data.statusQueries + " times" : "Resolved: " + r.data.status, "success");
+      inbound.reload();
+      onChange();
+    }
+  };
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const setS = (k) => (e) => setSigned({ ...signed, [k]: e.target.value });
+  const check = (k) => (e) => setSigned({ ...signed, [k]: e.target.checked });
   return (
     <>
       {form && (
         <Drawer
           title="Record a payment confirmation"
-          description="What a bank or wallet callback does. Premium is collected only when the provider confirms it holds the money; repeating a provider reference returns the first result."
+          description="What integration staff record from a bank or wallet. Premium is collected only when the provider confirms it holds the money; if the provider does not answer, the outcome stays unknown and is asked again — never re-sent."
           onClose={() => setForm(null)}
         >
           <FormGrid submitLabel="Send confirmation" busy={action.busy} error={action.error} onSubmit={submit}>
@@ -693,31 +727,98 @@ function Inbound({ session, notify, profile, onChange }) {
           </FormGrid>
         </Drawer>
       )}
+      {signed && (
+        <Drawer
+          title="Send a signed callback (simulated provider)"
+          description="The simulator plays the bank or wallet: it signs the settlement callback with the shared secret and a timestamp and sends it to the real callback endpoint, which checks the signature and replay window before anything changes."
+          onClose={() => setSigned(null)}
+        >
+          <FormGrid submitLabel="Sign and send" busy={action.busy} error={action.error} onSubmit={sendSigned}>
+            <Field label="Provider">
+              <input value={signed.provider} onChange={setS("provider")} required />
+            </Field>
+            <Field label="Provider transaction id">
+              <input value={signed.providerTransactionId} onChange={setS("providerTransactionId")} required />
+            </Field>
+            <Field label="Policy reference">
+              <input value={signed.policyRef} onChange={setS("policyRef")} required />
+            </Field>
+            <Field label="Amount (BWP)">
+              <input type="number" step="0.01" value={signed.amount} onChange={setS("amount")} required />
+            </Field>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={signed.providerHolds} onChange={check("providerHolds")} />
+              The provider has received this money
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={signed.repeat} onChange={check("repeat")} />
+              Send the same callback twice (provider retry)
+            </label>
+            <label className="checkbox-label">
+              <input type="checkbox" checked={signed.tamper} onChange={check("tamper")} />
+              Alter the amount after signing (tampered callback)
+            </label>
+          </FormGrid>
+        </Drawer>
+      )}
+      {sent && (
+        <Panel title="Last signed callback" subtitle={"Signature " + sent.signature.slice(0, 23) + "… · timestamp " + sent.timestamp}>
+          <DataTable
+            rowKey={(a) => a.attempt}
+            rows={sent.attempts}
+            searchFrom={99}
+            columns={[
+              { key: "attempt", label: "Attempt" },
+              { key: "status", label: "Result", render: (a) => <Badge>{a.status}</Badge> },
+              { key: "inboundId", label: "Inbound record", render: (a) => a.inboundId ?? "—" },
+              { key: "detail", label: "Detail" },
+            ]}
+          />
+        </Panel>
+      )}
       <Panel
         title="Inbound payment confirmations"
+        subtitle="Signed provider callbacks and staff-recorded confirmations, one per provider reference. UNKNOWN means the provider did not answer the status query: nothing was applied, and it is asked again."
         action={
           can(profile, "MANAGE_INTEGRATION") && (
-            <Button icon={Plus} onClick={() => setForm(blankConfirmation())}>
-              Record confirmation
-            </Button>
+            <div className="ws-row-actions">
+              <Button variant="secondary" icon={Send} onClick={() => setSigned(blankCallback())}>
+                Signed callback (simulator)
+              </Button>
+              <Button icon={Plus} onClick={() => setForm(blankConfirmation())}>
+                Record confirmation
+              </Button>
+            </div>
           )
         }
       >
-        <ErrorNote error={inbound.error} />
+        <ErrorNote error={inbound.error || (!form && !signed && action.error)} />
         <DataTable
           rows={inbound.data}
           loading={inbound.loading}
           empty="No confirmations received"
-          emptyDetail="Confirmations arrive from bank and wallet callbacks; record one to see how it is applied."
+          emptyDetail="Confirmations arrive from bank and wallet callbacks; send a signed one from the simulator to see how it is applied."
           searchPlaceholder="Search provider, reference, policy, outcome…"
           columns={[
             { key: "receivedAt", label: "Received", render: (r) => when(r.receivedAt) },
             { key: "provider", label: "Provider" },
             { key: "providerRef", label: "Provider ref" },
+            { key: "channel", label: "Channel", render: (r) => (r.channel === "SIGNED_CALLBACK" ? "Signed callback" : "Staff entry") },
             { key: "businessRef", label: "Policy" },
             { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
-            { key: "status", label: "Outcome", render: (r) => <Badge>{r.status}</Badge> },
+            { key: "status", label: "Outcome", render: (r) => <Badge tone={r.status === "UNKNOWN" ? "amber" : undefined}>{r.status}</Badge> },
             { key: "detail", label: "Detail", render: (r) => r.detail || "—" },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                r.status === "UNKNOWN" &&
+                can(profile, "MANAGE_INTEGRATION") && (
+                  <Button variant="secondary" icon={RefreshCw} busy={action.busy} onClick={() => requery(r)}>
+                    Ask provider again
+                  </Button>
+                ),
+            },
           ]}
         />
         <p className="subtitle">
