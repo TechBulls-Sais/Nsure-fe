@@ -119,6 +119,20 @@ export default function PartnerPortal({ session, notify }) {
               ]}
             />
           </Panel>
+          {/* NS-SH06-006: the intermediary's own commission statements. */}
+          <Panel title="My statements">
+            <DataTable
+              rows={p.statements || []}
+              rowKey={(r) => r.recordRef}
+              empty="No statements yet"
+              columns={[
+                { key: "recordRef", label: "Statement" },
+                { key: "lineCount", label: "Lines", align: "right" },
+                { key: "netAmount", label: "Net", align: "right", render: (r) => pula(r.netAmount) },
+                { key: "status", label: "Status", render: (r) => label(r.status) },
+              ]}
+            />
+          </Panel>
         </>
       )}
       {type === "EMPLOYER" && (
