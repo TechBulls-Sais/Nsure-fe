@@ -31,6 +31,7 @@ const TYPE_LABEL = {
   ADD_LIFE: "Add an insured life",
   REMOVE_LIFE: "Remove an insured life",
   REPLACE_LIFE: "Replace an insured life",
+  CONTACT: "Change contact details",
 };
 const ROUTE = {
   APPLY: ["Applies immediately", "green"],
@@ -751,6 +752,16 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                       ))}
                   </select>
                 </Field>
+                {form.type === "CONTACT" && (
+                  <>
+                    <Field label="New email address" hint="Blank keeps the current one">
+                      <input type="email" value={form.email || ""} onChange={set("email")} />
+                    </Field>
+                    <Field label="New mobile number" hint="Blank keeps the current one">
+                      <input value={form.phone || ""} onChange={set("phone")} />
+                    </Field>
+                  </>
+                )}
                 {form.type === "PAYER" && (
                   <>
                     <Field label="Payer's name">
