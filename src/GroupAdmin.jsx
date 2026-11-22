@@ -32,6 +32,7 @@ import {
   when,
 } from "./ui/workspace";
 import "./group-admin.css";
+import { ActivationWizard } from "./GroupLife";
 
 // Group administration (GL01-GL05): schemes and benefit categories, members as cover episodes with underwriting of
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
@@ -170,7 +171,7 @@ export default function GroupAdmin({ session, notify, profile }) {
       >
         {can(profile, "MANAGE_SCHEME") && (
           <Button icon={Plus} onClick={() => setCreating(true)}>
-            New scheme
+            New scheme (set-up)
           </Button>
         )}
       </Heading>
@@ -216,7 +217,7 @@ export default function GroupAdmin({ session, notify, profile }) {
                     {s.ref} · {s.sector}
                   </p>
                 </div>
-                <Badge>{label(s.status)}</Badge>
+                <Badge tone={s.status === "SETUP" ? "amber" : undefined}>{s.status === "SETUP" ? "In set-up" : label(s.status)}</Badge>
               </div>
               <div className="scheme-meta">
                 <div>
@@ -352,7 +353,7 @@ function NewSchemeForm({ session, notify, onCancel, onCreated }) {
   return (
     <Drawer
       title="New scheme"
-      description="The sponsor's scheme year and billing arrangement. Add benefit categories next."
+      description="Creates the master record in set-up: categories can be prepared, but there is no cover, census or billing until it is activated from an accepted quotation on the approved wording."
       onClose={onCancel}
     >
       <FormGrid onSubmit={submit} busy={action.busy} error={action.error} submitLabel="Create scheme">
@@ -382,6 +383,7 @@ function NewSchemeForm({ session, notify, onCancel, onCreated }) {
 
 function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
   const [tab, setTab] = useState("categories");
+  const [activating, setActivating] = useState(false);
   const detail = useResource(session, `/group/schemes/${encodeURIComponent(schemeRef)}`);
   const d = detail.data;
   const scheme = d?.scheme;
@@ -399,7 +401,12 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
             : undefined
         }
       >
-        {scheme && <Badge tone={scheme.status === "ACTIVE" ? "green" : scheme.status === "SUSPENDED" ? "amber" : undefined}>{label(scheme.status)}</Badge>}
+        {scheme && <Badge tone={scheme.status === "ACTIVE" ? "green" : ["SUSPENDED", "SETUP"].includes(scheme.status) ? "amber" : undefined}>{scheme.status === "SETUP" ? "In set-up" : label(scheme.status)}</Badge>}
+        {scheme?.status === "SETUP" && can(profile, "MANAGE_SCHEME") && (
+          <Button icon={ShieldCheck} onClick={() => setActivating(true)}>
+            Activate master policy
+          </Button>
+        )}
         {d && can(profile, "MANAGE_SCHEME") && !d.members.length && !d.censusBatches.length && !d.invoices.length && (
           <DeleteScheme session={session} notify={notify} scheme={scheme} onDeleted={onBack} />
         )}
@@ -440,9 +447,23 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
               ["timeline", "Timeline & rules"],
             ]}
           />
+          {activating && (
+            <ActivationWizard
+              session={session}
+              notify={notify}
+              scheme={d}
+              onClose={() => setActivating(false)}
+              onDone={() => {
+                setActivating(false);
+                detail.reload();
+              }}
+            />
+          )}
           {scheme.status !== "ACTIVE" && (
             <p className="ga-status-note" role="status">
-              {scheme.status === "SUSPENDED"
+              {scheme.status === "SETUP"
+                ? "This scheme is in set-up: prepare its categories, then activate it from an accepted quotation on the approved wording. Until then it takes no census, underwriting or billing."
+                : scheme.status === "SUSPENDED"
                 ? "This scheme is suspended: cover is suspended for its members, and census changes and underwriting decisions wait until it is reactivated."
                 : "This scheme is closed: members' cover has ended and is kept as history. Invoices, receipts and claims for earlier cover can still be recorded."}
             </p>
@@ -1682,8 +1703,23 @@ function TimelineTab({ session, detail }) {
   const timeline = useResource(session, `/group-life/schemes/${ref}/timeline`, []);
   const rules = useResource(session, `/group-life/schemes/${ref}/resolved-rules`, null);
   const r = rules.data;
+  const setup = detail.scheme.setup || {};
   return (
     <>
+      <Panel title="Contract" subtitle="The master policy's set-up terms and what it was activated on (NS-GL01-003/004).">
+        <div className="ws-kv">
+          <div><small>Accepted terms</small><strong>{detail.scheme.quoteRef || "—"}</strong></div>
+          <div><small>Wording</small><strong>{setup.wordingRef ? `${setup.wordingRef} v${setup.wordingVersion}` : "—"}</strong></div>
+          <div><small>Legal sponsor</small><strong>{setup.sponsorRef || "—"}</strong></div>
+          <div><small>Payer</small><strong>{setup.payerName || "—"}</strong></div>
+          <div><small>Broker</small><strong>{setup.brokerRef || "Direct"}</strong></div>
+          <div><small>Billing</small><strong>{setup.billingMethod ? `${label(detail.scheme.billingFrequency)} · ${label(setup.billingMethod)} · due day ${setup.billingDueDay}` : label(detail.scheme.billingFrequency)}</strong></div>
+          <div><small>Not actively at work</small><strong>{setup.aawRule === "DEFER" ? "Cover deferred until back at work" : "Referred to underwriting"}</strong></div>
+          <div><small>Partial cover</small><strong>{setup.partialCoverAllowed === false ? "Not allowed: all cover waits" : "Allowed: free cover in force"}</strong></div>
+          <div><small>Inception conditions</small><strong>{setup.inceptionConditions ? setup.inceptionConditions.split(", ").map(label).join(", ") : "—"}</strong></div>
+          <div><small>Activated</small><strong>{setup.activatedAt ? `${when(setup.activatedAt)} by ${setup.activatedBy}` : detail.scheme.status === "SETUP" ? "Not yet" : "Before set-up was recorded"}</strong></div>
+        </div>
+      </Panel>
       <Panel title="Master-policy timeline" subtitle="Quote versions and decisions, activation, plan approvals, renewals, suspensions, transfers and closure.">
         <ErrorNote error={timeline.error} />
         <DataTable

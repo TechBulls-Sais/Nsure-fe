@@ -162,20 +162,6 @@ function Quotes({ session, notify, profile, resource, onChange }) {
       onChange();
     }
   };
-  const activate = async () => {
-    const done = await action.run(
-      () =>
-        request(session, "/group-life/quotes/" + step.quote.ref + "/activation", {
-          method: "POST",
-          body: { inceptionDate: step.inceptionDate, wordingConfirmed: step.wordingConfirmed },
-        }),
-      "Master policy activated",
-    );
-    if (done) {
-      setStep(null);
-      onChange();
-    }
-  };
   const latest = {};
   (resource.data || []).forEach((x) => {
     if (!latest[x.ref] || latest[x.ref] < x.version) latest[x.ref] = x.version;
@@ -232,7 +218,7 @@ function Quotes({ session, notify, profile, resource, onChange }) {
                       </Button>
                     )}
                     {manage && r.status === "ACCEPTED" && (
-                      <Button onClick={() => setStep({ quote: r, kind: "activate", inceptionDate: today(), wordingConfirmed: false })}>Activate</Button>
+                      <Button onClick={() => setStep({ quote: r, kind: "activate" })}>Set up and activate</Button>
                     )}
                     {manage && !["ACTIVATED"].includes(r.status) && (
                       <Button
@@ -339,19 +325,16 @@ function Quotes({ session, notify, profile, resource, onChange }) {
         </Drawer>
       )}
       {step?.kind === "activate" && (
-        <Drawer title={"Activate " + step.quote.sponsorName} description="Creates the master policy from the accepted quotation." onClose={() => setStep(null)}>
-          <FormGrid submitLabel="Activate master policy" busy={action.busy} error={action.error} onSubmit={activate}>
-            <Field label="Inception date" full>
-              <input type="date" value={step.inceptionDate} onChange={(e) => setStep({ ...step, inceptionDate: e.target.value })} required />
-            </Field>
-            <Field label="Wording" full>
-              <label className="ri-product">
-                <input type="checkbox" checked={step.wordingConfirmed} onChange={(e) => setStep({ ...step, wordingConfirmed: e.target.checked })} />
-                <span>The approved scheme wording has been issued to the sponsor</span>
-              </label>
-            </Field>
-          </FormGrid>
-        </Drawer>
+        <ActivationWizard
+          session={session}
+          notify={notify}
+          quote={step.quote}
+          onClose={() => setStep(null)}
+          onDone={() => {
+            setStep(null);
+            onChange();
+          }}
+        />
       )}
     </>
   );
@@ -1058,5 +1041,289 @@ function SchemeEvents({ session, notify, profile, resource, schemes, onChange })
         </Drawer>
       )}
     </>
+  );
+}
+
+// ── contract set-up wizard (NS-GL01-003/004, AT-GL01-01) ───────────────────────────────────────
+
+const CONDITION_LABEL = {
+  SIGNED_PROPOSAL: "Signed proposal form received from the sponsor",
+  SIGNED_CENSUS: "Signed census received (the version the terms were rated on)",
+  FIRST_PREMIUM_OR_DEFERRAL: "First premium received, or a deferral agreed in writing",
+};
+const blankCategory = (quote) => ({
+  code: "ALL",
+  name: "All eligible employees",
+  benefitBasis: "SALARY_MULTIPLE",
+  salaryMultiple: quote?.salaryMultiple ?? 2,
+  fixedCover: "",
+  freeCoverLimit: quote?.freeCoverLimit ?? "",
+  ratePerMille: "",
+  minEntryAge: 18,
+  maxEntryAge: 64,
+});
+
+/**
+ * Puts a master policy in force from accepted terms, in steps: the accepted quotation, the legal sponsor and billing
+ * arrangement, member rules and categories, the approved wording and inception conditions, and a review the server
+ * checks before anything changes. Opened from a quotation (creates the scheme) or from a scheme in set-up.
+ */
+export function ActivationWizard({ session, notify, quote: given, scheme, onClose, onDone }) {
+  const quotes = useResource(session, given ? null : "/group-life/quotes", []);
+  const wordings = useResource(session, "/group-life/wordings", []);
+  const sponsors = useResource(session, "/group-life/sponsors", []);
+  const [page, setPage] = useState(0);
+  const [quoteRef, setQuoteRef] = useState(given?.ref || "");
+  const accepted = (quotes.data || []).filter((q) => q.status === "ACCEPTED" && !q.schemeRef);
+  const quote = given || accepted.find((q) => q.ref === quoteRef);
+  const hasCategories = (scheme?.categories || []).length > 0;
+  const [form, setForm] = useState(() => ({
+    inceptionDate: today(),
+    sponsorRef: given?.sponsorRef || "",
+    registrationNo: "",
+    payerName: "",
+    brokerRef: "",
+    billingMethod: "EFT",
+    billingDueDay: 1,
+    aawRule: "REFER",
+    partialCoverAllowed: true,
+    wordingRef: "",
+    conditions: [],
+    categories: [],
+  }));
+  const [check, setCheck] = useState(null);
+  const action = useAction(inlineErrors(notify));
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const categories = form.categories.length ? form.categories : quote && !hasCategories ? [blankCategory(quote)] : [];
+  const setCategory = (i, key, value) => setForm({ ...form, categories: categories.map((c, j) => (j === i ? { ...c, [key]: value } : c)) });
+  const required = check?.requiredConditions || Object.keys(CONDITION_LABEL);
+  const steps = ["Accepted terms", "Sponsor and billing", "Members and categories", "Wording and conditions", "Review"];
+  const body = () => {
+    const out = { ...form, categories: hasCategories ? undefined : categories.map((c) => ({ ...c, salaryMultiple: c.benefitBasis === "SALARY_MULTIPLE" ? c.salaryMultiple : null, fixedCover: c.benefitBasis === "FIXED" ? c.fixedCover : null, ratePerMille: c.ratePerMille === "" ? undefined : c.ratePerMille })) };
+    if (!out.sponsorRef) delete out.sponsorRef;
+    if (!out.brokerRef) delete out.brokerRef;
+    if (!out.payerName) delete out.payerName;
+    if (!out.registrationNo) delete out.registrationNo;
+    if (scheme) out.quoteRef = quoteRef;
+    return out;
+  };
+  const review = async () => {
+    const params = new URLSearchParams();
+    if (scheme) params.set("schemeRef", scheme.scheme.ref);
+    if (form.wordingRef) params.set("wordingRef", form.wordingRef);
+    form.conditions.forEach((c) => params.append("conditions", c));
+    const done = await action.run(() => request(session, "/group-life/quotes/" + quote.ref + "/activation-check?" + params));
+    if (done) setCheck(done.data);
+    setPage(4);
+  };
+  const submit = async () => {
+    const path = scheme ? "/group/schemes/" + scheme.scheme.ref + "/activation" : "/group-life/quotes/" + quote.ref + "/activation";
+    const done = await action.run(() => request(session, path, { method: "POST", body: body() }), "Master policy activated");
+    if (done) onDone(done.data);
+  };
+  const next = () => (page === 3 ? review() : setPage(page + 1));
+  const blocked = (page === 0 && !quote) || (page === 3 && !form.wordingRef);
+  // Missing rates are taken from the quotation's pricing on the server; every category needs its free cover.
+  const categoryProblem = !hasCategories && categories.some((c) => c.freeCoverLimit === "" || !c.code || !c.name);
+  return (
+    <Drawer size="lg" title={scheme ? "Activate " + scheme.scheme.name : "Set up " + (given?.sponsorName || "the master policy")} description={"Step " + (page + 1) + " of 5: " + steps[page]} onClose={onClose}>
+      <ol className="gl-steps" aria-label="Set-up steps">
+        {steps.map((label, i) => (
+          <li key={label} className={i === page ? "current" : i < page ? "done" : ""}>
+            {label}
+          </li>
+        ))}
+      </ol>
+      {page === 0 && (
+        <div className="ga-drawer-section">
+          {!given && (
+            <Field label="Accepted quotation" full hint="Only quotations the sponsor accepted, not yet activated.">
+              <select value={quoteRef} onChange={(e) => setQuoteRef(e.target.value)}>
+                <option value="">Choose a quotation</option>
+                {accepted.map((q) => (
+                  <option key={q.ref} value={q.ref}>
+                    {q.ref} v{q.version} · {q.sponsorName} · {pula(q.annualPremium)} a year
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {!given && !quotes.loading && accepted.length === 0 && <p className="ws-hint">No accepted quotation is waiting. Take one through approval and acceptance on Scheme lifecycle → Quotations first.</p>}
+          {quote && (
+            <div className="ws-kv">
+              <div><small>Quotation</small><strong>{quote.ref} v{quote.version}</strong></div>
+              <div><small>Sponsor</small><strong>{quote.sponsorName}</strong></div>
+              <div><small>Approved by</small><strong>{quote.decidedBy || "—"}</strong></div>
+              <div><small>Annual premium</small><strong>{pula(quote.annualPremium)}</strong></div>
+              <div><small>Free-cover limit</small><strong>{quote.freeCoverLimit == null ? "Not set (revise the quote)" : pula(quote.freeCoverLimit)}</strong></div>
+              <div><small>Benefits</small><strong>{quote.benefits.map((b) => BENEFIT[b] || b).join(", ")}</strong></div>
+            </div>
+          )}
+          {!scheme && (
+            <Field label="Inception date" full hint="The scheme year runs one year from here.">
+              <input type="date" value={form.inceptionDate} onChange={set("inceptionDate")} required />
+            </Field>
+          )}
+        </div>
+      )}
+      {page === 1 && (
+        <div className="field-grid">
+          <Field label="Legal sponsor" hint="A registered sponsor, or one created from the quotation's sponsor name.">
+            <select value={form.sponsorRef} onChange={set("sponsorRef")}>
+              <option value="">{quote?.sponsorName} (from the quotation)</option>
+              {(sponsors.data || []).map((s) => (
+                <option key={s.ref} value={s.ref}>
+                  {s.ref} · {s.legalName} ({s.status.toLowerCase()})
+                </option>
+              ))}
+            </select>
+          </Field>
+          {!form.sponsorRef && (
+            <Field label="Company registration number">
+              <input value={form.registrationNo} onChange={set("registrationNo")} maxLength={40} />
+            </Field>
+          )}
+          <Field label="Payer" hint="Leave blank when the sponsor pays.">
+            <input value={form.payerName} onChange={set("payerName")} maxLength={150} />
+          </Field>
+          <Field label="Broker (intermediary code)" hint="Optional, e.g. INT-00001.">
+            <input value={form.brokerRef} onChange={set("brokerRef")} maxLength={30} />
+          </Field>
+          <Field label="Billing method">
+            <select value={form.billingMethod} onChange={set("billingMethod")}>
+              <option value="EFT">EFT by the sponsor</option>
+              <option value="DEBIT_ORDER">Debit order</option>
+              <option value="STOP_ORDER">Payroll stop order</option>
+            </select>
+          </Field>
+          <Field label="Premium due day" hint="Monthly billing; day of the month 1-28.">
+            <input type="number" min="1" max="28" value={form.billingDueDay} onChange={set("billingDueDay")} required />
+          </Field>
+        </div>
+      )}
+      {page === 2 && (
+        <>
+          <div className="field-grid">
+            <Field label="Member not actively at work" hint="What a 'not at work' declaration on entry or increase does.">
+              <select value={form.aawRule} onChange={set("aawRule")}>
+                <option value="REFER">Refer all cover to underwriting</option>
+                <option value="DEFER">Defer cover until back at work</option>
+              </select>
+            </Field>
+            <Field label="Partial cover" hint="Whether cover up to the free-cover limit is admitted while the excess is underwritten.">
+              <select value={form.partialCoverAllowed ? "yes" : "no"} onChange={(e) => setForm({ ...form, partialCoverAllowed: e.target.value === "yes" })}>
+                <option value="yes">Allowed: free cover in force, excess pending</option>
+                <option value="no">Not allowed: all cover waits for underwriting</option>
+              </select>
+            </Field>
+          </div>
+          {hasCategories ? (
+            <p className="ws-hint">The scheme's categories ({scheme.categories.map((c) => c.code).join(", ")}) are used; each free-cover limit must be within the accepted terms.</p>
+          ) : (
+            <div className="ga-drawer-section">
+              <h3>Benefit categories</h3>
+              <p className="subtitle">From the quotation's design. Free cover may not exceed the accepted limit; leave the rate blank to use the quotation's.</p>
+              {categories.map((c, i) => (
+                <div key={i} className="field-grid gl-category-row">
+                  <Field label="Code"><input value={c.code} onChange={(e) => setCategory(i, "code", e.target.value.toUpperCase())} maxLength={20} required /></Field>
+                  <Field label="Name"><input value={c.name} onChange={(e) => setCategory(i, "name", e.target.value)} maxLength={100} required /></Field>
+                  <Field label="Basis">
+                    <select value={c.benefitBasis} onChange={(e) => setCategory(i, "benefitBasis", e.target.value)}>
+                      <option value="SALARY_MULTIPLE">Salary multiple</option>
+                      <option value="FIXED">Fixed cover</option>
+                    </select>
+                  </Field>
+                  {c.benefitBasis === "SALARY_MULTIPLE" ? (
+                    <Field label="Multiple"><input type="number" min="0.01" step="0.01" value={c.salaryMultiple} onChange={(e) => setCategory(i, "salaryMultiple", e.target.value)} required /></Field>
+                  ) : (
+                    <Field label="Fixed cover (BWP)"><input type="number" min="1" step="0.01" value={c.fixedCover} onChange={(e) => setCategory(i, "fixedCover", e.target.value)} required /></Field>
+                  )}
+                  <Field label="Free cover (BWP)"><input type="number" min="0" step="0.01" value={c.freeCoverLimit} onChange={(e) => setCategory(i, "freeCoverLimit", e.target.value)} required /></Field>
+                  <Field label="Rate ‰ / month"><input type="number" min="0.0001" step="0.0001" value={c.ratePerMille} onChange={(e) => setCategory(i, "ratePerMille", e.target.value)} placeholder="From the quote" /></Field>
+                  <Field label="Entry ages"><span className="gl-ages"><input type="number" min="0" max="100" value={c.minEntryAge} onChange={(e) => setCategory(i, "minEntryAge", e.target.value)} /> – <input type="number" min="0" max="100" value={c.maxEntryAge} onChange={(e) => setCategory(i, "maxEntryAge", e.target.value)} /></span></Field>
+                  {categories.length > 1 && (
+                    <Button variant="secondary" onClick={() => setForm({ ...form, categories: categories.filter((_, j) => j !== i) })}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <Button variant="secondary" icon={Plus} onClick={() => setForm({ ...form, categories: [...categories, { ...blankCategory(quote), code: "", name: "" }] })}>
+                Add a category
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+      {page === 3 && (
+        <div className="ga-drawer-section">
+          <Field label="Approved scheme wording" full hint="From the wording library; only approved group wording versions can be used.">
+            <select value={form.wordingRef} onChange={set("wordingRef")} required>
+              <option value="">Choose the wording</option>
+              {(wordings.data || []).map((w) => (
+                <option key={w.ref + "-" + w.version} value={w.ref}>
+                  {w.ref} v{w.version} · {w.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {!wordings.loading && !(wordings.data || []).length && <p className="ws-hint">No approved group wording is in the library yet; a scheme cannot be activated without one.</p>}
+          <div className="form-label full" role="group" aria-label="Inception conditions">
+            <span>Inception conditions met</span>
+            {required.map((c) => (
+              <label key={c} className="ri-product">
+                <input
+                  type="checkbox"
+                  checked={form.conditions.includes(c)}
+                  onChange={() => setForm({ ...form, conditions: form.conditions.includes(c) ? form.conditions.filter((x) => x !== c) : [...form.conditions, c] })}
+                />
+                <span>{CONDITION_LABEL[c] || c}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      {page === 4 && (
+        <div className="ga-drawer-section">
+          {check?.ready ? (
+            <p className="ga-paid">Everything activation needs is in place.</p>
+          ) : (
+            <>
+              <h3>Not ready yet</h3>
+              <ul className="uw-list">
+                {(check?.problems || []).map((p, i) => (
+                  <li key={i}>{p}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {categoryProblem && <ErrorNote error="Every category needs a code, a name and a free-cover limit." />}
+          <div className="ws-kv">
+            <div><small>Quotation</small><strong>{quote?.ref}</strong></div>
+            <div><small>Wording</small><strong>{form.wordingRef || "—"}</strong></div>
+            <div><small>Categories</small><strong>{hasCategories ? scheme.categories.map((c) => c.code).join(", ") : categories.map((c) => c.code).join(", ")}</strong></div>
+            <div><small>Not at work</small><strong>{form.aawRule === "DEFER" ? "Defer cover" : "Refer to underwriting"}</strong></div>
+            <div><small>Billing</small><strong>{form.billingMethod.replace("_", " ").toLowerCase()} · day {form.billingDueDay}</strong></div>
+          </div>
+        </div>
+      )}
+      <ErrorNote error={action.error} />
+      <div className="ws-form-actions">
+        {page > 0 && (
+          <Button variant="secondary" onClick={() => setPage(page - 1)}>
+            Back
+          </Button>
+        )}
+        {page < 4 ? (
+          <Button onClick={next} disabled={blocked} busy={action.busy}>
+            {page === 3 ? "Check and review" : "Next"}
+          </Button>
+        ) : (
+          <Button onClick={submit} busy={action.busy} disabled={categoryProblem}>
+            Activate master policy
+          </Button>
+        )}
+      </div>
+    </Drawer>
   );
 }
