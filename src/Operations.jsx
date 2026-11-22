@@ -456,6 +456,43 @@ function Documents({ session, notify, profile }) {
     }
   };
   const retention = docs.data?.retention || {};
+  // NS-SH09A-006: disposal of a document past retention needs a second person; links are short-lived and single-use.
+  const disposals = useResource(session, "/ops/documents/disposals", []);
+  const manageConfig = can(profile, "MANAGE_CONFIG");
+  const requestDisposal = async (doc) => {
+    const reason = window.prompt("Why should " + doc.fileName + " be disposed of? Another person approves it.");
+    if (!reason) return;
+    const done = await action.run(
+      () => request(session, "/ops/documents/disposals", { method: "POST", body: { docKey: doc.docKey, reason } }),
+      "Disposal requested; another person approves it.",
+    );
+    if (done) disposals.reload();
+  };
+  const decideDisposal = async (d, approve) => {
+    const done = await action.run(
+      () => request(session, `/ops/documents/disposals/${d.id}/${approve ? "approve" : "reject"}`, { method: "POST" }),
+      approve ? "Document disposed of: file deleted and removed from search." : "Disposal rejected.",
+    );
+    if (done) {
+      disposals.reload();
+      docs.reload();
+    }
+  };
+  const openByLink = async (doc) => {
+    const kind = doc.docKey.startsWith("P:") ? "POLICY" : "CLAIM";
+    const made = await action.run(() =>
+      request(session, "/portfolio/document-links", { method: "POST", body: { kind, documentId: Number(doc.docKey.slice(2)) } }),
+    );
+    if (!made) return;
+    try {
+      const url = URL.createObjectURL(await fetchFile(session, made.data.path));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      notify("Opened through a single-use link that expired on use (valid until " + when(made.data.expiresAt) + ").");
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
   return (
     <>
       {can(profile, "READ_CLAIM") && <Quarantine session={session} notify={notify} profile={profile} onChange={docs.reload} />}
@@ -584,9 +621,19 @@ function Documents({ session, notify, profile }) {
               label: "",
               render: (r) => (
                 <span className="ws-row-actions">
+                  {!r.docKey.startsWith("U:") && r.status !== "DISPOSED" && (
+                    <Button variant="secondary" icon={Eye} busy={action.busy} onClick={() => openByLink(r)}>
+                      Open
+                    </Button>
+                  )}
                   {can(profile, "READ_AUDIT") && !r.docKey.startsWith("U:") && (
                     <Button variant="secondary" onClick={() => setAccess(r)}>
                       Access log
+                    </Button>
+                  )}
+                  {manageConfig && r.disposalEligible && r.status !== "DISPOSED" && !r.docKey.startsWith("U:") && (
+                    <Button variant="secondary" onClick={() => requestDisposal(r)}>
+                      Dispose
                     </Button>
                   )}
                   {can(profile, "UPDATE_POLICY") &&
@@ -605,6 +652,38 @@ function Documents({ session, notify, profile }) {
           ]}
         />
       </Panel>
+      {(disposals.data || []).length > 0 && (
+        <Panel title="Disposals" subtitle="Requested by one person, approved by another. An approved disposal deletes the file and its search text; the record stays.">
+          <DataTable
+            rows={disposals.data}
+            rowKey={(d) => d.id}
+            searchFrom={99}
+            columns={[
+              { key: "fileName", label: "Document", render: (d) => d.fileName + " · " + d.docKey },
+              { key: "reason", label: "Reason" },
+              { key: "requestedBy", label: "Asked", render: (d) => d.requestedBy + " · " + when(d.requestedAt) },
+              { key: "status", label: "Status", render: (d) => <Badge tone={d.status === "DISPOSED" ? "red" : d.status === "PENDING" ? "amber" : undefined}>{d.status}</Badge> },
+              {
+                key: "act",
+                label: "",
+                render: (d) =>
+                  d.status === "PENDING" &&
+                  manageConfig &&
+                  d.requestedBy !== profile?.username && (
+                    <span className="ws-row-actions">
+                      <Button busy={action.busy} onClick={() => decideDisposal(d, true)}>
+                        Approve
+                      </Button>
+                      <Button variant="secondary" busy={action.busy} onClick={() => decideDisposal(d, false)}>
+                        Reject
+                      </Button>
+                    </span>
+                  ),
+              },
+            ]}
+          />
+        </Panel>
+      )}
       {access && <AccessLog session={session} doc={access} onClose={() => setAccess(null)} />}
       {hold && (
         <Drawer title={"Legal hold on " + hold.doc.fileName} description="The document cannot be disposed of while the hold stands." onClose={() => setHold(null)}>
