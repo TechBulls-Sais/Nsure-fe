@@ -1,5 +1,5 @@
 import Select from "./ui/Select";
-import React, { useState, useId } from "react";
+import React, { useEffect, useState, useId } from "react";
 import {
   Plus,
   ArrowLeft,
@@ -22,6 +22,8 @@ import {
 import "./product-config.css";
 import { StepReveal, BorderBeam } from "./ui/animated";
 import { can } from "./ui/workspace";
+import { request } from "./api";
+import { ConfigStatus, ImportPackageButton, ReleaseDrawer } from "./configuration/ProductRelease";
 
 const base = {
   name: "",
@@ -42,6 +44,12 @@ const base = {
   channels: ["Broker portal"],
   wording: "Standard life wording · v1.0",
   approvals: false,
+  // SH02: the catalogue product and plan it is sold as (blank = a new product named like the configuration, plan
+  // "Standard"), an optional rate table, and the typed rules (each with its owner) the release checklist needs.
+  catalogueProduct: "",
+  plan: "",
+  rateTableRef: "",
+  rules: {},
 };
 const steps = [
   ["The essentials", "Name, identity & launch date", Layers3],
@@ -66,24 +74,24 @@ function Field({ label, children, hint }) {
   );
 }
 function Status({ value }) {
-  return (
-    <span
-      className={
-        "badge " +
-        (value === "Active"
-          ? "green"
-          : value === "In review"
-            ? "amber"
-            : "gray")
-      }
-    >
-      {value}
-    </span>
-  );
+  return <ConfigStatus value={value} />;
 }
 const amount = (v, c = "BWP") => c + " " + Number(v).toLocaleString("en-GB");
 
-export default function ProductConfig({ profile, records, setRecords, notify, onSaveRecord }) {
+export default function ProductConfig({ session, products = [], profile, records, setRecords, notify, onSaveRecord }) {
+  // The typed rule catalogue (NS-SH02-001/005): type, unit, range or values, and the owner of each rule.
+  const [ruleCatalog, setRuleCatalog] = useState([]);
+  const [releasing, setReleasing] = useState(null);
+  useEffect(() => {
+    if (!session) return;
+    let live = true;
+    request(session, "/portfolio/product-rules")
+      .then((r) => live && setRuleCatalog(r.data || []))
+      .catch(() => live && setRuleCatalog([]));
+    return () => {
+      live = false;
+    };
+  }, [session]);
   // The product-config endpoints' codes: create (POST), edit (PUT), and making a configuration Active.
   const canCreate = can(profile, "CREATE_PRODUCT");
   const canUpdate = can(profile, "UPDATE_PRODUCT");
@@ -128,11 +136,16 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
             benefits: [...record.benefits],
             channels: [...record.channels],
             approvals: false,
+            catalogueProduct: copy ? "" : record.catalogueProduct || "",
+            plan: copy ? "" : record.plan || "",
+            rateTableRef: record.rateTableRef || "",
+            rules: { ...(record.rules || {}) },
           }
         : {
             ...base,
             benefits: [...base.benefits],
             channels: [...base.channels],
+            rules: {},
           },
     );
     setStep(0);
@@ -228,7 +241,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
     setEditing(null);
     notify(
       status === "Active"
-        ? "Product configuration activated."
+        ? "Product configuration activated: its plan is on sale (or scheduled for its effective date)."
         : status === "Withdrawn"
           ? "Product configuration withdrawn from sale."
         : status === "In review"
@@ -257,6 +270,13 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
               time.
             </p>
           </div>
+          {canCreate && session && (
+            <ImportPackageButton
+              session={session}
+              notify={notify}
+              onImported={(saved) => setRecords((list) => [saved, ...list])}
+            />
+          )}
           {canCreate && (
             <button className="btn primary" onClick={() => start()}>
               <Plus className="icon icon-sm" />
@@ -324,7 +344,7 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
           </div>
           <div className="filters">
             <div className="filter-tabs">
-              {["All", "Draft", "In review", "Active"].map((s) => (
+              {["All", "Draft", "In review", "Approved", "Scheduled", "Active", "Withdrawn"].map((s) => (
                 <button
                   className={"filter-tab " + (s === filter ? "active" : "")}
                   key={s}
@@ -372,7 +392,13 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                         </div>
                       </div>
                     </td>
-                    <td>{p.domain}</td>
+                    <td>
+                      {p.domain}
+                      <div className="person-sub">
+                        sells as {p.sellsAs || p.name} – {p.sellsAsPlan || "Standard"}
+                        {p.published ? (p.status === "Active" ? " · on sale" : " · off sale") : ""}
+                      </div>
+                    </td>
                     <td>{p.benefits.length} configured</td>
                     <td>v{p.version}.0</td>
                     <td>
@@ -387,6 +413,15 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                         >
                           {canUpdate ? "Configure" : "View"} <ChevronRight size={14} />
                         </button>
+                        {session && (
+                          <button
+                            className="text-link"
+                            onClick={() => setReleasing(p)}
+                            aria-label={"Release " + p.name}
+                          >
+                            Release
+                          </button>
+                        )}
                         {canCreate && (
                           <button
                             className="icon-btn"
@@ -412,9 +447,22 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
           </div>
           <div className="table-footer">
             {filtered.length} configurations
-            <span>Saved on the server · every save keeps a version</span>
+            <span>Saved on the server · every save keeps a version · activation puts the plan on sale</span>
           </div>
         </section>
+        {releasing && (
+          <ReleaseDrawer
+            session={session}
+            profile={profile}
+            notify={notify}
+            config={releasing}
+            onClose={() => setReleasing(null)}
+            onChanged={(saved) => {
+              setRecords((list) => list.map((p) => (p.id === saved.id ? saved : p)));
+              setReleasing(saved);
+            }}
+          />
+        )}
       </>
     );
   return (
@@ -675,6 +723,35 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                     />
                   </Field>
                 </div>
+                <h3 className="section-title">Where it is sold</h3>
+                <div className="field-grid">
+                  <Field
+                    label="Catalogue product"
+                    hint="Leave empty to release it as a new product with this configuration's name."
+                  >
+                    <input
+                      className="input"
+                      list="config-catalogue-products"
+                      value={editing.catalogueProduct}
+                      placeholder={editing.name || "New product"}
+                      onChange={(e) => update("catalogueProduct", e.target.value)}
+                    />
+                  </Field>
+                  <datalist id="config-catalogue-products">
+                    {products.map((p) => (
+                      <option key={p.name} value={p.name} />
+                    ))}
+                  </datalist>
+                  <Field label="Plan" hint="The plan quoting offers, e.g. Plus. Empty means Standard.">
+                    <input
+                      className="input"
+                      value={editing.plan}
+                      maxLength={60}
+                      placeholder="Standard"
+                      onChange={(e) => update("plan", e.target.value)}
+                    />
+                  </Field>
+                </div>
               </div>
             )}
             {step === 2 && (
@@ -748,9 +825,84 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                   ))}
                 </div>
                 <p className="config-field-hint">
-                  Channel selections are descriptive and do not change portal
-                  access.
+                  Channel selections do not change portal access. Selling through the broker portal needs a
+                  commission rule for the product before release.
                 </p>
+                <h3 className="section-title">Product rules</h3>
+                <p className="config-field-hint">
+                  Typed values with an owner each. Nothing entered here is executed. Release needs the age basis,
+                  the refund and the termination rules.
+                </p>
+                <div className="field-grid">
+                  {ruleCatalog.map((r) => {
+                    const value = editing.rules?.[r.key];
+                    const setRule = (v) => update("rules", { ...(editing.rules || {}), [r.key]: v });
+                    const label =
+                      r.label + (r.unit ? " (" + r.unit + ")" : "") + (r.releaseGroup ? " *" : "");
+                    const hint = r.owner + (r.min != null ? " · " + r.min + "–" + r.max : "") + " · " + r.help;
+                    if (r.type === "ENUM")
+                      return (
+                        <Field key={r.key} label={label} hint={hint}>
+                          <select
+                            className="input"
+                            value={value ?? ""}
+                            onChange={(e) => setRule(e.target.value || null)}
+                          >
+                            <option value="">Not set</option>
+                            {r.allowed.map((a) => (
+                              <option key={a} value={a}>
+                                {a.toLowerCase().replaceAll("_", " ")}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      );
+                    if (r.type === "LIST")
+                      return (
+                        <Field key={r.key} label={label} hint={hint}>
+                          <div className="config-rule-list">
+                            {r.allowed.map((a) => (
+                              <label key={a} className="checkbox-label">
+                                <input
+                                  type="checkbox"
+                                  checked={(value || []).includes(a)}
+                                  onChange={() =>
+                                    setRule(
+                                      (value || []).includes(a)
+                                        ? (value || []).filter((x) => x !== a)
+                                        : [...(value || []), a],
+                                    )
+                                  }
+                                />
+                                <span>{a.toLowerCase().replaceAll("_", " ")}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </Field>
+                      );
+                    return (
+                      <Field key={r.key} label={label} hint={hint}>
+                        <input
+                          className="input"
+                          type="number"
+                          min={r.min ?? undefined}
+                          max={r.max ?? undefined}
+                          value={value ?? ""}
+                          onChange={(e) => setRule(e.target.value === "" ? null : e.target.value)}
+                        />
+                      </Field>
+                    );
+                  })}
+                  <Field label="Rate table (optional)" hint="A rate table of this product's plan, e.g. RT-00001. Empty: the flat premium above.">
+                    <input
+                      className="input"
+                      value={editing.rateTableRef}
+                      maxLength={20}
+                      placeholder="RT-00001"
+                      onChange={(e) => update("rateTableRef", e.target.value.toUpperCase())}
+                    />
+                  </Field>
+                </div>
               </div>
             )}
             {step === 3 && (
@@ -792,6 +944,16 @@ export default function ProductConfig({ profile, records, setRecords, notify, on
                     ],
                     ["Grace period", editing.grace + " days"],
                     ["Underwriting", editing.underwriting],
+                    [
+                      "Sold as",
+                      (editing.catalogueProduct || editing.name || "New product") + " – " + (editing.plan || "Standard"),
+                    ],
+                    ["Rates", editing.rateTableRef ? "Rate table " + editing.rateTableRef : "Flat premium"],
+                    [
+                      "Rules set",
+                      Object.values(editing.rules || {}).filter((v) => v !== null && v !== "" && !(Array.isArray(v) && !v.length))
+                        .length + " of " + ruleCatalog.length,
+                    ],
                   ].map(([k, v]) => (
                     <div key={k}>
                       <small>{k}</small>

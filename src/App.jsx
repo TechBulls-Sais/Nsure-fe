@@ -2184,6 +2184,8 @@ export default function App() {
             <RateTables session={session} notify={notify} profile={profile} />
           ) : view === "product-config" ? (
             <ProductConfig
+              session={session}
+              products={products}
               profile={profile}
               records={productConfigs}
               setRecords={setProductConfigs}

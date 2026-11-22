@@ -672,3 +672,13 @@
     font-size: 23px;
   }
 }
+
+/* SH02 typed rules: list values as compact checkboxes. */
+.config-rule-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.config-rule-list .checkbox-label {
+  font-size: 0.85rem;
+}
