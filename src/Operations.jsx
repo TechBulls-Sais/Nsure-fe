@@ -36,12 +36,14 @@ export default function Operations({ session, notify, profile, go }) {
           ["queue", "Queue"],
           ["workflow", "Workflows & calendar"],
           (can(profile, "READ_POLICY") || can(profile, "READ_CLAIM")) && ["documents", "Documents"],
+          can(profile, "READ_PRODUCT") && ["templates", "Document templates"],
           ["partners", "Partner requests"],
         ].filter(Boolean)}
       />
       {tab === "queue" && <Queue session={session} notify={notify} resource={queue} go={go} me={me} profile={profile} />}
       {tab === "workflow" && <Workflow session={session} notify={notify} profile={profile} />}
       {tab === "documents" && <Documents session={session} notify={notify} profile={profile} />}
+      {tab === "templates" && <DocumentTemplates session={session} notify={notify} profile={profile} />}
       {tab === "partners" && <Partners session={session} notify={notify} profile={profile} onChange={queue.reload} />}
     </>
   );
@@ -690,6 +692,174 @@ function Documents({ session, notify, profile }) {
           <FormGrid submitLabel="Place hold" busy={action.busy} error={action.error} onSubmit={() => save(hold.doc, true, hold.reason)}>
             <Field label="Reason" full>
               <textarea value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} rows={3} required />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+/**
+ * NS-SH09A-002 template designer: generation templates per document kind, validated before saving and publication,
+ * a sample preview, publication by a second person (the sample's hash is kept), and generation on a policy.
+ */
+function DocumentTemplates({ session, notify, profile }) {
+  const data = useResource(session, "/portfolio/document-templates", null);
+  const action = useAction(notify);
+  const [draft, setDraft] = useState(null);
+  const [generate, setGenerate] = useState(null);
+  const fields = data.data?.fields || {};
+  const openPdf = (blob) => {
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  const preview = async () => {
+    try {
+      const response = await fetch("/api/portfolio/document-templates/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
+        body: JSON.stringify(draft),
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).message || "Preview failed");
+      openPdf(await response.blob());
+    } catch (e) {
+      notify(e.message, "error");
+    }
+  };
+  const save = async () => {
+    const done = await action.run(
+      () => request(session, "/portfolio/document-templates", { method: "POST", body: draft }),
+      "Draft saved. Another person publishes it.",
+    );
+    if (done) {
+      setDraft(null);
+      data.reload();
+    }
+  };
+  const approve = async (t) => {
+    const done = await action.run(
+      () => request(session, `/portfolio/document-templates/${t.code}/versions/${t.versionNo}/approve`, { method: "POST" }),
+      `${t.code} v${t.versionNo} published.`,
+    );
+    if (done) data.reload();
+  };
+  const run = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/portfolio/policies/" + encodeURIComponent(generate.policyRef.trim().toUpperCase()) + "/documents/generate", {
+          method: "POST",
+          body: { templateCode: generate.code },
+        }),
+      "Document issued and filed on the policy with the template version.",
+    );
+    if (done) setGenerate(null);
+  };
+  return (
+    <>
+      <Panel
+        title="Document templates"
+        subtitle="Separate templates for schedules, certificates, invoices, letters and claim letters. Each version is validated (merge fields, required fields, {{#if}} clauses, page limit) and published by someone other than its author."
+        action={
+          can(profile, "UPDATE_PRODUCT") && (
+            <Button icon={Pencil} onClick={() => setDraft({ code: "", kind: "LETTER", title: "", body: "", requiredFields: "", maxPages: 2 })}>
+              New template
+            </Button>
+          )
+        }
+      >
+        <ErrorNote error={data.error || action.error} />
+        <DataTable
+          rows={data.data?.templates}
+          loading={data.loading}
+          rowKey={(t) => t.code + t.versionNo}
+          columns={[
+            { key: "code", label: "Template", render: (t) => <span className="ws-mono">{t.code} v{t.versionNo}</span> },
+            { key: "kind", label: "Kind", render: (t) => label(t.kind) },
+            { key: "title", label: "Title" },
+            { key: "status", label: "Status", render: (t) => <Badge tone={t.status === "APPROVED" ? "green" : t.status === "DRAFT" ? "amber" : undefined}>{label(t.status)}</Badge> },
+            {
+              key: "approvedBy",
+              label: "Published",
+              render: (t) => (t.approvedBy ? `${t.approvedBy} · ${when(t.approvedAt)}` : "Drafted by " + t.createdBy),
+            },
+            {
+              key: "act",
+              label: "",
+              render: (t) => (
+                <span className="ws-row-actions">
+                  {t.status === "DRAFT" && can(profile, "ACTIVATE_PRODUCT") && t.createdBy !== profile?.username && (
+                    <Button icon={CheckCheck} busy={action.busy} onClick={() => approve(t)}>
+                      Publish
+                    </Button>
+                  )}
+                  {t.status !== "RETIRED" && can(profile, "UPDATE_PRODUCT") && (
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        setDraft({ code: t.code, kind: t.kind, title: t.title, body: String(t.body).replaceAll("\\n", "\n"), requiredFields: t.requiredFields || "", maxPages: t.maxPages, locked: true })
+                      }
+                    >
+                      New version
+                    </Button>
+                  )}
+                  {t.status === "APPROVED" && t.kind !== "CLAIM_LETTER" && (can(profile, "UPDATE_POLICY") || can(profile, "CREATE_POLICY")) && (
+                    <Button variant="secondary" onClick={() => setGenerate({ code: t.code, policyRef: "" })}>
+                      Issue for a policy
+                    </Button>
+                  )}
+                </span>
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      {draft && (
+        <Drawer title={draft.locked ? "New version of " + draft.code : "New document template"} size="lg" onClose={() => setDraft(null)}>
+          <FormGrid
+            submitLabel="Save draft"
+            busy={action.busy}
+            error={action.error}
+            onSubmit={save}
+            extra={
+              <Button type="button" variant="secondary" onClick={preview}>
+                Preview sample
+              </Button>
+            }
+          >
+            <Field label="Code">
+              <input value={draft.code} disabled={draft.locked} onChange={(e) => setDraft({ ...draft, code: e.target.value.toUpperCase() })} required />
+            </Field>
+            <Field label="Kind">
+              <select value={draft.kind} disabled={draft.locked} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
+                {Object.keys(fields).map((k) => (
+                  <option key={k} value={k}>
+                    {label(k)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Title" full>
+              <input value={draft.title} maxLength={150} onChange={(e) => setDraft({ ...draft, title: e.target.value })} required />
+            </Field>
+            <Field label="Body" full hint={"Merge fields: " + (fields[draft.kind] || []).map((f) => `{{${f}}}`).join(" ") + " · conditional: {{#if field}} … {{/if}}"}>
+              <textarea rows={10} value={draft.body} maxLength={4000} onChange={(e) => setDraft({ ...draft, body: e.target.value })} required />
+            </Field>
+            <Field label="Required fields" hint="Comma-separated; generation is refused without them">
+              <input value={draft.requiredFields} onChange={(e) => setDraft({ ...draft, requiredFields: e.target.value })} />
+            </Field>
+            <Field label="Page limit">
+              <input type="number" min="1" max="20" value={draft.maxPages} onChange={(e) => setDraft({ ...draft, maxPages: Number(e.target.value) })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+      {generate && (
+        <Drawer title={"Issue " + generate.code} description="Rendered from the policy's data now and filed on the policy with the template version and checksum." onClose={() => setGenerate(null)}>
+          <FormGrid submitLabel="Issue document" busy={action.busy} error={action.error} onSubmit={run}>
+            <Field label="Policy reference">
+              <input value={generate.policyRef} onChange={(e) => setGenerate({ ...generate, policyRef: e.target.value })} required />
             </Field>
           </FormGrid>
         </Drawer>
