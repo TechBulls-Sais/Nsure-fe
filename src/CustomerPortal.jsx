@@ -209,6 +209,8 @@ export default function CustomerPortal({
   const [answers, setAnswers] = useState({});
   const [occupation, setOccupation] = useState("");
   const [appDeclared, setAppDeclared] = useState(false);
+  const [terms, setTerms] = useState([]);
+  const [termYears, setTermYears] = useState("");
   const applications = shop?.applications || [];
   const offers = shop?.offers || {};
   useEffect(() => {
@@ -222,6 +224,13 @@ export default function CustomerPortal({
     request(session, "/portfolio/shop/questions?product=" + encodeURIComponent(choice))
       .then((r) => live && setQuestions(r.data || []))
       .catch(() => live && setQuestions([]));
+    request(session, "/portfolio/shop/terms?product=" + encodeURIComponent(choice))
+      .then((r) => {
+        if (!live) return;
+        setTerms(r.data || []);
+        setTermYears((r.data || []).length ? String(Math.max(...r.data)) : "");
+      })
+      .catch(() => live && setTerms([]));
     return () => {
       live = false;
     };
@@ -346,6 +355,7 @@ export default function CustomerPortal({
           ...(rated ? { lives: livesBody(lives) } : {}),
           disclosures: answers,
           occupation: occupation || undefined,
+          ...(terms.length && termYears ? { termYears: Number(termYears) } : {}),
           declarationAccepted: appDeclared,
         },
       });
@@ -1239,6 +1249,18 @@ export default function CustomerPortal({
                       )}
                       <fieldset className="customer-tiers customer-questions">
                         <legend>A few questions about you</legend>
+                        {terms.length > 0 && (
+                          <label className="customer-question">
+                            <span>Policy term</span>
+                            <select className="input" value={termYears} onChange={(e) => setTermYears(e.target.value)}>
+                              {terms.map((t) => (
+                                <option key={t} value={String(t)}>
+                                  {t} years (cover ends at age 70 if that comes first)
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        )}
                         <label className="customer-question">
                           <span>Your occupation</span>
                           <input

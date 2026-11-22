@@ -312,6 +312,15 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               <small>Cover from</small>
               <strong>{p.coverStartDate || "—"}</strong>
             </div>
+            {(p.termYears || p.coverEndDate) && (
+              <div>
+                <small>Cover ends</small>
+                <strong>
+                  {p.coverEndDate || "When cover starts"}
+                  {p.termYears ? " · " + p.termYears + "-year term or age 70, whichever is earlier" : ""}
+                </strong>
+              </div>
+            )}
             <div>
               <small>Next premium due</small>
               <strong>{p.nextPremiumDue || (p.coverStatus === "Ended" ? "None: the policy has ended" : "—")}</strong>
@@ -1033,6 +1042,17 @@ function Benefits({ session, notify, profile, onChange }) {
       reload();
     }
   };
+  // Section 06 Term Life: cover ends at the selected term or the cessation age (also run daily).
+  const runTermEnds = async () => {
+    const done = await action.run(() => request(session, "/servicing/term-ends/run", { method: "POST" }));
+    if (done) {
+      notify(
+        done.data.created ? "Cover ended at term on " + done.data.refs.join(", ") : "No policy has reached the end of its cover",
+        "success",
+      );
+      reload();
+    }
+  };
   const decide = async (approve, note) => {
     const path =
       deciding.kind === "benefit"
@@ -1094,9 +1114,14 @@ function Benefits({ session, notify, profile, onChange }) {
         subtitle="Cashback, return of premium, maturity and surrender values raised from each product's rules. The run raises each benefit once when it falls due."
         action={
           can(profile, "MANAGE_SERVICING") && (
-            <Button icon={Play} busy={action.busy} onClick={run}>
-              Run benefit run
-            </Button>
+            <span className="ws-row-actions">
+              <Button icon={Play} busy={action.busy} onClick={run}>
+                Run benefit run
+              </Button>
+              <Button variant="secondary" busy={action.busy} onClick={runTermEnds}>
+                End cover at term
+              </Button>
+            </span>
           )
         }
       >
@@ -1363,6 +1388,7 @@ function Rules({ session, notify, profile }) {
           ]}
         />
       </Panel>
+      <Plans session={session} notify={notify} profile={profile} products={products.data || []} />
       <Panel
         title="Servicing rules"
         subtitle="Each product's servicing rules: whether a late premium restores cover by itself, backdating, review and cessation ages, how a re-added life's waiting period is treated, when removing a life needs approval, the period without cover before lapse and the cooling-off period. Seeded values are demo defaults pending the insurer's approved rules."
@@ -1396,6 +1422,7 @@ function Rules({ session, notify, profile }) {
             },
             { key: "noCoverMonths", label: "Lapses after", render: (r) => r.noCoverMonths + " months without cover" },
             { key: "coolingOffDays", label: "Cooling-off", render: (r) => r.coolingOffDays + " days" },
+            { key: "termOptions", label: "Terms sold", render: (r) => (r.termOptions ? r.termOptions + " years" : "—") },
             {
               key: "act",
               label: "",
@@ -1508,8 +1535,117 @@ function Rules({ session, notify, profile }) {
                 <Field label="Cooling-off (days)">
                   <input type="number" min="0" max="90" value={form.coolingOffDays} onChange={set("coolingOffDays")} required />
                 </Field>
+                <Field label="Policy terms sold (years)" hint="e.g. 10,12,15; blank when the product has no selected term">
+                  <input value={form.termOptions || ""} onChange={set("termOptions")} />
+                </Field>
               </>
             )}
+          </FormGrid>
+        </Drawer>
+      )}
+    </>
+  );
+}
+
+// ── saleable plans (section 06 product packs) ───────────────────────────────────────────────────
+
+function Plans({ session, notify, profile, products }) {
+  const [product, setProduct] = useState("Care Cash");
+  const plans = useResource(session, can(profile, "READ_PRODUCT") ? "/portfolio/products/" + encodeURIComponent(product) + "/tiers" : null, []);
+  const [form, setForm] = useState(null);
+  const save = useAction(notify);
+  const manage = can(profile, "UPDATE_TIER");
+  if (!can(profile, "READ_PRODUCT")) return null;
+  const submit = async () => {
+    const { name, ...body } = form;
+    const done = await save.run(
+      () =>
+        request(session, "/portfolio/products/" + encodeURIComponent(product) + "/tiers/" + encodeURIComponent(name), {
+          method: "PUT",
+          body,
+        }),
+      "Plan saved",
+    );
+    if (done) {
+      plans.setData(done.data);
+      setForm(null);
+    }
+  };
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  return (
+    <>
+      <Panel
+        title="Plans"
+        subtitle="The saleable plans (tiers) of each product: cover, premium and benefits. Issued policies keep the cover and premium they were sold with; a withdrawn plan is no longer sold. Premiums of the seeded plans are demo values pending the approved tariff."
+        action={
+          <span className="ws-row-actions">
+            <select aria-label="Product" value={product} onChange={(e) => setProduct(e.target.value)}>
+              {(products.length ? products.map((x) => x.name) : ["Care Cash"]).map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            {manage && (
+              <Button
+                icon={Plus}
+                onClick={() => setForm({ name: "", cover: "", premium: "", benefits: "", popular: false, active: true, isNew: true })}
+              >
+                Add plan
+              </Button>
+            )}
+          </span>
+        }
+      >
+        <ErrorNote error={plans.error} />
+        <DataTable
+          rows={plans.data || []}
+          loading={plans.loading}
+          rowKey={(r) => r.id}
+          searchFrom={99}
+          empty="No plans"
+          columns={[
+            { key: "name", label: "Plan" },
+            { key: "cover", label: "Cover", align: "right", render: (r) => pula(r.cover) },
+            { key: "premium", label: "Premium", align: "right", render: (r) => pula(r.premium) + " " + (r.frequency || "").toLowerCase() },
+            { key: "benefits", label: "Benefits", render: (r) => r.benefits || "—" },
+            { key: "active", label: "Status", render: (r) => <Badge tone={r.active ? "green" : undefined}>{r.active ? "On sale" : "Withdrawn"}</Badge> },
+            {
+              key: "act",
+              label: "",
+              render: (r) =>
+                manage && (
+                  <Button variant="secondary" icon={Pencil} onClick={() => setForm({ ...r })}>
+                    Change
+                  </Button>
+                ),
+            },
+          ]}
+        />
+      </Panel>
+      {form && (
+        <Drawer title={form.isNew ? "Add a " + product + " plan" : "Plan " + form.name} onClose={() => setForm(null)}>
+          <FormGrid submitLabel="Save" busy={save.busy} error={save.error} onSubmit={submit}>
+            {form.isNew && (
+              <Field label="Plan name" full>
+                <input value={form.name} onChange={set("name")} maxLength={60} required />
+              </Field>
+            )}
+            <Field label="Cover (BWP)">
+              <input type="number" min="1" value={form.cover} onChange={set("cover")} required />
+            </Field>
+            <Field label="Premium (BWP)">
+              <input type="number" min="1" value={form.premium} onChange={set("premium")} required />
+            </Field>
+            <Field label="Benefits" full>
+              <textarea value={form.benefits || ""} onChange={set("benefits")} rows={2} maxLength={500} />
+            </Field>
+            <Field label="On sale" full>
+              <label className="ri-product">
+                <input type="checkbox" checked={form.active} onChange={set("active")} />
+                <span>Customers and staff can choose this plan</span>
+              </label>
+            </Field>
           </FormGrid>
         </Drawer>
       )}

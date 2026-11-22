@@ -2571,6 +2571,23 @@ function ApplicationForm({
     beneficiaries: [],
   });
   const [questions, setQuestions] = useState([]);
+  // Section 06 Term Life: the policy terms the product sells (empty when it sells none).
+  const [termOptions, setTermOptions] = useState([]);
+  const [termYears, setTermYears] = useState("");
+  useEffect(() => {
+    let live = true;
+    if (!data.product) return undefined;
+    request(session, "/portfolio/application-terms?product=" + encodeURIComponent(data.product))
+      .then((r) => {
+        if (!live) return;
+        setTermOptions(r.data || []);
+        setTermYears((r.data || []).length ? String(Math.max(...r.data)) : "");
+      })
+      .catch(() => live && setTermOptions([]));
+    return () => {
+      live = false;
+    };
+  }, [session, data.product]);
   // NS-IL01-003: payer and proposer relationships come from the insurer's eligible list.
   const [relationships, setRelationships] = useState([]);
   useEffect(() => {
@@ -2666,6 +2683,7 @@ function ApplicationForm({
       status,
       ...details,
       ...partyFields,
+      ...(termOptions.length && termYears ? { termYears: Number(termYears) } : {}),
       mandateDebitDay: details.mandateDebitDay || undefined,
       declarationAccepted: consent,
       ...(ratedTier ? { lives: livesBody(lives) } : {}),
@@ -2861,6 +2879,18 @@ function ApplicationForm({
               agent or broker sale needs the intermediary's code.
             </p>
             <div className="form-grid">
+              {termOptions.length > 0 && !draft && (
+                <label className="form-label">
+                  <span>Policy term</span>
+                  <select className="input" value={termYears} onChange={(e) => setTermYears(e.target.value)}>
+                    {termOptions.map((t) => (
+                      <option key={t} value={String(t)}>
+                        {t} years (or to age 70 if earlier)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className="form-label">
                 <span>Occupation of the life insured</span>
                 <input
