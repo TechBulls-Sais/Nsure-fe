@@ -1672,6 +1672,8 @@ export function ActivationWizard({ session, notify, quote: given, scheme, onClos
   const accepted = (quotes.data || []).filter((q) => q.status === "ACCEPTED" && !q.schemeRef);
   const quote = given || accepted.find((q) => q.ref === quoteRef);
   const hasCategories = (scheme?.categories || []).length > 0;
+  // A quotation with a benefit design brings its categories (with their priced rates) unless they are replaced here.
+  const design = quote?.design || [];
   const [form, setForm] = useState(() => ({
     inceptionDate: today(),
     sponsorRef: given?.sponsorRef || "",
@@ -1689,12 +1691,13 @@ export function ActivationWizard({ session, notify, quote: given, scheme, onClos
   const [check, setCheck] = useState(null);
   const action = useAction(inlineErrors(notify));
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
-  const categories = form.categories.length ? form.categories : quote && !hasCategories ? [blankCategory(quote)] : [];
+  const fromDesign = !hasCategories && !form.categories.length && design.length > 0;
+  const categories = form.categories.length ? form.categories : quote && !hasCategories && !design.length ? [blankCategory(quote)] : [];
   const setCategory = (i, key, value) => setForm({ ...form, categories: categories.map((c, j) => (j === i ? { ...c, [key]: value } : c)) });
   const required = check?.requiredConditions || Object.keys(CONDITION_LABEL);
   const steps = ["Accepted terms", "Sponsor and billing", "Members and categories", "Wording and conditions", "Review"];
   const body = () => {
-    const out = { ...form, categories: hasCategories ? undefined : categories.map((c) => ({ ...c, salaryMultiple: c.benefitBasis === "SALARY_MULTIPLE" ? c.salaryMultiple : null, fixedCover: c.benefitBasis === "FIXED" ? c.fixedCover : null, ratePerMille: c.ratePerMille === "" ? undefined : c.ratePerMille })) };
+    const out = { ...form, categories: hasCategories || fromDesign ? undefined : categories.map((c) => ({ ...c, salaryMultiple: c.benefitBasis === "SALARY_MULTIPLE" ? c.salaryMultiple : null, fixedCover: c.benefitBasis === "FIXED" ? c.fixedCover : null, ratePerMille: c.ratePerMille === "" ? undefined : c.ratePerMille })) };
     if (!out.sponsorRef) delete out.sponsorRef;
     if (!out.brokerRef) delete out.brokerRef;
     if (!out.payerName) delete out.payerName;
@@ -1719,7 +1722,7 @@ export function ActivationWizard({ session, notify, quote: given, scheme, onClos
   const next = () => (page === 3 ? review() : setPage(page + 1));
   const blocked = (page === 0 && !quote) || (page === 3 && !form.wordingRef);
   // Missing rates are taken from the quotation's pricing on the server; every category needs its free cover.
-  const categoryProblem = !hasCategories && categories.some((c) => c.freeCoverLimit === "" || !c.code || !c.name);
+  const categoryProblem = !hasCategories && !fromDesign && categories.some((c) => c.freeCoverLimit === "" || !c.code || !c.name);
   return (
     <Drawer size="lg" title={scheme ? "Activate " + scheme.scheme.name : "Set up " + (given?.sponsorName || "the master policy")} description={"Step " + (page + 1) + " of 5: " + steps[page]} onClose={onClose}>
       <ol className="gl-steps" aria-label="Set-up steps">
@@ -1814,6 +1817,21 @@ export function ActivationWizard({ session, notify, quote: given, scheme, onClos
           </div>
           {hasCategories ? (
             <p className="ws-hint">The scheme's categories ({scheme.categories.map((c) => c.code).join(", ")}) are used; each free-cover limit must be within the accepted terms.</p>
+          ) : fromDesign ? (
+            <div className="ga-drawer-section">
+              <h3>Benefit categories from the quotation's design</h3>
+              <p className="subtitle">Created with the accepted free-cover limit and the monthly rate the quotation priced for each.</p>
+              <ul className="uw-list">
+                {design.map((c) => (
+                  <li key={c.code}>
+                    {c.code} · {c.name}: {c.benefitBasis === "FIXED" ? pula(c.fixedCover) + " fixed" : Number(c.salaryMultiple) + " × salary"}
+                  </li>
+                ))}
+              </ul>
+              <Button variant="secondary" onClick={() => setForm({ ...form, categories: design.map((c) => ({ ...blankCategory(quote), ...c, fixedCover: c.fixedCover ?? "", salaryMultiple: c.salaryMultiple ?? "", freeCoverLimit: c.freeCoverLimit ?? quote.freeCoverLimit ?? "", ratePerMille: "" })) })}>
+                Edit the categories
+              </Button>
+            </div>
           ) : (
             <div className="ga-drawer-section">
               <h3>Benefit categories</h3>
@@ -1896,7 +1914,7 @@ export function ActivationWizard({ session, notify, quote: given, scheme, onClos
           <div className="ws-kv">
             <div><small>Quotation</small><strong>{quote?.ref}</strong></div>
             <div><small>Wording</small><strong>{form.wordingRef || "—"}</strong></div>
-            <div><small>Categories</small><strong>{hasCategories ? scheme.categories.map((c) => c.code).join(", ") : categories.map((c) => c.code).join(", ")}</strong></div>
+            <div><small>Categories</small><strong>{hasCategories ? scheme.categories.map((c) => c.code).join(", ") : fromDesign ? design.map((c) => c.code).join(", ") : categories.map((c) => c.code).join(", ")}</strong></div>
             <div><small>Not at work</small><strong>{form.aawRule === "DEFER" ? "Defer cover" : "Refer to underwriting"}</strong></div>
             <div><small>Billing</small><strong>{form.billingMethod.replace("_", " ").toLowerCase()} · day {form.billingDueDay}</strong></div>
           </div>
