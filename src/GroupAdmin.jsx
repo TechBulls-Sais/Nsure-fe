@@ -42,6 +42,7 @@ import {
   downloadCensusTemplate,
 } from "./GroupBilling";
 import RenewalTab from "./GroupRenewal";
+import GroupCreditTab from "./GroupCredit";
 
 // Group administration (GL01-GL05): schemes and benefit categories, members as cover episodes with underwriting of
 // cover above the free-cover limit, staged census batches with an explicit commit, and monthly scheme billing.
@@ -452,6 +453,7 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
               ["census", `Census (${d.censusBatches.length})`],
               ["billing", `Billing (${d.invoices.length})`],
               ["renewal", "Renewal"],
+              ["credit", "Group credit"],
               ["claims", "Claims"],
               ["timeline", "Timeline & rules"],
             ]}
@@ -468,6 +470,7 @@ function SchemeDetail({ session, notify, profile, schemeRef, onBack }) {
           {tab === "census" && <CensusTab {...shared} />}
           {tab === "billing" && <BillingTab {...shared} />}
           {tab === "renewal" && <RenewalTab {...shared} />}
+          {tab === "credit" && <GroupCreditTab {...shared} />}
           {tab === "claims" && <ClaimsTab {...shared} />}
           {tab === "timeline" && <TimelineTab {...shared} />}
         </>
