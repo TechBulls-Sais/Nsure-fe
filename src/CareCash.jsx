@@ -33,6 +33,7 @@ const STATUS = {
   PAYMENT_FAILED: ["Payment failed", "red"],
   PAID: ["Paid", "green"],
   DECLINED: ["Declined", undefined],
+  REVERSED: ["Reversed", "red"],
 };
 const PAYOUT_METHODS = ["Bank Account", "Mobile Wallet"];
 const badge = (s) => {
@@ -83,8 +84,10 @@ export default function CareCash({ session, notify, profile }) {
         tabs={[
           ["policies", "Policies"],
           ["events", "Events"],
+          ["rules", "Rules"],
         ]}
       />
+      {tab === "rules" && <RuleSets session={session} notify={notify} profile={profile} />}
       {tab === "policies" && (
         <Panel title="Care Cash policies" subtitle="Open a policy to see its day limits and record a hospital event.">
           <ErrorNote error={policies.error} />
@@ -137,6 +140,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
   const action = useAction(notify);
   const [form, setForm] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [opening, setOpening] = useState(null);
   const v = view.data;
   const set = (key) => (e) => {
     setPreview(null);
@@ -177,13 +181,20 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             <div>
               <small>Limits</small>
               <strong>
-                {v.rules.eventDayLimit} a event · {v.rules.yearDayLimit} a year · {v.rules.lifetimeDayLimit} a life
+                {v.rules.eventDayLimit} an event · {v.rules.yearDayLimit} a year · {v.rules.lifetimeDayLimit} a life
               </strong>
             </div>
             <div>
               <small>Waiting periods</small>
               <strong>
-                Illness {v.rules.illnessWaitMonths} months · maternity {v.rules.maternityWaitMonths} · accident none
+                Illness {v.rules.illnessWaitMonths} months · maternity {v.rules.maternityWaitMonths} · pre-existing{" "}
+                {v.rules.preExistingWaitMonths} · accident {v.rules.accidentWaitMonths || "none"}
+              </strong>
+            </div>
+            <div>
+              <small>Rules</small>
+              <strong>
+                v{v.rules.ruleVersion} · {v.rules.ruleLabel}
               </strong>
             </div>
           </div>
@@ -191,15 +202,60 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
             <Panel title="Days used by life">
               <DataTable
                 rows={v.lives}
-                rowKey={(r) => r.lifeName}
+                rowKey={(r) => r.lifeKey || r.lifeName}
                 searchFrom={99}
                 columns={[
                   { key: "lifeName", label: "Life" },
-                  { key: "usedThisYear", label: "This policy year", align: "right", render: (r) => r.usedThisYear + " of " + v.rules.yearDayLimit },
-                  { key: "usedLifetime", label: "Lifetime", align: "right", render: (r) => r.usedLifetime + " of " + v.rules.lifetimeDayLimit },
+                  { key: "usedThisYear", label: "Consumed this policy year", align: "right", render: (r) => r.usedThisYear + " of " + v.rules.yearDayLimit },
+                  { key: "reservedDays", label: "Reserved (awaiting approval)", align: "right" },
+                  { key: "usedLifetime", label: "Consumed for life", align: "right", render: (r) => r.usedLifetime + " of " + v.rules.lifetimeDayLimit },
+                  { key: "openingDays", label: "Opening days", align: "right" },
                   { key: "maternityClaims", label: "Maternity claims", align: "right", render: (r) => r.maternityClaims + " of " + v.rules.maternityMaxClaims },
                 ]}
               />
+              {can(profile, "UPDATE_CLAIM") && !opening && (
+                <Button variant="ghost" onClick={() => setOpening({ lifeName: v.lives[0]?.lifeName, lifetimeDays: 0, yearDays: 0, note: "" })}>
+                  Record opening days (migration)
+                </Button>
+              )}
+              {opening && (
+                <FormGrid
+                  submitLabel="Record opening days"
+                  busy={action.busy}
+                  onSubmit={async () => {
+                    const done = await action.run(
+                      () => request(session, base + "/opening-days", { method: "POST", body: opening }),
+                      "Opening days recorded",
+                    );
+                    if (done) {
+                      setOpening(null);
+                      view.reload();
+                    }
+                  }}
+                  extra={
+                    <Button type="button" variant="secondary" onClick={() => setOpening(null)}>
+                      Cancel
+                    </Button>
+                  }
+                >
+                  <Field label="Life">
+                    <select value={opening.lifeName} onChange={(e) => setOpening({ ...opening, lifeName: e.target.value })}>
+                      {v.lives.map((l) => (
+                        <option key={l.lifeKey}>{l.lifeName}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Days used for life">
+                    <input type="number" min="0" value={opening.lifetimeDays} onChange={(e) => setOpening({ ...opening, lifetimeDays: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Of which this policy year">
+                    <input type="number" min="0" value={opening.yearDays} onChange={(e) => setOpening({ ...opening, yearDays: Number(e.target.value) })} />
+                  </Field>
+                  <Field label="Source" full>
+                    <input value={opening.note} onChange={(e) => setOpening({ ...opening, note: e.target.value })} placeholder="e.g. Previous administration system, as at 30 Sep 2026" required />
+                  </Field>
+                </FormGrid>
+              )}
             </Panel>
           )}
           <Panel
@@ -264,8 +320,12 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
               </Button>
             }
           >
-            <Field label="Life" full>
-              <input value={form.lifeName} onChange={set("lifeName")} required />
+            <Field label="Life" full hint="Only an insured life of the policy can claim.">
+              <select value={form.lifeName} onChange={set("lifeName")}>
+                {(v?.lives?.length ? v.lives : [{ lifeName: v?.customerName }]).map((l) => (
+                  <option key={l.lifeName}>{l.lifeName}</option>
+                ))}
+              </select>
             </Field>
             <Field label="Event">
               <select value={form.eventType} onChange={set("eventType")}>
@@ -301,6 +361,29 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
                   <input type="checkbox" checked={form.surgery} onChange={set("surgery")} />
                   <span>A qualifying surgery was performed</span>
                 </label>
+              </Field>
+            )}
+            {(form.eventType === "DAY_CASE" || form.surgery) && (
+              <Field label="Procedure" hint="Evidence for a day case or the surgical benefit.">
+                <input value={form.procedure || ""} onChange={set("procedure")} required />
+              </Field>
+            )}
+            {["ADMISSION", "DAY_CASE"].includes(form.eventType) && form.cause === "ILLNESS" && (
+              <Field label="Pre-existing condition">
+                <label className="ri-product">
+                  <input type="checkbox" checked={Boolean(form.preExisting)} onChange={set("preExisting")} />
+                  <span>The condition existed before cover started</span>
+                </label>
+              </Field>
+            )}
+            {form.eventType === "MATERNITY" && (
+              <Field label="Live births">
+                <input type="number" min="1" max="6" value={form.births || 1} onChange={set("births")} />
+              </Field>
+            )}
+            {form.eventType === "ACCIDENTAL_DEATH" && (
+              <Field label="Death evidence" full>
+                <input value={form.deathEvidence || ""} onChange={set("deathEvidence")} placeholder="e.g. Death certificate and police report" required />
               </Field>
             )}
             {preview && (
@@ -376,6 +459,19 @@ function Events({ session, notify, profile, resource }) {
           onClose={() => setOpen(null)}
         >
           <Trace lines={open.trace} />
+          <p className="ws-hint">
+            {[
+              open.ruleVersion ? "Rules v" + open.ruleVersion : null,
+              open.linkedEventRef ? "linked to " + open.linkedEventRef : null,
+              open.procedure ? "procedure " + open.procedure : null,
+              open.births > 1 ? open.births + " live births" : null,
+              open.deathEvidence ? "evidence: " + open.deathEvidence : null,
+              open.waiverFrom ? "premium waived " + open.waiverFrom + " to " + open.waiverTo : null,
+              open.reversedBy ? "reversed by " + open.reversedBy + ": " + open.reversalReason : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
           {payment && (
             <div className="ws-kv">
               <div>
@@ -439,6 +535,17 @@ function Events({ session, notify, profile, resource }) {
             </FormGrid>
           )}
           {open.status === "ASSESSED" && open.createdBy === me && <p className="ws-hint">You recorded this event, so someone else must approve it.</p>}
+          {["APPROVED", "PAYMENT_FAILED"].includes(open.status) && can(profile, "APPROVE_CLAIM") && (
+            <FormGrid
+              submitLabel="Reverse event"
+              busy={action.busy}
+              onSubmit={() => post("/reverse", { reason: note }, open.ref + " reversed: its days are released.")}
+            >
+              <Field label="Reason for reversing (days are released and a premium waiver is undone)" full>
+                <input value={note} onChange={(e) => setNote(e.target.value)} required />
+              </Field>
+            </FormGrid>
+          )}
           {(open.status === "APPROVED" || open.status === "PAYMENT_FAILED") && settle && Number(open.amount) > 0 && (
             <>
               <p className="ws-hint">
@@ -493,5 +600,125 @@ function Events({ session, notify, profile, resource }) {
         </Drawer>
       )}
     </>
+  );
+}
+
+/**
+ * The Care Cash rule set (section 07): every count, cap, percentage and waiting period as an approved,
+ * effective-dated version. A change is proposed with a reason and approved by someone else; events are assessed under
+ * the version in force on their admission date. Version 1 holds demo defaults (decision D04 is open).
+ */
+function RuleSets({ session, notify, profile }) {
+  const sets = useResource(session, "/care-cash/rules", []);
+  const action = useAction(notify);
+  const [draft, setDraft] = useState(null);
+  const me = (profile?.username || "").toLowerCase();
+  const list = sets.data || [];
+  const live = list.find((r) => r.inForce) || list[list.length - 1];
+  const keys = live ? Object.keys(live.rules) : [];
+  const decide = async (version, verb) => {
+    const done = await action.run(
+      () => request(session, "/care-cash/rules/" + version + "/" + verb, { method: "POST", body: verb === "reject" ? { reason: "Not agreed" } : {} }),
+      "Rules v" + version + (verb === "approve" ? " approved" : " rejected"),
+    );
+    if (done) sets.reload();
+  };
+  return (
+    <Panel
+      title="Care Cash rule set"
+      subtitle="Every number the engine uses, as an approved version. A change applies to admissions from its start date; events already assessed keep their version."
+      action={
+        can(profile, "UPDATE_PRODUCT") &&
+        live &&
+        !draft && (
+          <Button icon={Plus} onClick={() => setDraft({ effectiveFrom: today(), reason: "", rules: { ...live.rules } })}>
+            Propose a change
+          </Button>
+        )
+      }
+    >
+      <ErrorNote error={sets.error || action.error} />
+      <DataTable
+        rows={list}
+        rowKey={(r) => r.version}
+        searchFrom={99}
+        columns={[
+          { key: "version", label: "Version", render: (r) => "v" + r.version + (r.inForce ? " (in force)" : "") },
+          { key: "effectiveFrom", label: "From" },
+          { key: "label", label: "Label" },
+          { key: "status", label: "Status", render: (r) => <Badge>{r.status}</Badge> },
+          { key: "proposedBy", label: "Proposed by" },
+          { key: "approvedBy", label: "Decided by", render: (r) => r.approvedBy || "—" },
+          {
+            key: "actions",
+            label: "",
+            render: (r) =>
+              r.status === "PROPOSED" &&
+              can(profile, "ACTIVATE_PRODUCT") &&
+              (r.proposedBy || "").toLowerCase() !== me && (
+                <span className="detail-actions">
+                  <Button variant="secondary" busy={action.busy} onClick={() => decide(r.version, "approve")}>
+                    Approve
+                  </Button>
+                  <Button variant="ghost" busy={action.busy} onClick={() => decide(r.version, "reject")}>
+                    Reject
+                  </Button>
+                </span>
+              ),
+          },
+        ]}
+      />
+      {live && (
+        <div className="ws-kv">
+          {keys.map((k) => (
+            <div key={k}>
+              <small>{k}</small>
+              <strong>{String(live.rules[k])}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      {draft && (
+        <FormGrid
+          submitLabel="Propose for approval"
+          busy={action.busy}
+          onSubmit={async () => {
+            const done = await action.run(
+              () => request(session, "/care-cash/rules", { method: "POST", body: draft }),
+              "Rule change proposed for a second person to approve",
+            );
+            if (done) {
+              setDraft(null);
+              sets.reload();
+            }
+          }}
+          extra={
+            <Button type="button" variant="secondary" onClick={() => setDraft(null)}>
+              Cancel
+            </Button>
+          }
+        >
+          <Field label="Applies to admissions from">
+            <input type="date" min={today()} value={draft.effectiveFrom} onChange={(e) => setDraft({ ...draft, effectiveFrom: e.target.value })} />
+          </Field>
+          <Field label="Reason (the decision it implements)" full>
+            <input value={draft.reason} onChange={(e) => setDraft({ ...draft, reason: e.target.value })} required />
+          </Field>
+          {keys.map((k) => (
+            <Field key={k} label={k}>
+              <input
+                value={draft.rules[k]}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    rules: { ...draft.rules, [k]: /^\d+$/.test(e.target.value) ? Number(e.target.value) : e.target.value },
+                  })
+                }
+              />
+            </Field>
+          ))}
+        </FormGrid>
+      )}
+    </Panel>
   );
 }
