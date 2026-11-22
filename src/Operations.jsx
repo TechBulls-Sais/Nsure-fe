@@ -294,8 +294,37 @@ function Workflow({ session, notify, profile }) {
             { key: "team", label: "Team" },
             { key: "slaHours", label: "SLA (working hours)", align: "right" },
             { key: "priority", label: "Priority", render: (r) => label(r.priority) },
-            { key: "steps", label: "Steps" },
-            { key: "versionNo", label: "Version", align: "right" },
+            {
+              key: "steps",
+              label: "Steps",
+              render: (r) => (
+                <>
+                  {r.steps}
+                  {(r.entryCriteria || r.roles || r.requiredEvidence || r.authorityLimit != null) && (
+                    <small className="ws-hint">
+                      {r.entryCriteria ? " · Entry: " + r.entryCriteria : ""}
+                      {r.roles ? " · Worked by: " + r.roles : ""}
+                      {r.authorityLimit != null ? " · Authority limit: " + r.authorityLimit : ""}
+                      {r.requiredEvidence ? " · Evidence: " + r.requiredEvidence : ""}
+                    </small>
+                  )}
+                </>
+              ),
+            },
+            {
+              key: "versionNo",
+              label: "Version",
+              align: "right",
+              render: (r) => {
+                const earlier = (wf.data?.versions || []).filter((v) => v.code === r.code && v.versionNo !== r.versionNo);
+                return (
+                  <span title={earlier.map((v) => `v${v.versionNo}: ${v.slaHours}h by ${v.changedBy || "system"}`).join("\n")}>
+                    v{r.versionNo}
+                    {earlier.length > 0 && <small className="ws-hint"> ({earlier.length} earlier kept)</small>}
+                  </span>
+                );
+              },
+            },
             {
               key: "act",
               label: "",
@@ -376,6 +405,22 @@ function Workflow({ session, notify, profile }) {
                 <Field label="Steps" hint="Separate steps with >" full>
                   <textarea value={form.steps} onChange={set("steps")} rows={3} required />
                 </Field>
+                <Field label="Entry criteria" full>
+                  <input value={form.entryCriteria || ""} onChange={set("entryCriteria")} maxLength={500} />
+                </Field>
+                <Field label="Worked by (permission codes)" hint="e.g. MANAGE_SERVICE_CASE">
+                  <input value={form.roles || ""} onChange={set("roles")} maxLength={300} />
+                </Field>
+                <Field label="Authority limit (optional)">
+                  <input type="number" min="0" value={form.authorityLimit ?? ""} onChange={set("authorityLimit")} />
+                </Field>
+                <Field label="Required evidence" full>
+                  <input value={form.requiredEvidence || ""} onChange={set("requiredEvidence")} maxLength={500} />
+                </Field>
+                <p className="ws-hint">
+                  Saving keeps this version and starts the next. Service cases already open keep the version and SLA they
+                  were opened under.
+                </p>
               </>
             )}
           </FormGrid>
@@ -660,8 +705,8 @@ function Quarantine({ session, notify, profile, onChange }) {
           loading={list.loading}
           rowKey={(u) => u.id}
           empty={status === "PENDING" ? "Nothing waiting for release" : "No uploads"}
-          emptyDetail="Files uploaded to a claim by staff or in the customer portal appear here first."
-          searchPlaceholder="Search file, claim, customer…"
+          emptyDetail="Claim, identity (KYC) and service case evidence uploaded by staff or in the customer portal appears here first."
+          searchPlaceholder="Search file, record, customer…"
           columns={[
             {
               key: "fileName",
@@ -673,7 +718,19 @@ function Quarantine({ session, notify, profile, onChange }) {
                 </>
               ),
             },
-            { key: "ownerRef", label: "Claim", render: (u) => u.ownerRef + (u.customerName ? " · " + u.customerName : "") },
+            {
+              key: "ownerRef",
+              label: "Record",
+              render: (u) => (
+                <>
+                  {u.ownerRef + (u.customerName ? " · " + u.customerName : "")}
+                  <small className="ws-hint">
+                    {" "}
+                    · {u.ownerKind === "IDENTITY" ? "Identity evidence (KYC)" : u.ownerKind === "SERVICE_CASE" ? "Service case" : "Claim"}
+                  </small>
+                </>
+              ),
+            },
             {
               key: "uploadedBy",
               label: "From",

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { Check, Clock3, LifeBuoy, Pause, Play, Plus, RotateCcw, UserCheck } from "lucide-react";
-import { request } from "./api";
+import { AlertTriangle, Check, Clock3, LifeBuoy, Paperclip, Pause, Play, Plus, RotateCcw, UserCheck } from "lucide-react";
+import { fetchFile, request, uploadFile } from "./api";
 import {
   Badge,
   Button,
@@ -78,6 +78,23 @@ export default function ServiceDesk({ session, notify, profile }) {
         title="Service desk"
         subtitle="Requests and complaints from the portal, phone, email and branch, each with an SLA clock that stops only while paused with a reason."
       >
+        {can(profile, "ASSIGN_WORK") && (
+          <Button
+            variant="secondary"
+            icon={AlertTriangle}
+            onClick={async () => {
+              try {
+                const r = await request(session, "/service/escalations/run", { method: "POST" });
+                notify(`Escalation check done: ${r.data.changed} case(s) escalated or flagged as unowned.`);
+                cases.reload();
+              } catch (e) {
+                notify(e.message, "error");
+              }
+            }}
+          >
+            Run escalation check
+          </Button>
+        )}
         {canManage && (
           <Button icon={Plus} onClick={() => setLogging(true)}>
             Log a case
@@ -177,7 +194,17 @@ export default function ServiceDesk({ session, notify, profile }) {
               sortValue: (c) => PRIORITY_RANK[c.priority],
               render: (c) => label(c.priority),
             },
-            { key: "status", label: "Status", render: (c) => <Badge>{label(c.status)}</Badge> },
+            {
+              key: "status",
+              label: "Status",
+              render: (c) => (
+                <>
+                  <Badge>{label(c.status)}</Badge>
+                  {c.escalationLevel > 0 && <small className="svc-sub">Escalated · level {c.escalationLevel}</small>}
+                  {c.pausePending && <small className="svc-sub">Pause awaiting approval</small>}
+                </>
+              ),
+            },
             { key: "owner", label: "Owner", render: (c) => c.owner || <span className="svc-muted">Unassigned</span> },
             {
               key: "sla",
@@ -222,6 +249,7 @@ function NewCase({ session, notify, onClose, onCreated }) {
     linkedRef: "",
     channel: "PHONE",
     priority: "NORMAL",
+    requestedRemedy: "",
   };
   const [form, setForm] = useState(empty);
   const action = useAction(notify);
@@ -237,7 +265,7 @@ function NewCase({ session, notify, onClose, onCreated }) {
   return (
     <Drawer
       title="Log a case"
-      description="Service requests are due in 72 hours, complaints in 120 hours, unless paused with a reason."
+      description="Due in working hours of the business calendar (service requests 72, complaints 120 by default), unless paused for an approved reason."
       onClose={onClose}
     >
       <FormGrid submitLabel="Log case" busy={action.busy} error={action.error} onSubmit={submit}>
@@ -284,15 +312,20 @@ function NewCase({ session, notify, onClose, onCreated }) {
         <Field label="Description" full hint={`${form.description.length} / 1000`}>
           <textarea rows={3} value={form.description} onChange={set("description")} maxLength={1000} />
         </Field>
+        <Field label={form.caseType === "COMPLAINT" ? "Remedy the customer asks for" : "Outcome wanted (optional)"} full>
+          <input value={form.requestedRemedy} onChange={set("requestedRemedy")} maxLength={300} required={form.caseType === "COMPLAINT"} />
+        </Field>
       </FormGrid>
     </Drawer>
   );
 }
 
 const PROMPTS = {
-  pause: { field: "reason", label: "Why is the SLA clock paused?", button: "Pause clock" },
+  pause: { field: "reason", label: "Note (optional)", button: "Pause clock" },
   resolve: { field: "resolution", label: "Resolution given to the customer", button: "Resolve" },
   reopen: { field: "reason", label: "Why is the case reopened?", button: "Reopen" },
+  escalate: { field: "reason", label: "Why is the case escalated?", button: "Escalate" },
+  "decline-pause": { field: "reason", label: "Why is the pause declined?", button: "Decline pause" },
 };
 
 function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
@@ -301,6 +334,9 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
   const confirm = useConfirm();
   const [prompt, setPrompt] = useState(null);
   const [text, setText] = useState("");
+  // NS-SH10-004/005: approved pause reasons, resolution codes and outcomes come from the server's reference data.
+  const reference = useResource(session, "/service/reference", null);
+  const [extra, setExtra] = useState({});
   const c = detail.data?.case;
   const history = detail.data?.history || [];
   const me = profile?.username;
@@ -372,8 +408,16 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
       });
       if (!ok) return;
     }
-    act(prompt, { [PROMPTS[prompt].field]: text }, `${c.ref}: ${PROMPTS[prompt].button.toLowerCase()} done`);
+    const body = { [PROMPTS[prompt].field]: text || undefined, ...extra };
+    act(prompt, body, `${c.ref}: ${PROMPTS[prompt].button.toLowerCase()} done`);
   };
+  const openPrompt = (name, defaults = {}) => {
+    setPrompt(name);
+    setText("");
+    setExtra(defaults);
+  };
+  const ref = reference.data;
+  const resolutionCodes = (ref?.resolutionCodes || []).filter((r) => r.case_type === "ALL" || r.case_type === c?.caseType);
   const stale = /refresh and retry/i.test(action.error);
 
   return (
@@ -448,15 +492,62 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
               <small>Paused in total</small>
               <strong>{minutes(Math.max(c.pausedMinutes, c.elapsedMinutes - c.adjustedMinutes))}</strong>
             </div>
+            <div>
+              <small>Working time used</small>
+              <strong>
+                {minutes(c.workingMinutes)}
+                {c.slaHours ? ` of ${c.slaHours}h` : ""}
+              </strong>
+            </div>
+            <div>
+              <small>SLA basis</small>
+              <strong>
+                {c.slaBasis === "WORKING_HOURS" ? "Working hours" : "Elapsed hours"}
+                {c.workflowVersion ? ` · workflow v${c.workflowVersion}` : ""}
+              </strong>
+            </div>
           </div>
+          {c.requestedRemedy && (
+            <p className="svc-note">
+              <strong>Remedy asked for:</strong> {c.requestedRemedy}
+            </p>
+          )}
+          {c.escalationLevel > 0 && (
+            <p className="svc-note is-warn">
+              <AlertTriangle size={14} aria-hidden="true" /> Escalated to level {c.escalationLevel}
+              {c.escalatedAt ? " on " + when(c.escalatedAt) : ""}
+              {c.externalReference ? ` · external referral ${c.externalReference}` : ""}
+            </p>
+          )}
           {c.status === "PAUSED" && (
             <p className="svc-note">
               <Pause size={14} aria-hidden="true" /> Paused {when(c.pausedAt)}: {c.pauseReason}
+              {c.pauseEvidence ? ` · evidence: ${c.pauseEvidence}` : ""}
+              {c.pauseExpectedResume ? ` · resume by ${c.pauseExpectedResume}` : ""}
+              {c.pauseApprovedBy ? ` · approved by ${c.pauseApprovedBy}` : ""}
             </p>
+          )}
+          {c.pausePending && (
+            <div className="svc-note is-warn">
+              <Pause size={14} aria-hidden="true" /> {c.pauseRequestedBy} asked to pause ({label(c.pauseCode)}: {c.pauseEvidence},
+              resume by {c.pauseExpectedResume}). It needs a supervisor's approval; the clock keeps running.
+              {supervisor && c.pauseRequestedBy !== me && (
+                <div className="svc-actions">
+                  <Button busy={action.busy} onClick={() => act("approve-pause", {}, "Pause approved")}>
+                    Approve pause
+                  </Button>
+                  <Button variant="secondary" onClick={() => openPrompt("decline-pause")}>
+                    Decline
+                  </Button>
+                </div>
+              )}
+            </div>
           )}
           {c.resolution && (
             <p className="svc-note is-resolved">
-              <Check size={14} aria-hidden="true" /> {c.resolution}
+              <Check size={14} aria-hidden="true" /> {c.resolutionCode ? label(c.resolutionCode) + " · " : ""}
+              {c.outcome ? label(c.outcome) + " · " : ""}
+              {c.resolution}
             </p>
           )}
 
@@ -474,13 +565,33 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
               )}
               {["OPEN", "IN_PROGRESS"].includes(c.status) && mayWork && (
                 <>
-                  <Button variant="secondary" icon={Pause} onClick={() => setPrompt("pause")}>
-                    Pause
-                  </Button>
-                  <Button variant="secondary" icon={Check} onClick={() => setPrompt("resolve")}>
+                  {!c.pausePending && (
+                    <Button
+                      variant="secondary"
+                      icon={Pause}
+                      onClick={() => openPrompt("pause", { code: ref?.pauseReasons?.[0]?.code || "", evidence: "", expectedResume: "" })}
+                    >
+                      Pause
+                    </Button>
+                  )}
+                  <Button
+                    variant="secondary"
+                    icon={Check}
+                    onClick={() =>
+                      openPrompt("resolve", {
+                        resolutionCode: resolutionCodes[0]?.code || "",
+                        ...(c.caseType === "COMPLAINT" ? { outcome: "UPHELD" } : {}),
+                      })
+                    }
+                  >
                     Resolve
                   </Button>
                 </>
+              )}
+              {active(c) && (
+                <Button variant="secondary" icon={AlertTriangle} onClick={() => openPrompt("escalate", { external: false })}>
+                  Escalate
+                </Button>
               )}
               {c.status === "PAUSED" && mayWork && (
                 <Button variant="secondary" icon={Play} busy={action.busy} onClick={() => act("resume", {}, "SLA clock restarted")}>
@@ -538,8 +649,72 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
                 submitPrompt();
               }}
             >
+              {prompt === "pause" && (
+                <>
+                  <Field label="Approved reason">
+                    <select value={extra.code} onChange={(e) => setExtra({ ...extra, code: e.target.value })} required>
+                      {(ref?.pauseReasons || []).map((r) => (
+                        <option key={r.code} value={r.code}>
+                          {r.label} (up to {r.max_days} days{r.requires_approval === "Y" ? ", needs approval" : ""})
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="Expected resume date">
+                    <input type="date" value={extra.expectedResume} required onChange={(e) => setExtra({ ...extra, expectedResume: e.target.value })} />
+                  </Field>
+                  <Field label="Evidence" full hint="What was requested, from whom and when">
+                    <input value={extra.evidence} maxLength={300} onChange={(e) => setExtra({ ...extra, evidence: e.target.value })} />
+                  </Field>
+                </>
+              )}
+              {prompt === "resolve" && (
+                <>
+                  <Field label="Resolution reason">
+                    <select value={extra.resolutionCode} required onChange={(e) => setExtra({ ...extra, resolutionCode: e.target.value })}>
+                      {resolutionCodes.map((r) => (
+                        <option key={r.code} value={r.code}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  {c.caseType === "COMPLAINT" && (
+                    <Field label="Complaint outcome">
+                      <select value={extra.outcome} onChange={(e) => setExtra({ ...extra, outcome: e.target.value })}>
+                        {(ref?.outcomes || []).map((o) => (
+                          <option key={o} value={o}>
+                            {label(o)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                </>
+              )}
+              {prompt === "escalate" && c.caseType === "COMPLAINT" && (
+                <>
+                  <Field label="Referred to an external body (ombudsman)">
+                    <select value={extra.external ? "Y" : "N"} onChange={(e) => setExtra({ ...extra, external: e.target.value === "Y" })}>
+                      <option value="N">No, escalate internally</option>
+                      <option value="Y">Yes</option>
+                    </select>
+                  </Field>
+                  {extra.external && (
+                    <Field label="External reference">
+                      <input value={extra.externalReference || ""} required onChange={(e) => setExtra({ ...extra, externalReference: e.target.value })} />
+                    </Field>
+                  )}
+                </>
+              )}
               <Field label={PROMPTS[prompt].label} full>
-                <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} required maxLength={prompt === "resolve" ? 1000 : 500} />
+                <textarea
+                  rows={3}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  required={prompt !== "pause"}
+                  maxLength={prompt === "resolve" ? 1000 : 500}
+                />
               </Field>
               <div className="ws-form-actions">
                 <Button type="button" variant="secondary" onClick={() => setPrompt(null)}>
@@ -565,6 +740,8 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
               Refresh case
             </Button>
           )}
+
+          <CaseEvidence session={session} notify={notify} caseRef={c.ref} canUpload={canManage && active(c)} key={c.version} />
 
           <h4 className="svc-history-title">History</h4>
           <div className="timeline">
@@ -592,6 +769,70 @@ function CaseDrawer({ session, notify, profile, caseRef, onClose, onChange }) {
   );
 }
 
+/** NS-SH10-004 / NS-SH09A-004: evidence on the case; uploads wait in quarantine until someone else releases them. */
+function CaseEvidence({ session, notify, caseRef, canUpload, portal = false }) {
+  const base = (portal ? "/portfolio/shop/cases/" : "/service/cases/") + encodeURIComponent(caseRef) + "/documents";
+  const docs = useResource(session, base, null);
+  const [busy, setBusy] = useState(false);
+  const upload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    try {
+      const r = await uploadFile(session, base, file, { type: "Supporting evidence" });
+      docs.setData(r.data);
+      notify?.("Received. It is checked before it can be opened.");
+    } catch (err) {
+      notify?.(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const open = async (d) => {
+    try {
+      const url = URL.createObjectURL(await fetchFile(session, base + "/" + d.id));
+      window.open(url, "_blank", "noopener");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      notify?.(err.message, "error");
+    }
+  };
+  const d = docs.data;
+  return (
+    <div className="svc-evidence">
+      <h4 className="svc-history-title">Evidence</h4>
+      <ErrorNote error={docs.error} />
+      {d && d.documents.length === 0 && d.held.length === 0 && <p className="svc-muted">No evidence on this case.</p>}
+      {d &&
+        d.held.map((h) => (
+          <p className="svc-note" key={"h" + h.uploadId}>
+            <Paperclip size={14} aria-hidden="true" /> {h.fileName} · {h.state === "QUARANTINED" ? "being checked" : "not accepted"} ·{" "}
+            {h.note}
+          </p>
+        ))}
+      {d &&
+        d.documents.map((doc) => (
+          <p className="svc-note" key={doc.id}>
+            <Paperclip size={14} aria-hidden="true" /> {doc.documentType}: {doc.fileName} · {when(doc.uploadedAt)} ·{" "}
+            {doc.uploadedBy}
+            {!portal && (
+              <Button variant="secondary" onClick={() => open(doc)}>
+                Open
+              </Button>
+            )}
+          </p>
+        ))}
+      {canUpload && (
+        <label className="svc-upload">
+          <span>{busy ? "Uploading…" : "Attach evidence (PDF, JPG or PNG, up to 10 MB)"}</span>
+          <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={upload} disabled={busy} />
+        </label>
+      )}
+    </div>
+  );
+}
+
 // ── customer portal ────────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -603,7 +844,15 @@ export function CustomerCases({ session, notify, policies = [], claims = [] }) {
   const [error, setError] = useState("");
   const [lodging, setLodging] = useState(false);
   const [busy, setBusy] = useState(false);
-  const empty = { caseType: "SERVICE_REQUEST", category: CATEGORIES.SERVICE_REQUEST[0], subject: "", description: "", linkedRef: "" };
+  const empty = {
+    caseType: "SERVICE_REQUEST",
+    category: CATEGORIES.SERVICE_REQUEST[0],
+    subject: "",
+    description: "",
+    linkedRef: "",
+    requestedRemedy: "",
+  };
+  const [evidenceFor, setEvidenceFor] = useState(null);
   const [form, setForm] = useState(empty);
 
   const load = async () => {
@@ -627,7 +876,7 @@ export function CustomerCases({ session, notify, policies = [], claims = [] }) {
     try {
       const r = await request(session, "/portfolio/shop/cases", {
         method: "POST",
-        body: { ...form, linkedRef: form.linkedRef || undefined },
+        body: { ...form, linkedRef: form.linkedRef || undefined, requestedRemedy: form.requestedRemedy || undefined },
       });
       notify?.(`Thank you. Your reference is ${r.data.ref}.`);
       setForm(empty);
@@ -712,6 +961,12 @@ export function CustomerCases({ session, notify, policies = [], claims = [] }) {
               <span>Tell us more</span>
               <textarea rows={3} value={form.description} onChange={set("description")} maxLength={1000} />
             </label>
+            {form.caseType === "COMPLAINT" && (
+              <label className="full">
+                <span>What would put it right?</span>
+                <input value={form.requestedRemedy} onChange={set("requestedRemedy")} maxLength={300} required />
+              </label>
+            )}
           </div>
           {error && (
             <p className="form-error" role="alert">
@@ -747,7 +1002,20 @@ export function CustomerCases({ session, notify, policies = [], claims = [] }) {
                     {c.linkedRef ? " · " + c.linkedRef : ""} · opened {when(c.openedAt)}
                   </small>
                   {!done && <p>We aim to answer by {when(c.dueAt)}.</p>}
-                  {c.resolution && <p>Our answer: {c.resolution}</p>}
+                  {c.requestedRemedy && <p>You asked for: {c.requestedRemedy}</p>}
+                  {c.resolution && (
+                    <p>
+                      Our answer{c.outcome ? ` (complaint ${label(c.outcome).toLowerCase()})` : ""}: {c.resolution}
+                    </p>
+                  )}
+                  {!done && (
+                    <button className="btn secondary" type="button" onClick={() => setEvidenceFor(evidenceFor === c.ref ? null : c.ref)}>
+                      <Paperclip size={14} aria-hidden="true" /> {evidenceFor === c.ref ? "Hide documents" : "Documents"}
+                    </button>
+                  )}
+                  {evidenceFor === c.ref && (
+                    <CaseEvidence session={session} notify={notify} caseRef={c.ref} canUpload portal />
+                  )}
                 </div>
                 <span className="customer-request-status">{label(c.status)}</span>
               </li>
