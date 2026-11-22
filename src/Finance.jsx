@@ -44,6 +44,7 @@ export default function Finance({ session, notify, profile }) {
           ["rules", "Posting rules"],
           ["periods", "Periods"],
           ["gl", "GL export"],
+          ["ageing", "Ageing"],
           ["manual", "Manual journals"],
           ["suspense", "Suspense"],
           ["refunds", "Refunds"],
@@ -58,6 +59,7 @@ export default function Finance({ session, notify, profile }) {
       {tab === "rules" && <Rules session={session} notify={notify} profile={profile} />}
       {tab === "periods" && <Periods session={session} notify={notify} profile={profile} />}
       {tab === "gl" && <GlExport session={session} notify={notify} profile={profile} />}
+      {tab === "ageing" && <Ageing session={session} />}
       {tab === "manual" && <ManualJournals session={session} notify={notify} profile={profile} />}
       {tab === "suspense" && <Suspense session={session} notify={notify} profile={profile} />}
       {tab === "refunds" && <Refunds session={session} notify={notify} profile={profile} />}
@@ -178,6 +180,11 @@ function Journals({ session, notify, profile }) {
           { key: "domain", label: "Domain" },
           { key: "periodCode", label: "Period" },
           { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+          {
+            key: "costCentre",
+            label: "Dimensions",
+            render: (r) => <small className="ws-hint">{[r.costCentre, r.policyRef, r.product, r.intermediaryRef, r.treatyRef, r.schemeRef].filter(Boolean).join(" · ") || "—"}</small>,
+          },
           {
             key: "status",
             label: "Status",
@@ -390,6 +397,9 @@ function Rules({ session, notify, profile }) {
       description: r.description,
       effectiveFrom: today,
       reason: "",
+      product: r.product || "",
+      costCentre: r.costCentre || "",
+      failureMode: r.failureMode || "CONTINUE",
     });
   };
   const accountSelect = (field) => (
@@ -427,7 +437,10 @@ function Rules({ session, notify, profile }) {
             { key: "debitAccount", label: "Debit" },
             { key: "creditAccount", label: "Credit" },
             { key: "domain", label: "Domain" },
-            { key: "status", label: "Posts", render: (r) => <Badge>{r.status}</Badge> },
+            { key: "product", label: "Product", render: (r) => r.product || "All" },
+            { key: "costCentre", label: "Cost centre", render: (r) => r.costCentre || "—" },
+            { key: "status", label: "Posts", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+            { key: "failureMode", label: "On failure", render: (r) => (r.failureMode === "BLOCK" ? <Badge tone="red">Blocks</Badge> : "Exception") },
             {
               key: "effectiveFrom",
               label: "Applies",
@@ -499,10 +512,23 @@ function Rules({ session, notify, profile }) {
                 ))}
               </select>
             </Field>
-            <Field label="Status">
+            <Field label="Status" hint="NOT_POSTED: deliberately not posted under the recognition basis in force">
               <select value={edit.status} onChange={(e) => setEdit({ ...edit, status: e.target.value })}>
                 <option>ACTIVE</option>
                 <option>INACTIVE</option>
+                <option>NOT_POSTED</option>
+              </select>
+            </Field>
+            <Field label="Product (empty = every product)">
+              <input value={edit.product} maxLength={100} onChange={(e) => setEdit({ ...edit, product: e.target.value })} />
+            </Field>
+            <Field label="Cost centre">
+              <input value={edit.costCentre} maxLength={20} onChange={(e) => setEdit({ ...edit, costCentre: e.target.value })} />
+            </Field>
+            <Field label="If it cannot post" hint="BLOCK refuses the business action instead of raising a financial exception">
+              <select value={edit.failureMode} onChange={(e) => setEdit({ ...edit, failureMode: e.target.value })}>
+                <option value="CONTINUE">Continue, raise an exception</option>
+                <option value="BLOCK">Block the business action</option>
               </select>
             </Field>
             <Field label="Description">
@@ -543,9 +569,9 @@ function Periods({ session, notify, profile }) {
       confirmLabel: "Soft-close",
     },
     reopen: {
-      title: "Reopen " + code + "?",
-      message: "Period " + code + " opens again for posting." + (reason ? " Reason: " + reason + "." : ""),
-      confirmLabel: "Reopen period",
+      title: "Ask to reopen " + code + "?",
+      message: "Someone with Finance authority must authorise it before " + code + " opens again." + (reason ? " Reason: " + reason + "." : ""),
+      confirmLabel: "Ask to reopen",
     },
     close: {
       title: "Close " + code + "?",
@@ -568,10 +594,36 @@ function Periods({ session, notify, profile }) {
         }),
       "Period " + code + ": " + verb,
     );
+    if (done) {
+      periods.reload();
+      report.reload();
+    }
+  };
+  const report = useResource(session, code ? "/finance/periods/" + code + "/close-report" : null, []);
+  const decideReopen = async (p, verdict) => {
+    const done = await action.run(
+      () => request(session, `/finance/periods/${p.code}/reopen/${verdict}`, { method: "POST" }),
+      verdict === "approve" ? "Period " + p.code + " reopened" : "Reopening of " + p.code + " declined",
+    );
     if (done) periods.reload();
   };
   return (
     <>
+      <Panel title={"Close report · " + code} subtitle="What stands in the way of closing the period. Closing with open items needs a reason and your acknowledgement.">
+        <ErrorNote error={report.error} />
+        <DataTable
+          rowKey={(r) => r.code}
+          rows={report.data}
+          loading={report.loading}
+          searchFrom={99}
+          empty="Nothing to report"
+          columns={[
+            { key: "label", label: "Open item" },
+            { key: "count", label: "Count", align: "right", render: (r) => (r.count > 0 ? <Badge tone="amber">{r.count}</Badge> : <Badge tone="green">0</Badge>) },
+            { key: "examples", label: "Examples", render: (r) => <small className="ws-hint">{(r.examples || []).slice(0, 6).join(", ") || "—"}</small> },
+          ]}
+        />
+      </Panel>
       {can(profile, "CLOSE_PERIOD") && (
         <Panel title="Period control" subtitle="Open → soft-closed → closed. Closing lists unposted events, unexported journals and unacknowledged GL batches.">
           <div className="field-grid">
@@ -598,7 +650,7 @@ function Periods({ session, notify, profile }) {
               Soft-close
             </Button>
             <Button variant="secondary" busy={action.busy} onClick={() => act("reopen")}>
-              Reopen
+              Ask to reopen
             </Button>
             <Button busy={action.busy} onClick={() => act("close")}>
               Close period
@@ -623,6 +675,26 @@ function Periods({ session, notify, profile }) {
             { key: "note", label: "Note", render: (r) => r.note || "—" },
             { key: "updatedBy", label: "By" },
             { key: "updatedAt", label: "When", render: (r) => when(r.updatedAt) },
+            {
+              key: "reopen",
+              label: "Reopen request",
+              render: (r) =>
+                !r.reopenRequestedBy ? (
+                  "—"
+                ) : can(profile, "APPROVE_JOURNAL") && r.reopenRequestedBy !== profile?.username ? (
+                  <span className="ws-row-actions">
+                    <small className="ws-hint">{r.reopenRequestedBy + ": " + r.reopenReason}</small>
+                    <Button variant="secondary" busy={action.busy} onClick={() => decideReopen(r, "approve")}>
+                      Authorise
+                    </Button>
+                    <Button variant="ghost" busy={action.busy} onClick={() => decideReopen(r, "reject")}>
+                      Decline
+                    </Button>
+                  </span>
+                ) : (
+                  <small className="ws-hint">{"Asked by " + r.reopenRequestedBy + "; waiting for another person"}</small>
+                ),
+            },
           ]}
         />
       </Panel>
@@ -649,12 +721,43 @@ function GlExport({ session, notify, profile }) {
     );
     if (done) batches.reload();
   };
+  const [simulate, setSimulate] = useState("ACCEPT");
   const submit = async (r) => {
     const done = await action.run(
-      () => request(session, `/finance/gl-batches/${r.ref}/submit`, { method: "POST" }),
-      "GL batch " + r.ref + " submitted",
+      () => request(session, `/finance/gl-batches/${r.ref}/submit`, { method: "POST", body: { simulate } }),
+      "GL batch " + r.ref + " sent to the GL (simulated)",
     );
     if (done) batches.reload();
+  };
+  const statusCheck = async (r) => {
+    const done = await action.run(
+      () => request(session, `/finance/gl-batches/${r.ref}/status-check`, { method: "POST" }),
+      "Checked with the GL by batch id",
+    );
+    if (done) batches.reload();
+  };
+  const reconcileFromGl = async (r) => {
+    const done = await action.run(
+      () => request(session, `/finance/gl-batches/${r.ref}/reconcile`, { method: "POST", body: {} }),
+      "GL batch " + r.ref + " reconciled to the GL's totals",
+    );
+    if (done) batches.reload();
+  };
+  const download = async (r) => {
+    const done = await action.run(() => request(session, `/finance/gl-batches/${r.ref}/export`));
+    if (!done) return;
+    const f = done.data;
+    const cols = ["lineId", "journalRef", "eventType", "accountingDate", "periodCode", "accountCode", "debit", "credit", "currency", "costCentre", "policyRef", "product", "intermediaryRef", "treatyRef", "schemeRef", "description"];
+    const esc = (v) => (v == null ? "" : /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v));
+    const csv = ["# batch " + f.batchRef + " · journals " + f.journalCount + " · lines " + f.lineCount + " · debit " + f.debitTotal + " · credit " + f.creditTotal + " · " + f.currency, cols.join(",")]
+      .concat(f.lines.map((l) => cols.map((c) => esc(l[c])).join(",")))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = f.batchRef + ".csv";
+    a.click();
+    URL.revokeObjectURL(url);
   };
   const acknowledge = async () => {
     const done = await action.run(
@@ -679,12 +782,19 @@ function GlExport({ session, notify, profile }) {
     <>
       <Panel
         title="GL export batches"
-        subtitle="Prepared → submitted → accepted or rejected → reconciled. Control totals travel with each batch; a rejected batch's journals go out again in the next one."
+        subtitle="Prepared → submitted → accepted or rejected → reconciled. The corporate GL here is a SIMULATOR keyed by batch id: sending a batch again never posts it twice, and a lost answer is resolved by asking by batch id."
         action={
           can(profile, "EXPORT_GL") && (
-            <Button icon={Upload} busy={action.busy} onClick={exportNow}>
-              Prepare GL batch
-            </Button>
+            <span className="ws-row-actions">
+              <select aria-label="Simulated GL answer" value={simulate} onChange={(e) => setSimulate(e.target.value)}>
+                <option value="ACCEPT">GL accepts (simulated)</option>
+                <option value="REJECT">GL rejects (simulated)</option>
+                <option value="TIMEOUT">GL posts, answer lost (simulated)</option>
+              </select>
+              <Button icon={Upload} busy={action.busy} onClick={exportNow}>
+                Prepare GL batch
+              </Button>
+            </span>
           )
         }
       >
@@ -704,7 +814,18 @@ function GlExport({ session, notify, profile }) {
             { key: "debitTotal", label: "Debits", align: "right", render: (r) => pula(r.debitTotal) },
             { key: "creditTotal", label: "Credits", align: "right", render: (r) => pula(r.creditTotal) },
             { key: "glReference", label: "GL ref", render: (r) => r.glReference || "—" },
+            { key: "periodCodes", label: "Periods", render: (r) => r.periodCodes || "—" },
+            { key: "deliveryNote", label: "Last delivery", render: (r) => <small className="ws-hint">{r.deliveryNote || r.note || "—"}</small> },
             { key: "createdAt", label: "Prepared", render: (r) => when(r.createdAt) },
+            {
+              key: "file",
+              label: "",
+              render: (r) => (
+                <Button variant="ghost" icon={FileDown} onClick={() => download(r)}>
+                  Export file
+                </Button>
+              ),
+            },
             {
               key: "act",
               label: "",
@@ -714,20 +835,30 @@ function GlExport({ session, notify, profile }) {
                     Submit to GL
                   </Button>
                 ) : r.status === "SUBMITTED" ? (
-                  <Button
-                    variant="secondary"
-                    icon={FileDown}
-                    onClick={() => setAck({ ref: r.ref, status: "ACCEPTED", glReference: "", note: "" })}
-                  >
-                    Record GL response
-                  </Button>
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => statusCheck(r)}>
+                      Check status by batch id
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      icon={FileDown}
+                      onClick={() => setAck({ ref: r.ref, status: "ACCEPTED", glReference: "", note: "" })}
+                    >
+                      Record GL response
+                    </Button>
+                  </span>
                 ) : r.status === "ACCEPTED" ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => setAck({ ref: r.ref, mode: "reconcile", glDebitTotal: "", glCreditTotal: "" })}
-                  >
-                    Reconcile
-                  </Button>
+                  <span className="ws-row-actions">
+                    <Button variant="secondary" busy={action.busy} onClick={() => reconcileFromGl(r)}>
+                      Reconcile to GL totals
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setAck({ ref: r.ref, mode: "reconcile", glDebitTotal: "", glCreditTotal: "" })}
+                    >
+                      Enter totals
+                    </Button>
+                  </span>
                 ) : null,
             },
           ]}
@@ -2385,5 +2516,47 @@ function ReversalRequests({ session, notify, profile, version }) {
         </Drawer>
       )}
     </Panel>
+  );
+}
+
+// NS-SH08-004 aged receivables and payables.
+function Ageing({ session }) {
+  const ageing = useResource(session, "/finance/ageing", null);
+  const a = ageing.data;
+  const table = (rows, totals, title, subtitle) => (
+    <Panel title={title} subtitle={subtitle}>
+      {totals && (
+        <div className="ws-kv">
+          {Object.entries(totals).map(([k, v]) => (
+            <div key={k}>
+              <small>{k === "TOTAL" ? "Total" : k + " days"}</small>
+              <strong>{pula(v)}</strong>
+            </div>
+          ))}
+        </div>
+      )}
+      <DataTable
+        rows={rows}
+        loading={ageing.loading}
+        rowKey={(r) => r.kind + r.ref}
+        empty="Nothing open"
+        columns={[
+          { key: "kind", label: "Type" },
+          { key: "ref", label: "Reference" },
+          { key: "party", label: "Party / policy" },
+          { key: "dueDate", label: "Due" },
+          { key: "ageDays", label: "Age (days)", align: "right" },
+          { key: "bucket", label: "Bucket", render: (r) => <Badge tone={r.bucket === "90+" ? "red" : r.bucket === "0-30" ? "green" : "amber"}>{r.bucket}</Badge> },
+          { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+        ]}
+      />
+    </Panel>
+  );
+  return (
+    <>
+      <ErrorNote error={ageing.error} />
+      {table(a?.receivables, a?.receivableTotals, "Aged receivables", "Individual instalments and group invoices owed, and reinsurance recoveries still expected, as at " + (a?.asOf || "today") + ".")}
+      {table(a?.payables, a?.payableTotals, "Aged payables", "Commission statements, refunds and approved claims not yet paid.")}
+    </>
   );
 }
