@@ -250,7 +250,9 @@ export default function CustomerPortal({
     session,
     Boolean(shop && !shop.error && (awaitingPayment.length || policies.some((p) => IN_FORCE_STATES.includes(p.status)))),
   );
-  const [declared, markDeclared] = useDeclaredPolicies(customer?.id);
+  const [declaredHere, markDeclared] = useDeclaredPolicies(customer?.id);
+  // The server knows every purchase this customer has declared, whichever device or sign-in it was made on.
+  const declared = [...new Set([...(declaredHere || []), ...(lock?.declaredPolicies || [])])];
   // A payment answers with the refreshed portal; the "reserved, pay below" note from the purchase no longer applies.
   const paidShop = (data) => {
     onShop(data);

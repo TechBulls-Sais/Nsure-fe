@@ -74,6 +74,7 @@ const signed = (v) => (Number(v) > 0 ? "+" : "") + pula(v);
 export default function PolicyServicing({ session, notify, profile }) {
   const [tab, setTab] = useState("policies");
   const [open, setOpen] = useState(null);
+  const [listVersion, setListVersion] = useState(0);
   const summary = useResource(session, "/servicing/summary", null);
   const s = summary.data || {};
   const loading = summary.loading && !summary.data;
@@ -110,7 +111,7 @@ export default function PolicyServicing({ session, notify, profile }) {
           ["rules", "Product rules"],
         ]}
       />
-      {tab === "policies" && <Policies session={session} onOpen={setOpen} />}
+      {tab === "policies" && <Policies key={listVersion} session={session} onOpen={setOpen} />}
       {tab === "endorsements" && (
         <Endorsements session={session} notify={notify} profile={profile} onOpen={setOpen} onChange={summary.reload} />
       )}
@@ -126,6 +127,8 @@ export default function PolicyServicing({ session, notify, profile }) {
           onClose={() => {
             setOpen(null);
             summary.reload();
+            // A surrender, termination or endorsement changes the policy's status: read the list again.
+            setListVersion((v) => v + 1);
           }}
         />
       )}

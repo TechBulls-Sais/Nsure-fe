@@ -56,7 +56,7 @@ export default function IntegrationMonitor({ session, notify, profile }) {
     if (!ok) return;
     const r = await action.run(() => request(session, "/integration/outbox/dispatch", { method: "POST" }));
     if (r) {
-      notify(`Dispatched: ${r.data.delivered} delivered, ${r.data.failed} failed`);
+      notify(`Dispatched: ${r.data.delivered} delivered, ${r.data.failed} failed`, r.data.failed ? "error" : "success");
       changed();
     }
   };
@@ -159,7 +159,7 @@ function ReplayDrawer({ session, notify, target, onClose, onDone }) {
       request(session, `/integration/deliveries/${target.id}/replay`, { method: "POST", body: { reason } }),
     );
     if (r) {
-      notify(`Replayed: ${r.data.delivered} delivered, ${r.data.failed} failed`, "success");
+      notify(`Replayed: ${r.data.delivered} delivered, ${r.data.failed} failed`, r.data.failed ? "error" : "success");
       onDone();
     }
   };

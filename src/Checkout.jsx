@@ -245,8 +245,7 @@ export function DeclarationStep({ session, policy, lock, reloadLock, onDeclared,
       )}
       {otp?.devCode && !locked && (
         <p className="pay-dev-code" role="note">
-          <strong>Development:</strong> your code is <code>{otp.devCode}</code>. No SMS or e-mail provider is
-          connected yet, so the code is shown here instead.
+          Demo installation: use the code <strong>{otp.devCode}</strong>.
         </p>
       )}
       {error && (

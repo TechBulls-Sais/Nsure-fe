@@ -61,6 +61,7 @@ export default function Communications({ session, notify, profile }) {
       notify(
         `Handed ${d.processed} to the provider: ${d.accepted} accepted, ${d.retrying} will retry, ${d.failed} failed. ` +
           `${d.delivered} delivery report(s) received.`,
+        d.failed ? "error" : "success",
       );
       all.reload();
       setRefresh((n) => n + 1);

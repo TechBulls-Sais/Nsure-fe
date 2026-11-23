@@ -1979,15 +1979,15 @@ export default function App() {
             </div>
           </Panel>
           <Panel
-            title="Refresh"
-            subtitle="Records are kept on the server; reloading shows the latest of them."
+            title="Refresh data"
+            subtitle="Read every list again from the server. Nothing is changed or deleted."
           >
             <Button
               variant="secondary"
               icon="RotateCcw"
               onClick={() => setModal({ type: "reset" })}
             >
-              Reload data
+              Refresh data
             </Button>
           </Panel>
         </div>
@@ -2410,7 +2410,7 @@ export default function App() {
                   : modal.type === "detail"
                     ? modal.record.name
                     : modal.type === "reset"
-                          ? "Reload the workspace?"
+                          ? "Refresh this workspace?"
                           : modal.type === "command"
                             ? "Your workspace, one shortcut away."
                             : "Nsure"
@@ -2571,7 +2571,7 @@ export default function App() {
           {modal.type === "reset" && (
             <>
               <p>
-                This reloads every record from the server. Saved changes stay as they are; nothing is reset or
+                Every list is read again from the server. Saved changes stay as they are; nothing is reset or
                 deleted. Anything typed into a form and not yet saved is lost. You stay signed in.
               </p>
               <div className="modal-footer">
@@ -2579,7 +2579,7 @@ export default function App() {
                   Cancel
                 </Button>
                 <Button icon="RotateCcw" onClick={() => location.reload()}>
-                  Reload
+                  Refresh
                 </Button>
               </div>
             </>
