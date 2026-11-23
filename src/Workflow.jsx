@@ -30,19 +30,22 @@ export const PAYMENT_METHODS = ["Orange Money", "MyZaka", "Card", "Bank EFT"];
 export const PAYOUT_METHODS = ["Bank Account", "Mobile Wallet"];
 export const RELATIONSHIPS = ["Spouse", "Child", "Parent", "Sibling", "Other"];
 
-// Spec 10 §1.3, as PolicyWorkflow on the server names them. "Active - No Cover": the grace period ended unpaid, so the
-// policy stays in force for up to 3 months without cover; paying resumes cover with no new waiting period.
-// "Claimed": ended by a paid claim.
+// Spec 10 §1.3, as PolicyWorkflow on the server names them. "Grace": the premium is overdue but the grace period has
+// not ended, so cover continues. "Active - No Cover": the grace period ended unpaid, so the policy stays in force for up
+// to 3 months without cover; paying resumes cover with no new waiting period. "Claimed": ended by a paid claim.
+export const GRACE = "Grace";
 export const NO_COVER = "Active - No Cover";
-export const POLICY_STATES = ["Pending Payment", "Active", NO_COVER, "Lapsed", "Expired", "Cancelled", "Claimed"];
+export const POLICY_STATES = ["Pending Payment", "Active", GRACE, NO_COVER, "Lapsed", "Expired", "Cancelled", "Claimed"];
+/** Covering its lives today: active, or in grace with the premium overdue. */
+export const IN_COVER_STATES = ["Active", GRACE];
 /** In force: cover running, or paused (no cover) but still revivable by paying. */
-export const IN_FORCE_STATES = ["Active", NO_COVER];
+export const IN_FORCE_STATES = ["Active", GRACE, NO_COVER];
 /** A premium can be collected (first premium, renewal, or reinstatement from no cover). */
-export const PAYABLE_STATES = ["Pending Payment", "Active", NO_COVER];
+export const PAYABLE_STATES = ["Pending Payment", "Active", GRACE, NO_COVER];
 /** Staff can cancel these, with a reason. */
-export const CANCELLABLE_STATES = ["Pending Payment", "Active", NO_COVER];
+export const CANCELLABLE_STATES = ["Pending Payment", "Active", GRACE, NO_COVER];
 /** Beneficiaries can still be changed (the server refuses Cancelled, Expired and Lapsed). */
-const BENEFICIARY_STATES = ["Pending Payment", "Active", NO_COVER];
+const BENEFICIARY_STATES = ["Pending Payment", "Active", GRACE, NO_COVER];
 /** TC-18 / TC-20: months a policy stays in force without cover before it lapses. */
 export const NO_COVER_MONTHS = 3;
 
@@ -64,7 +67,7 @@ export function noCoverLapsesOn(policy) {
 /** Badge colour for a policy state: in force green, waiting or paused amber, ended red, closed by a claim blue. */
 export function policyTone(status) {
   const s = String(status || "").toLowerCase();
-  if (s === NO_COVER.toLowerCase() || s === "pending payment") return "amber";
+  if (s === NO_COVER.toLowerCase() || s === "grace" || s === "pending payment") return "amber";
   if (s === "active") return "green";
   if (s === "claimed") return "blue";
   if (["lapsed", "expired", "cancelled"].includes(s)) return "red";
@@ -80,9 +83,12 @@ export const CLAIM_STATES = [
   "Payout Failed",
   "Rejected",
   "Paid",
+  "Closed",
 ];
 
 const OPEN_CLAIM = ["Initiated", "Under Review", "Recommended"];
+/** The payout settled: Paid, whether or not the claim has since been closed. */
+export const SETTLED_CLAIM = ["Paid", "Closed"];
 
 // Same split as ClaimWorkflow on the server. A failed hard check means there was no valid cover, so the claim can
 // only be rejected; a failed soft check can be approved with a written reason.
@@ -1433,7 +1439,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           </p>
         </div>
       )}
-      {c.status === "Paid" && (
+      {SETTLED_CLAIM.includes(c.status) && (
         <div className="notice">
           <CircleCheck size={18} aria-hidden="true" />
           <p>
@@ -1468,7 +1474,7 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
           </p>
         </div>
       )}
-      {["Approved", "Payout Sent", "Payout Failed", "Paid"].includes(c.status) && (
+      {["Approved", "Payout Sent", "Payout Failed", ...SETTLED_CLAIM].includes(c.status) && (
         <>
           <h3 className="section-title">Payment instructions</h3>
           <PayoutInstructions
@@ -1730,12 +1736,22 @@ export function ClaimWorkflowPanel({ session, claim: c, profile, onUpdated, noti
         )}
         {can("reopen") && holds(profile, "APPROVE_CLAIM") && (
           <ReasonAction
-            label={c.status === "Approved" ? "Reopen before payment" : "Reopen"}
+            label={c.status === "Approved" ? "Reopen before payment" : c.status === "Closed" ? "Reopen closed claim" : "Reopen"}
             icon={RotateCcw}
             busy={busy}
-            placeholder="Why the decision is being reviewed, e.g. the death certificate has now arrived"
+            placeholder={
+              c.status === "Closed"
+                ? "What is still to finish, e.g. the reinsurance recovery has not been received"
+                : "Why the decision is being reviewed, e.g. the death certificate has now arrived"
+            }
             onConfirm={(reason) =>
-              call("/reopen", { method: "POST", body: { reason } }, c.id + " is reopened for review.")
+              call(
+                "/reopen",
+                { method: "POST", body: { reason } },
+                c.status === "Closed"
+                  ? c.id + " is reopened. The payment and decision stand."
+                  : c.id + " is reopened for review.",
+              )
             }
           />
         )}

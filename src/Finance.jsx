@@ -1913,7 +1913,28 @@ function Billing({ session, notify, profile }) {
   const [adjusting, setAdjusting] = useState(null);
   const [reversing, setReversing] = useState(null);
   const [reversalVersion, setReversalVersion] = useState(0);
+  const [moving, setMoving] = useState(null);
+  const [reallocationVersion, setReallocationVersion] = useState(0);
   const manage = can(profile, "MANAGE_FINANCE");
+  const applied = (account?.instalments || []).flatMap((i) =>
+    i.allocations.filter((a) => !a.reversalRef).map((a) => ({ ...a, instalmentRef: i.ref, period: i.periodStart + " – " + i.periodEnd })),
+  );
+  const targetsFor = (a) =>
+    (account?.instalments || []).filter((i) => i.ref !== a.instalmentRef && i.status !== "WAIVED" && Number(i.outstanding) >= Number(a.amount));
+  const requestMove = async () => {
+    const done = await action.run(
+      () =>
+        request(session, "/collections/allocations/" + encodeURIComponent(moving.ref) + "/reallocate", {
+          method: "POST",
+          body: { toInstalment: moving.toInstalment, reason: moving.reason },
+        }),
+      "Re-allocation sent for approval by a second person",
+    );
+    if (done) {
+      setMoving(null);
+      setReallocationVersion((v) => v + 1);
+    }
+  };
   const requestReversal = async () => {
     const done = await action.run(
       () =>
@@ -2098,7 +2119,67 @@ function Billing({ session, notify, profile }) {
           />
         </Panel>
       )}
+      {account && (
+        <Panel title={"Applied money on " + account.policyRef} subtitle="Money applied to the wrong period is moved to another instalment of this policy only when a second person approves. The original allocation is kept, marked as moved.">
+          <DataTable
+            rows={applied}
+            rowKey={(r) => r.ref}
+            searchFrom={99}
+            empty="Nothing applied yet"
+            columns={[
+              { key: "ref", label: "Allocation" },
+              { key: "instalmentRef", label: "Instalment" },
+              { key: "period", label: "Period" },
+              { key: "sourceRef", label: "From", render: (r) => r.sourceRef + (r.sourceType === "SUSPENSE" ? " (suspense)" : "") },
+              { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+              { key: "allocatedBy", label: "By" },
+              {
+                key: "act",
+                label: "",
+                render: (r) =>
+                  manage &&
+                  (targetsFor(r).length ? (
+                    <Button variant="secondary" onClick={() => setMoving({ ...r, toInstalment: targetsFor(r)[0].ref, reason: "" })}>
+                      Move
+                    </Button>
+                  ) : (
+                    <small className="ws-hint">No other instalment owes this much</small>
+                  )),
+              },
+            ]}
+          />
+        </Panel>
+      )}
       <ReversalRequests session={session} notify={notify} profile={profile} version={reversalVersion} />
+      <ReallocationRequests
+        session={session}
+        notify={notify}
+        profile={profile}
+        version={reallocationVersion}
+        onDecided={() => account && load(account.policyRef)}
+      />
+      {moving && (
+        <Drawer
+          title={"Move " + moving.ref}
+          description={"BWP " + Number(moving.amount).toFixed(2) + " from " + moving.instalmentRef + ". Nothing changes until a different person approves."}
+          onClose={() => setMoving(null)}
+        >
+          <FormGrid busy={action.busy} error={action.error} onSubmit={requestMove} submitLabel="Send for approval">
+            <Field label="To instalment">
+              <select value={moving.toInstalment} onChange={(e) => setMoving({ ...moving, toInstalment: e.target.value })}>
+                {targetsFor(moving).map((i) => (
+                  <option key={i.ref} value={i.ref}>
+                    {i.ref + " · " + i.periodStart + " – " + i.periodEnd + " · owes " + pula(i.outstanding)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Reason" full>
+              <input required minLength={10} maxLength={500} value={moving.reason} onChange={(e) => setMoving({ ...moving, reason: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
       {reversing && (
         <Drawer title={"Reverse receipt " + reversing.receiptRef} description="Nothing changes until a different person approves the reversal." onClose={() => setReversing(null)}>
           <FormGrid busy={action.busy} error={action.error} onSubmit={requestReversal} submitLabel="Send for approval">
@@ -2468,6 +2549,160 @@ function DebitOrders({ session, notify, profile }) {
           </FormGrid>
         </Drawer>
       )}
+    </>
+  );
+}
+
+// SH04 re-allocations: money moved between instalments of one policy, asked for by one person, approved by another.
+function ReallocationRequests({ session, notify, profile, version, onDecided }) {
+  const list = useResource(session, "/collections/reallocation-requests?v=" + version, []);
+  const action = useAction(notify);
+  const [rejecting, setRejecting] = useState(null);
+  const me = profile?.username;
+  const decided = () => {
+    list.reload();
+    onDecided?.();
+  };
+  const approve = async (r) => {
+    const done = await action.run(
+      () => request(session, "/collections/reallocation-requests/" + r.ref + "/approve", { method: "POST", body: {} }),
+      "Re-allocation approved: the money is on " + r.toInstalmentRef,
+    );
+    if (done) decided();
+  };
+  const reject = async () => {
+    const done = await action.run(
+      () => request(session, "/collections/reallocation-requests/" + rejecting.ref + "/reject", { method: "POST", body: { note: rejecting.note } }),
+      "Re-allocation rejected",
+    );
+    if (done) {
+      setRejecting(null);
+      decided();
+    }
+  };
+  return (
+    <Panel title="Receipt re-allocations" subtitle="Approving moves the money and reviews the policy's paid-to date and cover when an earlier period is left unpaid.">
+      <ErrorNote error={list.error || (!rejecting && action.error)} />
+      <DataTable
+        rows={list.data}
+        loading={list.loading}
+        rowKey={(r) => r.ref}
+        empty="No re-allocation requests"
+        columns={[
+          { key: "ref", label: "Request" },
+          { key: "policyRef", label: "Policy" },
+          { key: "sourceRef", label: "Receipt" },
+          { key: "move", label: "Move", render: (r) => r.fromInstalmentRef + " → " + r.toInstalmentRef },
+          { key: "amount", label: "Amount", align: "right", render: (r) => pula(r.amount) },
+          { key: "reason", label: "Reason" },
+          { key: "requestedBy", label: "Requested by" },
+          { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+          {
+            key: "act",
+            label: "",
+            render: (r) =>
+              r.status !== "PENDING_APPROVAL" ? (
+                <small className="ws-hint">
+                  {r.decidedBy ? (r.status === "APPROVED" ? "Approved by " : "Rejected by ") + r.decidedBy : ""}
+                  {r.newAllocationRef ? " · " + r.newAllocationRef : ""}
+                  {r.decisionNote ? ": " + r.decisionNote : ""}
+                </small>
+              ) : r.requestedBy === me || !can(profile, "APPROVE_JOURNAL") ? (
+                <small className="ws-hint">Waiting for another approver</small>
+              ) : (
+                <span className="ws-row-actions">
+                  <Button variant="secondary" busy={action.busy} onClick={() => approve(r)}>
+                    Approve
+                  </Button>
+                  <Button variant="secondary" onClick={() => setRejecting({ ref: r.ref, note: "" })}>
+                    Reject
+                  </Button>
+                </span>
+              ),
+          },
+        ]}
+      />
+      {rejecting && (
+        <Drawer title={"Reject re-allocation " + rejecting.ref} description="The money stays where it is." onClose={() => setRejecting(null)}>
+          <FormGrid busy={action.busy} error={action.error} onSubmit={reject} submitLabel="Reject re-allocation">
+            <Field label="Why" full>
+              <input required minLength={5} maxLength={500} value={rejecting.note} onChange={(e) => setRejecting({ ...rejecting, note: e.target.value })} />
+            </Field>
+          </FormGrid>
+        </Drawer>
+      )}
+    </Panel>
+  );
+}
+
+const LEDGER_FILTERS = [
+  ["OPEN", "Still owed"],
+  ["", "All"],
+  ["DUE", "Due"],
+  ["PART_PAID", "Part paid"],
+  ["PAID", "Paid"],
+  ["WAIVED", "Waived"],
+];
+
+/** SH04 Collections page: the instalment ledger across the book, worked out from allocations and adjustments. */
+export function InstalmentLedger({ session }) {
+  const [status, setStatus] = useState("OPEN");
+  const [policy, setPolicy] = useState("");
+  const [applied, setApplied] = useState("");
+  const query = new URLSearchParams({ limit: "500" });
+  if (status) query.set("status", status);
+  if (applied) query.set("policyRef", applied);
+  const list = useResource(session, "/collections/instalments?" + query, []);
+  const rows = list.data || [];
+  const owed = rows.reduce((sum, r) => sum + Math.max(0, Number(r.outstanding || 0)), 0);
+  const overdue = rows.filter((r) => r.overdue);
+  return (
+    <>
+      <div className="stat-grid three">
+        <Stat label="Instalments shown" value={String(rows.length)} loading={list.loading} />
+        <Stat label="Outstanding" value={pula(owed)} tone="amber" loading={list.loading} />
+        <Stat
+          label="Overdue"
+          value={pula(overdue.reduce((sum, r) => sum + Number(r.outstanding || 0), 0))}
+          note={overdue.length + " instalments past their due date"}
+          tone="red"
+          loading={list.loading}
+        />
+      </div>
+      <Panel title="Instalment ledger" subtitle="Every billed period with what was applied, adjusted and is still owed. Open a policy's billing account under Finance → Billing to adjust, reverse or move money.">
+        <FormGrid submitLabel="Filter" onSubmit={() => setApplied(policy.trim())}>
+          <Field label="Show">
+            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              {LEDGER_FILTERS.map(([value, label]) => (
+                <option key={value || "all"} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Policy">
+            <input value={policy} placeholder="All policies" onChange={(e) => setPolicy(e.target.value)} />
+          </Field>
+        </FormGrid>
+        <ErrorNote error={list.error} />
+        <DataTable
+          rows={rows}
+          loading={list.loading}
+          rowKey={(r) => r.ref}
+          empty="No instalments match"
+          columns={[
+            { key: "ref", label: "Instalment" },
+            { key: "policyRef", label: "Policy" },
+            { key: "periodStart", label: "Period", render: (r) => r.periodStart + " – " + r.periodEnd },
+            { key: "dueDate", label: "Due", render: (r) => (r.overdue ? <strong>{r.dueDate} · overdue</strong> : r.dueDate) },
+            { key: "billed", label: "Billed", align: "right", render: (r) => pula(r.billed) },
+            { key: "adjustments", label: "Adjustments", align: "right", render: (r) => pula(r.adjustments) },
+            { key: "allocated", label: "Paid", align: "right", render: (r) => pula(r.allocated) },
+            { key: "outstanding", label: "Outstanding", align: "right", render: (r) => pula(r.outstanding) },
+            { key: "status", label: "Status", render: (r) => <Badge>{r.status.replace("_", " ")}</Badge> },
+          ]}
+        />
+      </Panel>
     </>
   );
 }

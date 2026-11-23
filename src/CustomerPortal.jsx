@@ -742,6 +742,16 @@ export default function CustomerPortal({
                                 <dd>{formatDate(policy.nextPremiumDue)}</dd>
                               </div>
                             )}
+                            {policy.status === "Grace" && policy.nextPremiumDue && (
+                              <div>
+                                <dt>Premium overdue</dt>
+                                <dd>
+                                  Due {formatDate(policy.nextPremiumDue)}. You are still covered
+                                  {policy.gracePeriodEnd ? " until " + formatDate(policy.gracePeriodEnd) : ""}; pay
+                                  before then to keep your cover.
+                                </dd>
+                              </div>
+                            )}
                             {noCover && policy.nextPremiumDue && (
                               <div>
                                 <dt>Unpaid premium due</dt>
@@ -996,7 +1006,7 @@ export default function CustomerPortal({
                   className={["Rejected"].includes(item.status) ? "is-rejected" : "is-pending"}
                 >
                   <span className="customer-request-icon" aria-hidden="true">
-                    {item.status === "Rejected" ? <X size={15} /> : ["Approved", "Payout Sent", "Paid"].includes(item.status) ? <Check size={15} /> : <Clock3 size={15} />}
+                    {item.status === "Rejected" ? <X size={15} /> : ["Approved", "Payout Sent", "Paid", "Closed"].includes(item.status) ? <Check size={15} /> : <Clock3 size={15} />}
                   </span>
                   <div>
                     <strong>
@@ -1025,7 +1035,7 @@ export default function CustomerPortal({
                         through. Our team is checking the payout details and will send it again.
                       </p>
                     )}
-                    {item.status === "Paid" && (
+                    {(item.status === "Paid" || item.status === "Closed") && (
                       <p>
                         {money(item.payoutAmount)} paid to {item.payee?.name}
                         {item.paidAt ? " on " + formatDate(item.paidAt) : ""}.

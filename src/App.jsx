@@ -134,7 +134,7 @@ import Controls from "./Controls";
 import { PAGE_ACCESS, canDo, canOpen, isWorkspacePage, landingPage } from "./access";
 import "./access.css";
 import GroupAdmin from "./GroupAdmin";
-import Finance from "./Finance";
+import Finance, { InstalmentLedger } from "./Finance";
 import Distribution from "./Distribution";
 import Reinsurance from "./Reinsurance";
 import Underwriting from "./Underwriting";
@@ -166,7 +166,10 @@ import {
   NEEDS_AUDIT,
   ClaimLodgeForm,
   ClaimWorkflowPanel,
+  GRACE,
+  IN_COVER_STATES,
   NO_COVER,
+  SETTLED_CLAIM,
   POLICY_STATES,
   PolicyWorkflowPanel,
   ApplicationChecklist,
@@ -1341,12 +1344,12 @@ export default function App() {
         <div className="stat-grid">
           <Stat
             label="Active policies"
-            value={policies.filter((policy) => policy.status === "Active").length}
+            value={policies.filter((policy) => IN_COVER_STATES.includes(policy.status)).length}
             icon="ShieldCheck"
           />
           <Stat
             label="Monthly premium in force"
-            value={money(policies.filter((policy) => policy.status === "Active").reduce((sum, policy) => sum + Number(policy.premium || 0), 0))}
+            value={money(policies.filter((policy) => IN_COVER_STATES.includes(policy.status)).reduce((sum, policy) => sum + Number(policy.premium || 0), 0))}
             icon="Wallet"
             color="purple"
           />
@@ -1358,7 +1361,7 @@ export default function App() {
           />
           <Stat
             label="Claims settled"
-            value={claims.length ? Math.round((100 * claims.filter((claim) => claim.status === "Paid").length) / claims.length) + "%" : "0%"}
+            value={claims.length ? Math.round((100 * claims.filter((claim) => SETTLED_CLAIM.includes(claim.status)).length) / claims.length) + "%" : "0%"}
             icon="HeartHandshake"
             color="amber"
           />
@@ -1623,11 +1626,17 @@ export default function App() {
       },
     }[kind];
     const paymentsTab = kind === "collections" && collectionsTab === "payments" && can(profile, "READ_PAYMENT");
+    const ledgerTab = kind === "collections" && collectionsTab === "ledger" && can(profile, "READ_FINANCE");
+    const collectionsTabs = [
+      ["receipts", "Premium receipts"],
+      ...(can(profile, "READ_FINANCE") ? [["ledger", "Instalment ledger"]] : []),
+      ...(can(profile, "READ_PAYMENT") ? [["payments", "Payments"]] : []),
+    ];
     const newBusinessTab = kind === "applications" && applicationsTab !== "workbench" ? applicationsTab : null;
     return (
       <>
         <Heading title={config.title} subtitle={config.sub}>
-          {!paymentsTab && (
+          {!paymentsTab && !ledgerTab && (
             <Button
               variant="secondary"
               icon="Download"
@@ -1680,18 +1689,13 @@ export default function App() {
             onDraftCreated={(created) => setApplications((rows) => [created, ...rows])}
           />
         )}
-        {kind === "collections" && can(profile, "READ_PAYMENT") && (
-          <Tabs
-            tabs={[
-              ["receipts", "Premium receipts"],
-              ["payments", "Payments"],
-            ]}
-            value={collectionsTab}
-            onChange={setCollectionsTab}
-          />
+        {kind === "collections" && collectionsTabs.length > 1 && (
+          <Tabs tabs={collectionsTabs} value={collectionsTab} onChange={setCollectionsTab} />
         )}
         {newBusinessTab ? null : paymentsTab ? (
           <PaymentTransactions session={session} notify={notify} />
+        ) : ledgerTab ? (
+          <InstalmentLedger session={session} />
         ) : (
           <>
         {kind === "collections" && (
@@ -2546,7 +2550,7 @@ export default function App() {
           {modal.type === "claim" && (
             <ClaimLodgeForm
               staff
-              policies={policies.filter((p) => ["Active", NO_COVER, "Lapsed"].includes(p.status))}
+              policies={policies.filter((p) => ["Active", GRACE, NO_COVER, "Lapsed"].includes(p.status))}
               onCancel={close}
               onSave={async (data) => {
                 try {
@@ -4362,7 +4366,7 @@ function Detail({
                     "Premium in force",
                     money(
                       linkedPolicies
-                        .filter((p) => p.status === "Active")
+                        .filter((p) => IN_COVER_STATES.includes(p.status))
                         .reduce((sum, p) => sum + Number(p.premium || 0), 0),
                     ) + " / month",
                   ],

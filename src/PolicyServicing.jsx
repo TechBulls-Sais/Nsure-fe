@@ -217,7 +217,7 @@ function PolicyDrawer({ session, notify, profile, policyRef, onClose }) {
     : [];
   const manage = can(profile, "MANAGE_SERVICING");
   const approve = can(profile, "APPROVE_ENDORSEMENT");
-  const inForce = p && ["Active", "Active - No Cover", "Reinstatement Pending"].includes(p.contractStatus);
+  const inForce = p && ["Active", "Grace", "Active - No Cover", "Reinstatement Pending"].includes(p.contractStatus);
 
   const startEndorsement = (type, extra = {}) => {
     setPreview(null);

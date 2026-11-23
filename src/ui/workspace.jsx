@@ -94,7 +94,7 @@ export function Panel({ title, subtitle, action, children, className = "" }) {
 }
 
 const GREEN = /active|approved|delivered|posted|paid|accepted|resolved|closed|applied|open period|^open$|committed|issued|settled|verified/;
-const AMBER = /pending|queued|submitted|review|paused|draft|validated|partial|soft|underwriting|in progress|prepared|outstanding/;
+const AMBER = /pending|queued|submitted|review|paused|draft|validated|partial|soft|underwriting|in progress|prepared|outstanding|^grace$/;
 const RED = /failed|rejected|declined|suspended|lapsed|cancelled|breach|suspense|exception|ceased|reversed|unmatched|^closed period/;
 
 export function Badge({ children, tone }) {

@@ -1718,6 +1718,7 @@ function BulkNotices({ session, notify, profile, onChange }) {
             <Field label="Policies that are">
               <select value={draft.policyStatus} onChange={(e) => setDraft({ ...draft, policyStatus: e.target.value })}>
                 <option>Active</option>
+                <option>Grace</option>
                 <option>Active - No Cover</option>
                 <option>Lapsed</option>
                 <option>Pending Payment</option>
