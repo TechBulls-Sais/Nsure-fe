@@ -4,6 +4,8 @@ import App from "./App";
 import "./styles.css";
 import "./ui/kit.css";
 import "./ui/navigation.css";
+import "./ui/refinement.css";
+import "./ui/workflow-refinement.css";
 import { MotionProvider } from "./ui/animated";
 import { ConfirmProvider } from "./ui/overlay";
 import { applyTheme } from "./ui/theme";

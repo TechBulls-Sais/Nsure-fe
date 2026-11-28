@@ -364,6 +364,7 @@ export function DataTable({
                   return (
                     <th
                       key={c.key}
+                      data-column={c.key}
                       style={c.align ? { textAlign: c.align } : undefined}
                       aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
                     >
@@ -406,7 +407,7 @@ export function DataTable({
                   }
                 >
                   {columns.map((c) => (
-                    <td key={c.key} className={c.className} style={c.align ? { textAlign: c.align } : undefined}>
+                    <td key={c.key} data-column={c.key} className={c.className} style={c.align ? { textAlign: c.align } : undefined}>
                       {c.render ? c.render(row) : row[c.key] ?? "—"}
                     </td>
                   ))}

@@ -1,0 +1,814 @@
+/* The operational modules and customer journeys share the same visual language.
+   Keep these presentation rules separate from workflow state and permissions. */
+:root {
+  --surface: var(--nk-surface);
+  --border: var(--line);
+  --red-border: light-dark(#e4b5b5, #8a5151);
+}
+
+/* Readable headings, supporting copy, and consistent vertical rhythm. */
+.app-shell .subtitle,
+.app-shell .panel-header .subtitle,
+.nk-dialog .subtitle {
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.page-heading .subtitle {
+  max-width: 90ch;
+}
+.ws-panel {
+  margin-bottom: 24px;
+}
+.panel-header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+.panel-header > div:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.panel-header > .btn {
+  flex-shrink: 0;
+}
+.panel-header .ws-row-actions {
+  max-width: 100%;
+}
+.panel-header .subtitle {
+  max-width: 90ch;
+}
+.ws-panel-body {
+  padding-top: 20px;
+}
+.ws-panel-body > p,
+.empty-state > p,
+.config-banner p,
+.config-form-heading p,
+.svc-description,
+.uw-list {
+  font-size: 1rem;
+  line-height: 1.65;
+}
+.ws-panel-body > p + .ws-tabs {
+  margin-top: 20px;
+}
+.section-title,
+.ga-drawer-section h3,
+.svc-history-title {
+  font-size: 0.9375rem;
+  color: var(--ink);
+  font-weight: 700;
+}
+.empty-state {
+  min-height: 190px;
+  padding: 32px 24px;
+}
+.empty-state > .icon {
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+}
+.empty-state h3 {
+  font-size: 1rem;
+  font-weight: 600;
+}
+.empty-state > p {
+  max-width: 60ch;
+  color: var(--muted);
+}
+
+/* Every tab remains visible, including Access's nine sections on small screens. */
+.tabs,
+.access-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 0 14px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.tabs .filter-tab,
+.access-tabs .filter-tab {
+  flex: 0 1 auto;
+  min-height: 40px;
+  padding: 9px 12px;
+  line-height: 1.45;
+  font-size: 0.875rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+.tabs .filter-tab.active,
+.access-tabs .filter-tab.active {
+  color: var(--green);
+  background: var(--nk-accent-soft);
+  border-color: light-dark(#b3cab8, #536f5b);
+  font-weight: 700;
+}
+
+/* Native controls in quote comparison, reports, finance and administration
+   previously fell back to the browser's small, unstyled inputs. */
+:is(.app-shell, .nk-dialog, .customer-shell) select,
+:is(.app-shell, .nk-dialog, .customer-shell)
+  input:is([type="date"], [type="month"], [type="datetime-local"]),
+.nb-compare-controls input,
+.covered-life-fields input,
+.rt-grid input,
+.rt-band input {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  background-color: var(--nk-surface);
+  color: var(--ink);
+}
+:is(.app-shell, .nk-dialog, .customer-shell) select {
+  appearance: none;
+  padding-right: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23768b7f' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.ws-panel .panel-header > :is(input, select),
+.ws-panel .panel-header > .select {
+  flex: 0 1 240px;
+  width: 240px;
+  max-width: 100%;
+}
+.ns-select-trigger.select {
+  min-height: 44px;
+  border-color: var(--field-border);
+  background: var(--nk-surface);
+  color: var(--ink);
+  font-size: 1rem;
+}
+.ns-select-trigger.small-select {
+  min-height: 40px;
+  font-size: 0.875rem;
+}
+.ns-select-content {
+  background: var(--nk-surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.ns-select-item {
+  min-height: 42px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ns-select-trigger.select[data-disabled],
+.ns-select-item[data-disabled] {
+  opacity: 1;
+  color: var(--muted);
+  background: var(--nk-surface-2);
+}
+.config-form .input,
+.config-form .select,
+.config-form .textarea,
+.covered-life-fields select {
+  font-size: 1rem;
+  min-height: 44px;
+}
+.form-label,
+.config-form .form-label,
+.pay-code-input,
+.nb-compare-controls span,
+.ri-product,
+.ga-check,
+.access-check {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.form-label,
+.field-grid > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.ws-hint,
+.config-field-hint {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.nb-compare-controls {
+  gap: 16px;
+}
+.nb-compare-controls label {
+  gap: 8px;
+  min-width: min(180px, 100%);
+}
+.nb-compare-card {
+  background: var(--nk-surface);
+  padding: 20px;
+  border-color: var(--line);
+}
+
+/* Keep words and references intact; dense tables scroll inside their own region. */
+.data-table td {
+  min-width: 7rem;
+  max-width: 28rem;
+  white-space: normal;
+  overflow-wrap: normal;
+  line-height: 1.6;
+}
+.data-table
+  td:is(
+    [data-column="name"],
+    [data-column="product"],
+    [data-column="subject"],
+    [data-column="description"],
+    [data-column="terms"],
+    [data-column="customer"]
+  ) {
+  min-width: 13rem;
+}
+.data-table
+  td:is(
+    [data-column="ref"],
+    [data-column="reference"],
+    [data-column="id"],
+    [data-column="amount"],
+    [data-column="premium"],
+    [data-column="date"]
+  ) {
+  white-space: nowrap;
+}
+.data-table td:is(.num, .amount) {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.data-table td .btn {
+  white-space: normal;
+  text-align: center;
+  line-height: 1.45;
+}
+.data-table .ws-row-actions {
+  min-width: 100px;
+}
+.data-table th {
+  line-height: 1.5;
+}
+.data-table td .ws-hint,
+.data-table td small,
+.svc-sub,
+.svc-muted,
+.ga-muted,
+.ws-kv small,
+.detail-item small {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.ws-kv strong,
+.detail-item strong,
+.svc-sla strong,
+.linked-record strong {
+  color: var(--ink);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.ws-kv > div,
+.detail-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.table-wrap,
+.cd-scroll {
+  overscroll-behavior-inline: contain;
+}
+.cd-table .cd-email {
+  min-width: 15rem;
+  max-width: 20rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: visible;
+  text-overflow: clip;
+}
+.nk-dialog .checkbox-label {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.nk-table-toolbar {
+  gap: 12px;
+  padding-bottom: 18px;
+}
+.nk-table-toolbar .search-box {
+  width: min(340px, 100%);
+}
+.nk-table .ws-clickable:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+.nk-pager button {
+  min-width: 36px;
+  height: 36px;
+  font-size: 0.875rem;
+}
+.ws-row-actions .btn {
+  min-height: 36px;
+  font-size: 0.8125rem;
+}
+
+/* Match labels and values across irregular metric groups and Product Studio. */
+.stat-grid:not(.three),
+.config-stats {
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+}
+.stat-card {
+  min-width: 0;
+}
+.ws-stat .stat-value {
+  font-size: clamp(1.35rem, 1.7vw, 1.75rem);
+  line-height: 1.35;
+}
+.stat-trend {
+  color: var(--muted);
+  align-items: flex-start;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.config-stat {
+  min-width: 0;
+  background: var(--nk-surface);
+  gap: 12px;
+  padding: 20px;
+}
+.config-stat small {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.config-banner {
+  background: var(--nk-accent-soft);
+  border-color: var(--line);
+}
+.config-banner > div {
+  min-width: 0;
+}
+.config-step strong {
+  font-size: 0.875rem;
+}
+.config-step small {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.config-form-heading h2 {
+  font-size: 1.375rem;
+}
+.config-form-footer {
+  background: var(--nk-surface-2);
+  flex-wrap: wrap;
+}
+.config-form-footer > div {
+  flex-wrap: wrap;
+}
+.config-form-footer .btn {
+  font-size: 0.875rem;
+}
+.config-preview-card {
+  background: var(--nk-surface);
+  border-color: var(--line);
+}
+.config-benefit small,
+.config-review-grid small {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.config-benefit strong,
+.config-review-grid strong {
+  font-size: 0.875rem;
+}
+.scheme-card {
+  background: var(--nk-surface);
+  border-color: var(--line);
+  border-radius: 14px;
+}
+.scheme-card-top {
+  align-items: flex-start;
+}
+.scheme-card-top > div {
+  min-width: 0;
+}
+.scheme-card-top h2 {
+  line-height: 1.5;
+}
+.scheme-card .scheme-meta {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.scheme-card > .btn {
+  margin-top: auto;
+}
+
+/* Review steps, notices and errors use the same readable sizing everywhere. */
+.notice,
+.ws-error,
+.form-error,
+.config-errors,
+.rt-error,
+.rt-issues,
+.rt-banner,
+.svc-note,
+.com-reason,
+.ga-status-note,
+.pay-lock,
+.pay-dev-code {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.notice > .icon,
+.ws-error > .icon {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 3px;
+}
+.wf-check,
+.wf-check-label,
+.covered-lives,
+.wf-doc-list,
+.wf-beneficiaries,
+.pay-lead,
+.pay-consents,
+.rt-rule,
+.rt-history,
+.gl-steps li {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.wf-tag,
+.access-capability {
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+.wf-check {
+  align-items: flex-start;
+  padding: 12px;
+}
+.wf-check > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.wf-check em {
+  white-space: nowrap;
+}
+.wf-doc-list li.wf-doc-superseded {
+  opacity: 1;
+  background: var(--nk-surface-2);
+}
+.wf-doc-actions {
+  flex-wrap: wrap;
+}
+.covered-life-remove {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+}
+.covered-life-fields {
+  gap: 10px;
+}
+.rt-grid input {
+  width: 96px;
+  padding-inline: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.rt-band input {
+  width: 70px;
+  padding-inline: 8px;
+}
+.rt-banner p {
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.rt-banner-actions,
+.ws-form-actions,
+.modal-footer,
+.nk-dialog-footer {
+  flex-wrap: wrap;
+}
+.nk-dialog .nk-dialog-header .subtitle {
+  font-size: 0.875rem;
+}
+.nk-dialog .nk-dialog-header h2 {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.nk-dialog .nk-dialog-body {
+  scroll-padding-block: 24px;
+}
+.nk-toast {
+  font-size: 0.875rem;
+}
+
+/* The customer portal, requests, declarations and payment results use these tokens too. */
+.customer-shell {
+  --customer-ink: var(--ink);
+  --customer-muted: var(--muted);
+  background: var(--ui-canvas);
+  font-size: 1rem;
+}
+:root[data-theme="dark"] .customer-top .brand-logo {
+  content: url("/brand/nsure-life-logo-light.svg");
+  filter: none;
+}
+.customer-top,
+.customer-product,
+.customer-requests,
+.pay-result,
+.pay-declaration,
+.pay-step-block {
+  border-color: var(--line);
+  background: var(--nk-surface);
+}
+.customer-top {
+  border-radius: 16px;
+}
+.customer-nav a,
+.customer-need-list button,
+.customer-view-button,
+.customer-shell .customer-view-button,
+.customer-shell .customer-add-cover {
+  font-size: 0.875rem;
+  min-height: 40px;
+}
+.customer-hero-description,
+.customer-account p,
+.customer-requests-head p,
+.customer-product-copy > p,
+.customer-product-detail li,
+.customer-empty p,
+.customer-case-types small,
+.pay-result > p {
+  font-size: 1rem;
+  line-height: 1.7;
+}
+.customer-requests li,
+.customer-policy-card,
+.customer-beneficiary-row,
+.pay-summary {
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+.customer-product-figures small,
+.customer-policy-meta,
+.customer-request-status,
+.customer-pricing-note {
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+.customer-policy-card,
+.customer-request-body {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.customer-shell .form-label {
+  font-size: 0.875rem;
+}
+.customer-shell .input {
+  font-size: 1rem;
+  min-height: 44px;
+}
+.pay-policy-number strong {
+  overflow-wrap: anywhere;
+}
+.pay-summary dd {
+  overflow-wrap: anywhere;
+}
+.customer-identity-form {
+  gap: 16px;
+}
+.customer-shell .customer-buy-bar {
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.customer-product.selected {
+  grid-column: 1 / -1;
+}
+.customer-product-detail,
+.customer-product-summary {
+  min-width: 0;
+}
+.customer-tier-name,
+.customer-tiers legend {
+  font-size: 0.875rem;
+}
+.customer-tier-name {
+  flex-wrap: wrap;
+}
+.customer-tier-name em {
+  white-space: nowrap;
+}
+@media (min-width: 900px) {
+  .customer-product.selected {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.6fr);
+  }
+  .customer-product.selected .customer-product-detail {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    padding: 28px;
+  }
+}
+
+/* File controls must fit the field rather than impose the browser's intrinsic width. */
+.nk-dialog input[type="file"] {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  font-family: inherit;
+  font-size: 1rem;
+}
+.ga-file {
+  max-width: 100%;
+}
+
+@media (max-width: 1050px) {
+  .customer-top {
+    flex-wrap: wrap;
+  }
+  .customer-top .customer-nav {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .customer-nav a {
+    display: inline-flex;
+    align-items: center;
+  }
+  .customer-shell :is(section[id], .customer-product-detail) {
+    scroll-margin-top: 200px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .config-builder {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .config-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 0;
+  }
+  .config-step {
+    flex: 1 1 180px;
+    width: auto;
+    margin: 0;
+  }
+  .config-help {
+    display: none;
+  }
+  .config-preview {
+    padding-top: 0;
+  }
+}
+@media (max-width: 860px) {
+  .ws-panel-body > .nk-table {
+    margin: 0 -16px -18px;
+  }
+  .nk-table-toolbar {
+    padding-inline: 16px;
+  }
+  .nk-table-footer {
+    padding-inline: 16px;
+  }
+}
+@media (max-width: 760px) {
+  .tabs,
+  .access-tabs {
+    gap: 6px;
+    padding-bottom: 12px;
+  }
+  .tabs .filter-tab,
+  .access-tabs .filter-tab {
+    padding: 8px 10px;
+  }
+  .panel-header > div:first-child {
+    flex-basis: 100%;
+  }
+  .ws-panel .panel-header > :is(input, select),
+  .ws-panel .panel-header > .select {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .panel-header .ws-row-actions {
+    width: 100%;
+  }
+  .panel-header .ws-row-actions > :is(select, input) {
+    flex: 1 1 160px;
+    width: 100%;
+  }
+  .stat-grid:not(.three),
+  .config-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .config-stat {
+    padding: 16px;
+    gap: 10px;
+  }
+  .config-stat .stat-icon {
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+  }
+  .stat-trend {
+    flex-wrap: wrap;
+  }
+  .ws-panel-body > p {
+    overflow-wrap: anywhere;
+  }
+  .config-form-body,
+  .config-form-heading,
+  .config-form-footer {
+    padding: 20px;
+  }
+  .customer-top {
+    border-radius: 12px;
+  }
+  .customer-requests-head p {
+    max-width: 100%;
+  }
+}
+@media (max-width: 600px) {
+  .nk-dialog .stepper {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .nk-dialog .step {
+    min-width: 0;
+    font-size: 0.8125rem;
+  }
+  .field-grid,
+  .nk-drawer .ws-form .field-grid,
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .nk-dialog .field-grid .full {
+    grid-column: 1;
+  }
+  .wf-beneficiaries li {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .wf-beneficiaries strong {
+    flex-wrap: wrap;
+  }
+  .wf-before-after {
+    table-layout: fixed;
+    overflow-wrap: anywhere;
+  }
+  .wf-pay {
+    width: 100%;
+  }
+  .wf-pay .input {
+    width: 100%;
+    min-width: 0;
+  }
+  .config-step {
+    flex-basis: 135px;
+    padding: 12px 8px;
+  }
+  .config-step small {
+    display: block;
+  }
+  .customer-shell .pay-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .customer-identity-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 360px) {
+  .config-stat {
+    flex-wrap: wrap;
+  }
+  .ws-stat .stat-value {
+    font-size: 1.25rem;
+  }
+  .stat-grid.three {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

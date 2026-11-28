@@ -14,6 +14,8 @@
     "test:intelligence": "node scripts/intelligence-smoke.cjs",
     "test:select": "node scripts/select-smoke.cjs",
     "test:landing": "node scripts/landing-smoke.cjs",
+    "test:ui": "node scripts/ui-audit.cjs",
+    "test:ui-workflows": "node scripts/workflow-ui-audit.cjs",
     "test:all": "node scripts/landing-smoke.cjs && node scripts/smoke.cjs && node scripts/intelligence-smoke.cjs && node scripts/select-smoke.cjs && node scripts/product-config-smoke.cjs"
   },
   "dependencies": {

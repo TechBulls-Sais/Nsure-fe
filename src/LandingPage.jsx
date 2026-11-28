@@ -364,9 +364,11 @@ export default function LandingPage({ section = "home" }) {
           </div>
           <div className="lp-hero-visual">
             <div className="lp-photo-arch">
-              {featured[0]?.image && (
-                <img src={featured[0].image} alt="" fetchPriority="high" />
-              )}
+              <img
+                src={featured[0]?.image || "/products/term-life.jpg"}
+                alt=""
+                fetchPriority="high"
+              />
               <div className="lp-photo-caption">
                 <span>FOR ALL THAT MAKES LIFE, LIFE.</span>
                 <p>

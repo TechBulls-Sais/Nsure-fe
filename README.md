@@ -85,6 +85,8 @@ npm run test:intelligence  # command palette, theme switch, reduced motion
 npm run test:select    # themed dropdowns in the New application form (cancelled, nothing saved)
 npm run test:products  # Product studio list and wizard validation (discarded, nothing saved)
 npm run test:all       # all of the above
+npm run test:ui        # all 28 workspaces and their tabs, themes, and responsive layouts
+npm run test:ui-workflows # forms, record details, customer and partner journeys
 ```
 
 Staff sign-in is the real two-step flow: the scripts read the demo code a dev/demo backend shows on screen. They only
@@ -95,6 +97,11 @@ is in `scripts/smoke-support.cjs`.
 Optional environment variables: `NSURE_BASE_URL` (default `http://127.0.0.1:5180`), `NSURE_SCREENSHOT_DIR` (existing
 directory), `PLAYWRIGHT_CHANNEL` (defaults to `chrome`), `NSURE_PASSWORD` (default `password`) and
 `NSURE_ONE_TIME_CODE` (only for a backend that does not show the demo code).
+
+The UI audits create screenshot folders and an `audit.json` report under `NSURE_SCREENSHOT_DIR` (or a dedicated
+temporary folder). They check desktop, tablet, and phone widths without submitting business changes. The workflow
+audit uses browser-only fixtures for the eligible customer purchase form and payment result states; it does not
+change customer eligibility or make payments. Use `PLAYWRIGHT_CHANNEL=chromium` for Playwright's bundled browser.
 
 ## Product Studio
 
